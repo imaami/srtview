@@ -12,10 +12,13 @@
 // player; a running instance is reused and left running on exit.
 //
 // Controls (reading view):
-//   Ctrl+F, /       open the search overlay (regexp; Aa toggles case)
+//   Ctrl+F, /       open the search overlay (".*" toggles regexp
+//                   mode, on by default; Aa toggles case)
+//   Enter (in box)  accept: the overlay hides, focus returns to the
+//                   view (the incremental search has already landed
+//                   on the first match, so 't' etc. work immediately)
 //   Esc             dismiss the overlay, focus returns to the view
-//   Enter (in box)  next match          F3 / Shift+F3, n / N   next /
-//                                       previous, overlay may be hidden
+//   F3 / Shift+F3, n / N   next / previous match, overlay hidden or not
 //   Return, double-click, gutter click  seek mpv to the cue, keep
 //                                       play/pause state
 //   T               seek + force pause
@@ -243,6 +246,63 @@ QString videoForSrt(const QString &srt, QString *err)
 	return {};
 }
 
+// -------------------------------------------------- palette first aid --
+// Some custom color schemes ship a ButtonText that vanishes against
+// Window; Qt styles draw menu-bar items with ButtonText, so the menus
+// become invisible while everything else looks fine.  Repair only
+// genuinely broken pairs (WCAG-ish contrast < 2.5) so sane themes
+// pass through untouched.
+
+double relLuminance(const QColor &c)
+{
+	const auto lin = [](double v) {
+		v /= 255.0;
+		return v <= 0.04045 ? v / 12.92
+		                    : std::pow((v + 0.055) / 1.055, 2.4);
+	};
+	return 0.2126 * lin(c.red()) + 0.7152 * lin(c.green())
+	     + 0.0722 * lin(c.blue());
+}
+
+double contrastRatio(const QColor &a, const QColor &b)
+{
+	double l1 = relLuminance(a), l2 = relLuminance(b);
+	if (l1 < l2)
+		std::swap(l1, l2);
+	return (l1 + 0.05) / (l2 + 0.05);
+}
+
+void repairMenuPalette(QWidget *w)
+{
+	QPalette p = w->palette();
+	constexpr double kMinContrast = 2.5;
+	constexpr QPalette::ColorGroup groups[]{QPalette::Active,
+	                                        QPalette::Inactive};
+	// (background, foreground) pairs the menu bar and its popups
+	// actually render with
+	constexpr std::pair<QPalette::ColorRole, QPalette::ColorRole> pairs[]{
+		{QPalette::Window, QPalette::ButtonText},
+		{QPalette::Window, QPalette::WindowText},
+		{QPalette::Base,   QPalette::Text},
+	};
+	bool changed = false;
+	for (const auto g : groups) {
+		for (const auto &[bgRole, fgRole] : pairs) {
+			const QColor bg = p.color(g, bgRole);
+			if (contrastRatio(bg, p.color(g, fgRole)) >= kMinContrast)
+				continue;
+			QColor fix = p.color(g, QPalette::WindowText);
+			if (contrastRatio(bg, fix) < kMinContrast)
+				fix = relLuminance(bg) < 0.5 ? QColor(0xf0, 0xf0, 0xf0)
+				                             : QColor(0x10, 0x10, 0x10);
+			p.setColor(g, fgRole, fix);
+			changed = true;
+		}
+	}
+	if (changed)
+		w->setPalette(p);
+}
+
 // ------------------------------------------------------------ MpvLink --
 // Owns the (possibly spawned) mpv process and a persistent connection
 // to its IPC socket.  Commands go out as single raw input.conf lines:
@@ -405,10 +465,17 @@ public:
 		frame->setContentsMargins(10, 8, 10, 8);
 		frame->setSpacing(6);
 
-		m_edit.setPlaceholderText(QStringLiteral("regexp\u2026"));
+		m_edit.setPlaceholderText(QStringLiteral("search\u2026"));
 		m_edit.setMinimumWidth(240);
 		m_edit.installEventFilter(this);
 		frame->addWidget(&m_edit);
+
+		m_regex.setText(QStringLiteral(".*"));
+		m_regex.setCheckable(true);
+		m_regex.setChecked(true);           // regexp on by default
+		m_regex.setAutoRaise(true);
+		m_regex.setToolTip(QStringLiteral("Regular expression"));
+		frame->addWidget(&m_regex);
 
 		m_case.setText(QStringLiteral("Aa"));
 		m_case.setCheckable(true);
@@ -438,7 +505,9 @@ public:
 		connect(&m_edit, &QLineEdit::textChanged,
 		        this, [this] { m_host->searchChanged(); });
 		connect(&m_edit, &QLineEdit::returnPressed,
-		        this, [this] { m_host->findAgain(false); });
+		        this, [this] { m_host->commitSearch(); });
+		connect(&m_regex, &QToolButton::toggled,
+		        this, [this] { m_host->searchChanged(); });
 		connect(&m_case, &QToolButton::toggled,
 		        this, [this] { m_host->searchChanged(); });
 		connect(&m_prev, &QToolButton::clicked,
@@ -457,7 +526,9 @@ public:
 
 	QString pattern() const { return m_edit.text(); }
 	bool caseSensitive() const { return m_case.isChecked(); }
+	bool regexEnabled() const { return m_regex.isChecked(); }
 	void setPattern(const QString &s) { m_edit.setText(s); }
+	void setRegexEnabled(bool on) { m_regex.setChecked(on); }
 	void setCount(int idx, int n)
 	{
 		m_count.setText(n <= 0 ? QStringLiteral("\u2014")
@@ -473,7 +544,10 @@ public:
 
 	void open(const QPoint &target)
 	{
-		adjustSize();
+		// A pending dismiss()-finished hide() would fire when
+		// slideTo() stops the running animation (stop() emits
+		// finished); cancel it or reopening mid-slide hides the bar.
+		disconnect(&m_anim, &QPropertyAnimation::finished, this, nullptr);
 		m_target = target;
 		if (!isVisible()) {
 			move(target.x(), -height());
@@ -536,7 +610,7 @@ private:
 
 	Host               *m_host;
 	QLineEdit           m_edit;
-	QToolButton         m_case, m_prev, m_next, m_close;
+	QToolButton         m_regex, m_case, m_prev, m_next, m_close;
 	QLabel              m_count;
 	QPropertyAnimation  m_anim;
 	QPoint              m_target;
@@ -872,6 +946,8 @@ public:
 		// --- status bar ---
 		statusBar()->addPermanentWidget(&m_state);
 		setState(QStringLiteral("no file"));
+
+		repairMenuPalette(menuBar());
 	}
 
 	bool openPath(const QString &path)
@@ -912,7 +988,17 @@ public:
 	void showSearch()
 	{
 		m_searchAnchor = m_edit.textCursor();
+		// Size first: the target x depends on the bar's final width,
+		// which before the first layout pass is garbage.
+		m_searchBar.adjustSize();
 		m_searchBar.open(searchBarTarget());
+	}
+	// Enter in the search field: the incremental jump has already
+	// landed on the match, so accept and get out of the way -- the
+	// next keystroke (t, Space, ...) belongs to the view.
+	void commitSearch()
+	{
+		hideSearch();
 	}
 	void hideSearch()
 	{
@@ -996,6 +1082,10 @@ public:
 			statusBar()->showMessage(QStringLiteral("mpv: ") + err, 3000);
 	}
 
+	void setRegexEnabled(bool on) { m_searchBar.setRegexEnabled(on); }
+	int matchCount() const { return int(m_matchStarts.size()); }
+	bool searchBarVisible() const { return m_searchBar.isVisible(); }
+	QRect searchBarGeometry() const { return m_searchBar.geometry(); }
 	void setSearchText(const QString &s)
 	{
 		if (m_searchAnchor.isNull() && m_edit.cueCount() > 0)
@@ -1054,7 +1144,9 @@ private:
 
 	QRegularExpression pattern() const
 	{
-		QRegularExpression re(m_searchBar.pattern());
+		const QString raw = m_searchBar.pattern();
+		QRegularExpression re(m_searchBar.regexEnabled()
+			? raw : QRegularExpression::escape(raw));
 		if (!m_searchBar.caseSensitive())
 			re.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
 		return re;
@@ -1177,13 +1269,27 @@ void runSelftest(MainWin *w, const QString &video)
 		log(QStringLiteral("seek-keep sent"));
 	});
 	QTimer::singleShot(1500, w, [w, log] {
+		const QRect g = w->searchBarGeometry();
+		log(QStringLiteral("bar geom x=%1 w=%2 right=%3 win_w=%4")
+		    .arg(g.x()).arg(g.width()).arg(g.right()).arg(w->width()));
 		const QString shot = QStringLiteral("/tmp/srtview-shot1.png");
 		w->grab().save(shot);
 		log(QStringLiteral("screenshot %1").arg(shot));
 	});
 	QTimer::singleShot(2200, w, [w, log] {
-		w->hideSearch();
-		log(QStringLiteral("search hidden"));
+		w->setSearchText(QStringLiteral("d.lor"));
+		log(QStringLiteral("regex-on 'd.lor' matches=%1")
+		    .arg(w->matchCount()));
+		w->setRegexEnabled(false);
+		log(QStringLiteral("literal 'd.lor' matches=%1")
+		    .arg(w->matchCount()));
+		w->setRegexEnabled(true);
+		w->setSearchText(QStringLiteral("voluptat"));
+		w->commitSearch();                   // Enter path: bar hides
+	});
+	QTimer::singleShot(2600, w, [w, log] {   // after the slide-out
+		log(QStringLiteral("committed, bar visible=%1")
+		    .arg(w->searchBarVisible()));
 	});
 	QTimer::singleShot(3000, w, [w, log] {
 		w->setPause(false);
