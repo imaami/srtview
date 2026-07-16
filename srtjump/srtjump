@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# srtjump -- seek mpv to subtitle cue timestamps, from less or from Kate.
+#
+#   srtjump VIDEO.mp4 [mpv opts...]
+#       Terminal session: opens VIDEO.mp4.srt in less and mpv on the
+#       video (paused).  Inside less everything is stock (/ ? n N
+#       search as usual and never touch mpv) except:
+#         t (or v)  seek mpv to the cue whose timestamp most recently
+#                   precedes the top screen line; playback state is
+#                   left alone (paused stays paused, playing plays)
+#         T         same seek + force pause
+#         c         play  (no seek; "continue")
+#         P         pause (no seek)
+#       "Cursor" is the top screen line: that is where less puts
+#       search matches (-j1), so /pattern, n n n ... to the hit you
+#       want, then t.
+#
+#   srtjump mpv VIDEO.mp4 [mpv opts...]
+#       Start just mpv (paused) on the shared per-video socket.  This
+#       is what you run before seeking from Kate or any other client.
+#
+#   srtjump seek [-0] [--pause] LINE [SRTFILE]
+#       Seek the mpv instance belonging to SRTFILE's video to the cue
+#       preceding line LINE of SRTFILE.  LINE is 1-based; -0 marks it
+#       0-based (Kate's Document:Cursor:Line).  --pause also pauses.
+#       SRTFILE may be omitted only inside a srtjump session (env).
+#
+#   srtjump play FILE | srtjump pause FILE
+#       Unpause/pause the mpv instance for FILE (a video path, or a
+#       .srt path from which the video is derived).  No seeking.
+#
+# The mpv IPC socket is derived from the video file's canonical path:
+#   $XDG_RUNTIME_DIR/srtjump/<first 16 hex of sha256(realpath)>.sock
+# so independent processes (less session, Kate, your own scripts)
+# all find the same player.  A session reuses a live instance instead
+# of starting a second one, and leaves it running on exit if so.
+#
+# Kate integration (External Tools plugin, Kate >= 19.12):
+#   Settings > Configure Kate > External Tools > Add, twice:
+#     Name:       srt: jump          | srt: jump+pause
+#     Executable: /path/to/srtjump
+#     Arguments:  seek -0 %{Document:Cursor:Line} %{Document:FilePath}
+#                 (add --pause after -0 for the second tool)
+#   plus, if wanted, "srt: play" / "srt: pause" tools with arguments
+#     play %{Document:FilePath}    |    pause %{Document:FilePath}
+#     Save: None, Output: Ignore
+#   then bind keys under Settings > Configure Keyboard Shortcuts.
+#   Start the player with: srtjump mpv VIDEO.mp4
+#
+# The transcript is looked up as VIDEO.mp4.srt first, VIDEO.srt second.
+# Requires: less, mpv, socat, awk, sha256sum.  less >= 582 preferred
+# (--lesskey-src); older less needs lesskey(1).  On less < 661 the T
+# key leaves a one-off "|done (press RETURN)" notice until the next
+# keypress (which is still processed normally); the same applies to
+# the c and P keys there.  t is clean on every less version.
+#
+# Env knobs:
+#   SRTJUMP_PREROLL  seconds to land BEFORE the cue start (default 0)
+
+set -u
+
+die() { printf 'srtjump: %s\n' "$*" >&2; exit 1; }
+
+# ------------------------------------------------------------- plumbing --
+
+rundir() {
+	local d=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/srtjump
+	mkdir -p "$d" || die "cannot create $d"
+	printf '%s' "$d"
+}
+
+# Socket path for a video file: content-independent, path-canonical.
+sock_for() {
+	local rp h
+	rp=$(realpath -- "$1") || die "cannot resolve path: $1"
+	h=$(printf '%s' "$rp" | sha256sum) || die "sha256sum failed"
+	printf '%s/%s.sock' "$(rundir)" "${h:0:16}"
+}
+
+# True if something is accepting connections on the socket.
+alive() {
+	socat -u /dev/null "UNIX-CONNECT:$1" 2>/dev/null
+}
+
+# Locate the transcript for a video: VIDEO.EXT.srt, then VIDEO.srt.
+srt_of() {
+	local v=$1 base=${1##*/} srt
+	[[ -r "$v.srt" ]] && { printf '%s' "$v.srt"; return; }
+	if [[ "$base" == *.* ]]; then
+		srt=${v%.*}.srt
+		[[ -r "$srt" ]] && { printf '%s' "$srt"; return; }
+		die "subtitle file not found: $v.srt or $srt"
+	fi
+	die "subtitle file not found: $v.srt"
+}
+
+# Inverse: locate the video a transcript belongs to.  VIDEO.EXT.srt
+# strips to an existing file; VIDEO.srt needs a sibling search, and
+# if several non-.srt siblings match VIDEO.*, the one with a live
+# player wins (a lone thumbnail or such next to the video is thereby
+# harmless as long as only one candidate has an mpv running).
+derive_video() {
+	local x=${1%.srt} c cands=() live=()
+	if [[ -f "$x" ]]; then printf '%s' "$x"; return; fi
+	shopt -s nullglob
+	for c in "$x".*; do [[ "$c" == *.srt ]] || cands+=("$c"); done
+	shopt -u nullglob
+	case ${#cands[@]} in
+	0)	die "no video found for $1 (tried '$x' and '$x'.*)" ;;
+	1)	printf '%s' "${cands[0]}"; return ;;
+	esac
+	for c in "${cands[@]}"; do
+		alive "$(sock_for "$c")" && live+=("$c")
+	done
+	case ${#live[@]} in
+	1)	printf '%s' "${live[0]}" ;;
+	0)	die "no running mpv for any of: ${cands[*]}" ;;
+	*)	die "ambiguous, multiple running players match $1: ${live[*]}" ;;
+	esac
+}
+
+need() {
+	local c
+	for c; do command -v "$c" >/dev/null || die "$c not found"; done
+}
+
+# Core: cue start time (seconds) of the last timestamp line at or
+# before line $2 of srt file $1, minus SRTJUMP_PREROLL, floored at 0.
+cue_time() {
+	awk -v top="$2" -v pre="${SRTJUMP_PREROLL:-0}" '
+		NR > top { exit }
+		match($0, /[0-9][0-9]*:[0-9][0-9]:[0-9][0-9][,.][0-9][0-9][0-9][ \t]*-->/) {
+			split(substr($0, RSTART, RLENGTH), a, /[:,.]/)
+			t = a[1]*3600 + a[2]*60 + a[3] + a[4]/1000
+		}
+		END { t -= pre; if (t < 0) t = 0; printf "%.3f", t }
+	' "$1"
+}
+
+# One raw input-command line per call: mpv parses non-JSON lines on
+# the IPC socket as input.conf command lists.  (Multi-line JSON is
+# unreliable: mpv can drop buffered lines when the client hangs up.)
+do_seek() {	# $1=srt $2=top-line $3=keep|pause $4=socket
+	local t cmd
+	t=$(cue_time "$1" "$2")
+	case $3 in
+	pause)	cmd="no-osd set pause yes; no-osd seek $t absolute+exact" ;;
+	*)	cmd="no-osd seek $t absolute+exact" ;;
+	esac
+	printf '%s\n' "$cmd" | socat -u - "$4"
+}
+
+# ----------------------------------------------- internal less entries --
+# The session symlinks $sessdir/{vseek,pause} to this script; the
+# names carry the mode so the strings fed to less stay free of
+# arguments, spaces, and prompt/shell metacharacters (%, #, ?, .).
+case ${0##*/} in
+vseek)	# LESSEDIT="$sessdir/vseek %lt": $1 = top screen line, 1-based
+	exec >/dev/null 2>&1
+	do_seek "$SRTJUMP_SRT" "$1" keep "$SRTJUMP_SOCK"
+	exit ;;
+seekpause)	# less pipe '|$': stdin = file from top screen line to EOF
+	exec >/dev/null 2>&1
+	total=$(wc -l < "$SRTJUMP_SRT")
+	top=$(( total - $(wc -l) + 1 ))
+	do_seek "$SRTJUMP_SRT" "$top" pause "$SRTJUMP_SOCK"
+	exit ;;
+play|pause)	# less pipe '|.': position irrelevant, just flip pause
+	exec >/dev/null 2>&1
+	cat >/dev/null	# drain the screenful less pipes at us
+	v=no; [[ ${0##*/} == pause ]] && v=yes
+	printf 'no-osd set pause %s\n' "$v" | socat -u - "$SRTJUMP_SOCK"
+	exit ;;
+esac
+
+# ------------------------------------------------------------ commands --
+
+case "${1-}" in
+''|-h|--help)
+	sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//;t;d'
+	exit 0 ;;
+
+seek)
+	shift
+	zero=0 mode=keep
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		-0|--zero-based)	zero=1; shift ;;
+		--pause)		mode=pause; shift ;;
+		-*)			die "seek: unknown option $1" ;;
+		*)			break ;;
+		esac
+	done
+	line=${1-} srt=${2-${SRTJUMP_SRT-}}
+	[[ "$line" =~ ^[0-9]+$ ]] || die "seek: LINE must be a number, got '${line}'"
+	[[ -n "$srt" ]] || die "seek: no SRTFILE given and not inside a srtjump session"
+	[[ -r "$srt" ]] || die "seek: cannot read $srt"
+	[[ "$srt" == *.srt ]] || die "seek: $srt does not end in .srt"
+	need socat
+	(( zero )) && line=$(( line + 1 ))
+	if [[ -n "${SRTJUMP_SOCK-}" ]]; then
+		sock=$SRTJUMP_SOCK
+		alive "$sock" || die "no mpv on $sock"
+	else
+		need sha256sum
+		video=$(derive_video "$srt") || exit
+		sock=$(sock_for "$video") || exit
+		alive "$sock" || die "no mpv on $sock -- start it: srtjump mpv '$video'"
+	fi
+	do_seek "$srt" "$line" "$mode" "$sock"
+	exit ;;
+
+play|pause)
+	mode=$1; shift
+	f=${1-}; [[ -n "$f" ]] || die "usage: srtjump $mode VIDEO|SRTFILE"
+	need socat sha256sum
+	if [[ "$f" == *.srt ]]; then
+		video=$(derive_video "$f") || exit
+	else
+		video=$f
+		[[ -e "$video" ]] || die "no such file: $video"
+	fi
+	sock=$(sock_for "$video") || exit
+	alive "$sock" || die "no mpv on $sock -- start it: srtjump mpv '$video'"
+	v=no; [[ $mode == pause ]] && v=yes
+	printf 'no-osd set pause %s\n' "$v" | socat -u - "$sock"
+	exit ;;
+
+mpv)
+	shift
+	video=${1-}; [[ -n "$video" ]] || die "usage: srtjump mpv VIDEO [mpv opts...]"
+	shift
+	[[ -f "$video" ]] || die "no such file: $video"
+	need mpv socat sha256sum
+	srt=$(srt_of "$video") || exit
+	sock=$(sock_for "$video") || exit
+	if alive "$sock"; then
+		die "already running on $sock"
+	fi
+	rm -f "$sock"	# stale leftover from an unclean shutdown
+	exec mpv --pause --keep-open=yes --input-ipc-server="$sock" \
+		--sub-file="$srt" --sub-auto=no "$@" -- "$video" ;;
+
+*)	;;	# fall through: default terminal session
+esac
+
+# ----------------------------------------------------- terminal session --
+
+video=$1; shift
+[[ -f "$video" ]] || die "no such file: $video"
+need mpv socat less sha256sum
+srt=$(srt_of "$video") || exit
+sock=$(sock_for "$video") || exit
+self=$(realpath -- "$0") || die "cannot resolve own path"
+
+lessver=$(less -V | awk 'NR==1 { print $2 + 0 }')
+
+sessdir=$(mktemp -d "$(rundir)/session-XXXXXX") || die "mktemp failed"
+ln -s "$self" "$sessdir/vseek"
+ln -s "$self" "$sessdir/seekpause"
+ln -s "$self" "$sessdir/play"
+ln -s "$self" "$sessdir/pause"
+
+export SRTJUMP_SRT=$srt
+export SRTJUMP_SOCK=$sock
+export SRTJUMP_PREROLL=${SRTJUMP_PREROLL:-0}
+
+# ------- mpv: reuse a live instance, else clean stale socket and spawn --
+mpvpid=
+if ! alive "$sock"; then
+	rm -f "$sock"
+	mpv --no-terminal --pause --keep-open=yes --input-ipc-server="$sock" \
+		--sub-file="$srt" --sub-auto=no "$@" -- "$video" &
+	mpvpid=$!
+fi
+
+cleanup() {
+	if [[ -n "$mpvpid" ]] && kill -0 "$mpvpid" 2>/dev/null; then
+		printf 'quit\n' | socat -u - "$sock" 2>/dev/null
+		{ sleep 1; kill "$mpvpid" 2>/dev/null; } &
+		wait "$mpvpid" 2>/dev/null
+		rm -f "$sock"
+	fi
+	rm -f "$sessdir"/{vseek,seekpause,play,pause,lesskey,lesskey.bin}
+	rmdir "$sessdir" 2>/dev/null
+}
+trap cleanup EXIT
+
+if [[ -n "$mpvpid" ]]; then
+	for _ in $(seq 1 50); do
+		[[ -S "$sock" ]] && alive "$sock" && break
+		kill -0 "$mpvpid" 2>/dev/null || die "mpv exited before creating its socket"
+		sleep 0.1
+	done
+	alive "$sock" || die "mpv IPC socket never came up: $sock"
+fi
+
+# ------- lesskey: t -> visual (seek via LESSEDIT), T -> pipe to pause --
+# Extra strings are replayed as if typed: '|' pipe, mark '$' (top of
+# screen through EOF), helper path, ENTER.  \020 is ^P, less >= 661's
+# silent-shell-command prefix; older less prompts after the pipe.
+if (( lessver >= 661 )); then
+	pp='|$\020' ps='|.\020'
+else
+	pp='|$' ps='|.'
+fi
+{
+	printf '#command\n'
+	printf 't\tvisual\n'
+	printf 'T\tnoaction\t%s%s\\r\n' "$pp" "$sessdir/seekpause"
+	printf 'c\tnoaction\t%s%s\\r\n' "$ps" "$sessdir/play"
+	printf 'P\tnoaction\t%s%s\\r\n' "$ps" "$sessdir/pause"
+} > "$sessdir/lesskey"
+
+# ------- less ----------------------------------------------------------
+# LESSOPEN could rewrite the displayed content (breaking the line math)
+# and makes 'v' print a warning; LESSSECURE disables both '|' and 'v'.
+unset LESSOPEN LESSCLOSE LESSSECURE
+export LESSEDIT="$sessdir/vseek %lt"
+
+# -j1 pins search matches to the top screen line, the anchor both
+# mechanisms use ("cursor" == top of screen).
+if (( lessver >= 582 )); then
+	less --lesskey-src="$sessdir/lesskey" -j1 -- "$srt"
+elif command -v lesskey >/dev/null; then
+	lesskey -o "$sessdir/lesskey.bin" "$sessdir/lesskey" || die "lesskey compile failed"
+	less -k "$sessdir/lesskey.bin" -j1 -- "$srt"
+else
+	die "less $lessver lacks --lesskey-src and no lesskey(1) found"
+fi
