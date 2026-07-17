@@ -11,16 +11,14 @@
 #include <chrono>
 #include <thread>
 
-template <class Host>
-MpvLink<Host>::MpvLink(Host *host)
+MpvLink::MpvLink(MainWin *host)
 	: m_host(host)
 {
 	connect(&m_conn, &QLocalSocket::readyRead,
 	        this, &MpvLink::onReadyRead);
 }
 
-template <class Host>
-bool MpvLink<Host>::openFor(const QString &video, const QString &srt,
+bool MpvLink::openFor(const QString &video, const QString &srt,
                             QString *err)
 {
 	shutdown();
@@ -32,8 +30,7 @@ bool MpvLink<Host>::openFor(const QString &video, const QString &srt,
 	return ensureAlive(err);
 }
 
-template <class Host>
-bool MpvLink<Host>::ensureAlive(QString *err)
+bool MpvLink::ensureAlive(QString *err)
 {
 	if (m_conn.state() == QLocalSocket::ConnectedState)
 		return true;
@@ -75,8 +72,7 @@ bool MpvLink<Host>::ensureAlive(QString *err)
 	return false;
 }
 
-template <class Host>
-bool MpvLink<Host>::send(const QString &line, QString *err)
+bool MpvLink::send(const QString &line, QString *err)
 {
 	if (!ensureAlive(err))
 		return false;
@@ -87,8 +83,7 @@ bool MpvLink<Host>::send(const QString &line, QString *err)
 	return m_conn.bytesToWrite() == 0 || m_conn.waitForBytesWritten(500);
 }
 
-template <class Host>
-bool MpvLink<Host>::seek(double t, bool forcePause, QString *err)
+bool MpvLink::seek(double t, bool forcePause, QString *err)
 {
 	const QString s = QStringLiteral("no-osd seek %1 absolute+exact")
 	                  .arg(t, 0, 'f', 3);
@@ -96,28 +91,24 @@ bool MpvLink<Host>::seek(double t, bool forcePause, QString *err)
 		? QStringLiteral("no-osd set pause yes; ") + s : s, err);
 }
 
-template <class Host>
-bool MpvLink<Host>::seekRel(double dt, QString *err)
+bool MpvLink::seekRel(double dt, QString *err)
 {
 	return send(QStringLiteral("no-osd seek %1").arg(dt, 0, 'f', 1), err);
 }
 
-template <class Host>
-bool MpvLink<Host>::setPause(bool on, QString *err)
+bool MpvLink::setPause(bool on, QString *err)
 {
 	return send(QStringLiteral("no-osd set pause %1")
 	            .arg(on ? QStringLiteral("yes") : QStringLiteral("no")),
 	            err);
 }
 
-template <class Host>
-bool MpvLink<Host>::cyclePause(QString *err)
+bool MpvLink::cyclePause(QString *err)
 {
 	return send(QStringLiteral("no-osd cycle pause"), err);
 }
 
-template <class Host>
-void MpvLink<Host>::shutdown()
+void MpvLink::shutdown()
 {
 	if (m_spawned && m_proc.state() == QProcess::Running) {
 		QString e;
@@ -134,8 +125,7 @@ void MpvLink<Host>::shutdown()
 	m_sock.clear();
 }
 
-template <class Host>
-bool MpvLink<Host>::tryConnect()
+bool MpvLink::tryConnect()
 {
 	if (m_sock.isEmpty())
 		return false;
@@ -149,16 +139,14 @@ bool MpvLink<Host>::tryConnect()
 }
 
 // Property observation is per-client: register on every connect.
-template <class Host>
-void MpvLink<Host>::observe()
+void MpvLink::observe()
 {
 	m_conn.write("{\"command\":[\"observe_property\",1,"
 	             "\"playback-time\"]}\n");
 	m_conn.flush();
 }
 
-template <class Host>
-void MpvLink<Host>::onReadyRead()
+void MpvLink::onReadyRead()
 {
 	m_inbuf += m_conn.readAll();
 	while (true) {
@@ -173,8 +161,7 @@ void MpvLink<Host>::onReadyRead()
 	}
 }
 
-template <class Host>
-void MpvLink<Host>::dispatch(const QJsonObject &ev)
+void MpvLink::dispatch(const QJsonObject &ev)
 {
 	if (ev.value(QStringLiteral("event"))
 	    != QStringLiteral("property-change"))
@@ -186,5 +173,3 @@ void MpvLink<Host>::dispatch(const QJsonObject &ev)
 	if (v.isDouble())
 		m_host->onMpvTime(v.toDouble());
 }
-
-template class MpvLink<MainWin>;

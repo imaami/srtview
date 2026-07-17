@@ -13,7 +13,10 @@
 // document and emits derived().on_cue(start, end, text) per cue --
 // statically dispatched, container-agnostic.  srt::parse() is the
 // vector-collecting convenience built on it.
-#pragma once
+#ifndef SRTVIEW_SRC_SRT_HPP_
+#define SRTVIEW_SRC_SRT_HPP_
+
+#include "crtp.hpp"
 
 #include <algorithm>
 #include <array>
@@ -220,8 +223,8 @@ inline bool timecode_line(std::string_view line, stamp_pair &ts)
 //   - anything between blocks that is neither blank, counter nor
 //     timecode is skipped (site banners, stray headers)
 
-template <class Derived>
-class parser
+template <typename Derived>
+class parser : public crtp<Derived, parser>
 {
 public:
 	void parse(std::string_view utf8)
@@ -233,8 +236,6 @@ public:
 	}
 
 private:
-	Derived &self() { return static_cast<Derived &>(*this); }
-
 	void step(std::string_view line, const detail::line_cursor &ahead)
 	{
 		detail::stamp_pair ts;
@@ -284,7 +285,7 @@ private:
 	{
 		if (!open_)
 			return;
-		self().on_cue(start_, end_, std::move(text_));
+		this->impl().on_cue(start_, end_, std::move(text_));
 		text_.clear();
 		open_ = false;
 	}
@@ -299,3 +300,5 @@ private:
 std::vector<cue> parse(std::string_view utf8);
 
 } // namespace srt
+
+#endif // SRTVIEW_SRC_SRT_HPP_

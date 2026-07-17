@@ -4,10 +4,10 @@
 // cue, SRT inline tags rendered.  Cue start times are painted in a
 // quiet gutter; hovering shows full cue timing in a tooltip.
 //
-// Statically bound to its host window (same pattern as SearchBar):
-// member definitions live in srtedit.cpp, closed by an explicit
-// instantiation for the concrete host.
-#pragma once
+// Bound to its host window through a forward declaration: direct
+// non-virtual calls, headers stay acyclic.
+#ifndef SRTVIEW_SRC_SRTEDIT_HPP_
+#define SRTVIEW_SRC_SRTEDIT_HPP_
 
 #include "srt.hpp"
 #include "timefmt.hpp"
@@ -22,11 +22,12 @@
 // settings land.
 inline constexpr double kFontScale = 1.75;
 
-template <class Host>
+class MainWin;
+
 class SrtEdit : public QTextEdit
 {
 public:
-	explicit SrtEdit(Host *host);
+	explicit SrtEdit(MainWin *host);
 
 	void setCues(std::vector<srt::cue> cues);
 
@@ -69,7 +70,7 @@ private:
 	void glideTo(int cue);
 	void applySelections();
 
-	Host                   *m_host;
+	MainWin                *m_host;
 	QWidget                 m_gutter;
 	QFont                   m_gutterFont;
 	QPropertyAnimation      m_glide;
@@ -79,3 +80,5 @@ private:
 	std::vector<srt::cue>   m_cues;
 	QList<ExtraSelection>   m_lineSel, m_playSel, m_matchSel;
 };
+
+#endif // SRTVIEW_SRC_SRTEDIT_HPP_

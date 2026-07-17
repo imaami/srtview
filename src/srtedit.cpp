@@ -12,8 +12,7 @@
 
 #include <algorithm>
 
-template <class Host>
-SrtEdit<Host>::SrtEdit(Host *host)
+SrtEdit::SrtEdit(MainWin *host)
 	: QTextEdit(host), m_host(host), m_gutter(this)
 {
 	setReadOnly(true);
@@ -40,8 +39,7 @@ SrtEdit<Host>::SrtEdit(Host *host)
 	        this, [this] { updateCurrentCueHighlight(); });
 }
 
-template <class Host>
-void SrtEdit<Host>::setCues(std::vector<srt::cue> cues)
+void SrtEdit::setCues(std::vector<srt::cue> cues)
 {
 	m_cues = std::move(cues);
 	QTextDocument *doc = document();
@@ -78,8 +76,7 @@ void SrtEdit<Host>::setCues(std::vector<srt::cue> cues)
 	updateCurrentCueHighlight();
 }
 
-template <class Host>
-int SrtEdit<Host>::cueAt(double t) const
+int SrtEdit::cueAt(double t) const
 {
 	const auto it = std::ranges::upper_bound(m_cues, t, {},
 	                                         &srt::cue::start);
@@ -89,8 +86,7 @@ int SrtEdit<Host>::cueAt(double t) const
 	return t < prev->end ? int(prev - m_cues.begin()) : -1;
 }
 
-template <class Host>
-void SrtEdit<Host>::setPlayTime(double t)
+void SrtEdit::setPlayTime(double t)
 {
 	const int cue = cueAt(t);
 	if (cue == m_playCue)
@@ -102,8 +98,7 @@ void SrtEdit<Host>::setPlayTime(double t)
 		glideTo(cue);
 }
 
-template <class Host>
-void SrtEdit<Host>::setFollow(bool on)
+void SrtEdit::setFollow(bool on)
 {
 	m_follow = on;
 	if (on && m_playCue >= 0)
@@ -112,8 +107,7 @@ void SrtEdit<Host>::setFollow(bool on)
 		m_glide.stop();
 }
 
-template <class Host>
-void SrtEdit<Host>::updatePlayHighlight()
+void SrtEdit::updatePlayHighlight()
 {
 	m_playSel.clear();
 	if (m_playCue >= 0) {
@@ -133,8 +127,7 @@ void SrtEdit<Host>::updatePlayHighlight()
 }
 
 // Keep the active cue in the upper third, lyrics-style.
-template <class Host>
-void SrtEdit<Host>::glideTo(int cue)
+void SrtEdit::glideTo(int cue)
 {
 	const QTextBlock b = document()->findBlockByNumber(cue);
 	if (!b.isValid())
@@ -149,15 +142,13 @@ void SrtEdit<Host>::glideTo(int cue)
 	m_glide.start();
 }
 
-template <class Host>
-void SrtEdit<Host>::setMatchSelections(const QList<ExtraSelection> &sel)
+void SrtEdit::setMatchSelections(const QList<ExtraSelection> &sel)
 {
 	m_matchSel = sel;
 	applySelections();
 }
 
-template <class Host>
-void SrtEdit<Host>::keyPressEvent(QKeyEvent *ev)
+void SrtEdit::keyPressEvent(QKeyEvent *ev)
 {
 	if (!(ev->modifiers() & (Qt::ControlModifier | Qt::AltModifier
 	                         | Qt::MetaModifier))) {
@@ -212,24 +203,21 @@ void SrtEdit<Host>::keyPressEvent(QKeyEvent *ev)
 	QTextEdit::keyPressEvent(ev);
 }
 
-template <class Host>
-void SrtEdit<Host>::mouseDoubleClickEvent(QMouseEvent *ev)
+void SrtEdit::mouseDoubleClickEvent(QMouseEvent *ev)
 {
 	QTextEdit::mouseDoubleClickEvent(ev);
 	if (!m_cues.empty())
 		m_host->seekCue(currentCue(), false);
 }
 
-template <class Host>
-void SrtEdit<Host>::resizeEvent(QResizeEvent *ev)
+void SrtEdit::resizeEvent(QResizeEvent *ev)
 {
 	QTextEdit::resizeEvent(ev);
 	layoutGutter();
 	m_host->layoutOverlays();
 }
 
-template <class Host>
-bool SrtEdit<Host>::event(QEvent *ev)
+bool SrtEdit::event(QEvent *ev)
 {
 	if (ev->type() == QEvent::ToolTip && !m_cues.empty()) {
 		auto *he = static_cast<QHelpEvent *>(ev);
@@ -248,8 +236,7 @@ bool SrtEdit<Host>::event(QEvent *ev)
 	return QTextEdit::event(ev);
 }
 
-template <class Host>
-bool SrtEdit<Host>::eventFilter(QObject *obj, QEvent *ev)
+bool SrtEdit::eventFilter(QObject *obj, QEvent *ev)
 {
 	if (obj == &m_gutter) {
 		if (ev->type() == QEvent::Paint) {
@@ -270,8 +257,7 @@ bool SrtEdit<Host>::eventFilter(QObject *obj, QEvent *ev)
 	return QTextEdit::eventFilter(obj, ev);
 }
 
-template <class Host>
-void SrtEdit<Host>::layoutGutter()
+void SrtEdit::layoutGutter()
 {
 	const QRect cr = contentsRect();
 	m_gutter.setGeometry(cr.left(), cr.top(), m_gutterW, cr.height());
@@ -279,9 +265,8 @@ void SrtEdit<Host>::layoutGutter()
 
 // Visible blocks under the current scroll offset, gutter-space rects;
 // the visitor binds statically.
-template <class Host>
 template <typename F>
-void SrtEdit<Host>::visitVisibleBlocks(F f)
+void SrtEdit::visitVisibleBlocks(F f)
 {
 	auto *lay = document()->documentLayout();
 	const int yoff = verticalScrollBar()->value();
@@ -297,8 +282,7 @@ void SrtEdit<Host>::visitVisibleBlocks(F f)
 	}
 }
 
-template <class Host>
-void SrtEdit<Host>::paintGutter()
+void SrtEdit::paintGutter()
 {
 	QPainter p(&m_gutter);
 	// Same background as the text, only quieter ink: the gutter
@@ -323,8 +307,7 @@ void SrtEdit<Host>::paintGutter()
 	});
 }
 
-template <class Host>
-int SrtEdit<Host>::cueAtGutterY(int y)
+int SrtEdit::cueAtGutterY(int y)
 {
 	int hit = -1;
 	visitVisibleBlocks([&](const QTextBlock &b, const QRectF &r) {
@@ -337,8 +320,7 @@ int SrtEdit<Host>::cueAtGutterY(int y)
 	return (hit >= 0 && size_t(hit) < m_cues.size()) ? hit : -1;
 }
 
-template <class Host>
-void SrtEdit<Host>::updateCurrentCueHighlight()
+void SrtEdit::updateCurrentCueHighlight()
 {
 	ExtraSelection sel;
 	sel.cursor = textCursor();
@@ -352,10 +334,7 @@ void SrtEdit<Host>::updateCurrentCueHighlight()
 	m_gutter.update();
 }
 
-template <class Host>
-void SrtEdit<Host>::applySelections()
+void SrtEdit::applySelections()
 {
 	setExtraSelections(m_lineSel + m_playSel + m_matchSel);
 }
-
-template class SrtEdit<MainWin>;

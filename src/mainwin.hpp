@@ -1,6 +1,7 @@
 // mainwin.hpp -- application window: menus, status, search state, and
 // the host interface that SrtEdit and SearchBar bind to statically.
-#pragma once
+#ifndef SRTVIEW_SRC_MAINWIN_HPP_
+#define SRTVIEW_SRC_MAINWIN_HPP_
 
 #include "mpvlink.hpp"
 #include "searchbar.hpp"
@@ -61,11 +62,13 @@ private:
 	bool fail(const QString &msg);
 	void setState(const QString &s);
 
-	SrtEdit<MainWin>   m_edit;
-	SearchBar<MainWin> m_searchBar;
-	MpvLink<MainWin>   m_mpv;
-	QLabel             m_state;
-	QAction            m_nextAct, m_prevAct, m_followAct;
-	QTextCursor        m_searchAnchor;
-	std::vector<int>   m_matchStarts;
+	SrtEdit    m_edit;
+	SearchBar  m_searchBar;
+	MpvLink    m_mpv;
+	QLabel     m_state;
+	QAction    m_nextAct, m_prevAct, m_followAct;
+	QTextCursor m_searchAnchor;
+	std::vector<int> m_matchStarts;
 };
+
+#endif // SRTVIEW_SRC_MAINWIN_HPP_

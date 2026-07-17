@@ -9,10 +9,10 @@
 //
 // The link also listens: on every connect it registers a JSON
 // observe_property for playback-time (raw and JSON lines coexist on
-// one IPC connection), and forwards each update to the host --
-// statically bound, same pattern as the widgets: member definitions
-// live in mpvlink.cpp, closed by an explicit instantiation.
-#pragma once
+// one IPC connection), and forwards each update to the host, bound
+// through a forward declaration like the widgets.
+#ifndef SRTVIEW_SRC_MPVLINK_HPP_
+#define SRTVIEW_SRC_MPVLINK_HPP_
 
 #include <QByteArray>
 #include <QLocalSocket>
@@ -22,11 +22,12 @@
 
 class QJsonObject;
 
-template <class Host>
+class MainWin;
+
 class MpvLink : public QObject
 {
 public:
-	explicit MpvLink(Host *host);
+	explicit MpvLink(MainWin *host);
 
 	bool openFor(const QString &video, const QString &srt, QString *err);
 
@@ -51,10 +52,12 @@ private:
 	void onReadyRead();
 	void dispatch(const QJsonObject &ev);
 
-	Host        *m_host;
+	MainWin        *m_host;
 	QProcess     m_proc;
 	QLocalSocket m_conn;
 	QByteArray   m_inbuf;
 	QString      m_video, m_srt, m_sock;
 	bool         m_spawned = false;
 };
+
+#endif // SRTVIEW_SRC_MPVLINK_HPP_

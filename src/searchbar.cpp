@@ -6,8 +6,7 @@
 #include <QKeyEvent>
 #include <QPainter>
 
-template <class Host>
-SearchBar<Host>::SearchBar(Host *host, QWidget *parent)
+SearchBar::SearchBar(MainWin *host, QWidget *parent)
 	: QWidget(parent), m_host(host)
 {
 	setAutoFillBackground(true);
@@ -78,8 +77,7 @@ SearchBar<Host>::SearchBar(Host *host, QWidget *parent)
 	hide();
 }
 
-template <class Host>
-void SearchBar<Host>::setCount(int idx, int n)
+void SearchBar::setCount(int idx, int n)
 {
 	m_count.setText(n <= 0 ? QStringLiteral("\u2014")
 		: QStringLiteral("%1/%2")
@@ -92,8 +90,7 @@ void SearchBar<Host>::setCount(int idx, int n)
 	m_edit.setPalette(pal);
 }
 
-template <class Host>
-void SearchBar<Host>::open(const QPoint &target)
+void SearchBar::open(const QPoint &target)
 {
 	// A pending dismiss()-finished hide() would fire when slideTo()
 	// stops the running animation (stop() emits finished); cancel it
@@ -110,8 +107,7 @@ void SearchBar<Host>::open(const QPoint &target)
 	m_edit.selectAll();
 }
 
-template <class Host>
-void SearchBar<Host>::dismiss()
+void SearchBar::dismiss()
 {
 	if (!isVisible())
 		return;
@@ -120,16 +116,14 @@ void SearchBar<Host>::dismiss()
 	        this, [this] { hide(); }, Qt::SingleShotConnection);
 }
 
-template <class Host>
-void SearchBar<Host>::reposition(const QPoint &target)
+void SearchBar::reposition(const QPoint &target)
 {
 	m_target = target;
 	if (isVisible())
 		move(target);
 }
 
-template <class Host>
-bool SearchBar<Host>::eventFilter(QObject *obj, QEvent *ev)
+bool SearchBar::eventFilter(QObject *obj, QEvent *ev)
 {
 	if (obj == &m_edit && ev->type() == QEvent::KeyPress) {
 		auto *ke = static_cast<QKeyEvent *>(ev);
@@ -141,8 +135,7 @@ bool SearchBar<Host>::eventFilter(QObject *obj, QEvent *ev)
 	return QWidget::eventFilter(obj, ev);
 }
 
-template <class Host>
-void SearchBar<Host>::paintEvent(QPaintEvent *)
+void SearchBar::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
 	p.setRenderHint(QPainter::Antialiasing);
@@ -152,13 +145,10 @@ void SearchBar<Host>::paintEvent(QPaintEvent *)
 	                  8.0, 8.0);
 }
 
-template <class Host>
-void SearchBar<Host>::slideTo(const QPoint &to)
+void SearchBar::slideTo(const QPoint &to)
 {
 	m_anim.stop();
 	m_anim.setStartValue(pos());
 	m_anim.setEndValue(to);
 	m_anim.start();
 }
-
-template class SearchBar<MainWin>;

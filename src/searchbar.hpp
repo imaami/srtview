@@ -5,11 +5,10 @@
 // landed on a match, so the next keystroke belongs to the view).
 // The pattern keeps working (F3, n/N) while the bar is hidden.
 //
-// Statically bound to its host: a class template whose member
-// definitions live in searchbar.cpp, closed by an explicit
-// instantiation for the concrete host -- direct calls, no moc, no
-// type erasure, and still one .hpp/.cpp per class.
-#pragma once
+// Bound to its host through a forward declaration: direct
+// non-virtual calls, no moc, no type erasure, headers stay acyclic.
+#ifndef SRTVIEW_SRC_SEARCHBAR_HPP_
+#define SRTVIEW_SRC_SEARCHBAR_HPP_
 
 #include <QLabel>
 #include <QLineEdit>
@@ -18,11 +17,12 @@
 #include <QToolButton>
 #include <QWidget>
 
-template <class Host>
+class MainWin;
+
 class SearchBar : public QWidget
 {
 public:
-	SearchBar(Host *host, QWidget *parent);
+	SearchBar(MainWin *host, QWidget *parent);
 
 	QString pattern() const { return m_edit.text(); }
 	bool caseSensitive() const { return m_case.isChecked(); }
@@ -42,10 +42,12 @@ protected:
 private:
 	void slideTo(const QPoint &to);
 
-	Host               *m_host;
+	MainWin            *m_host;
 	QLineEdit           m_edit;
 	QToolButton         m_regex, m_case, m_prev, m_next, m_close;
 	QLabel              m_count;
 	QPropertyAnimation  m_anim;
 	QPoint              m_target;
 };
+
+#endif // SRTVIEW_SRC_SEARCHBAR_HPP_
