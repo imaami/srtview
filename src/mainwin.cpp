@@ -16,7 +16,7 @@
 #include <QStatusBar>
 
 MainWin::MainWin()
-	: m_edit(this), m_searchBar(this, this)
+	: m_edit(this), m_searchBar(this, this), m_mpv(this)
 {
 	setCentralWidget(&m_edit);
 	setAcceptDrops(true);
@@ -46,6 +46,13 @@ MainWin::MainWin()
 	              this, [this] { seekCue(m_edit.currentCue(), false); });
 	pb->addAction(QStringLiteral("Seek + pause\t(T)"),
 	              this, [this] { seekCue(m_edit.currentCue(), true); });
+	pb->addSeparator();
+	m_followAct.setText(QStringLiteral("&Follow playback\t(f)"));
+	m_followAct.setCheckable(true);
+	m_followAct.setChecked(true);
+	connect(&m_followAct, &QAction::toggled,
+	        this, [this](bool on) { m_edit.setFollow(on); });
+	pb->addAction(&m_followAct);
 
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
@@ -209,6 +216,19 @@ void MainWin::seekRel(double dt)
 	QString err;
 	if (!m_mpv.seekRel(dt, &err))
 		statusBar()->showMessage(QStringLiteral("mpv: ") + err, 3000);
+}
+
+void MainWin::toggleFollow()
+{
+	m_followAct.toggle();                // toggled() -> setFollow
+	statusBar()->showMessage(m_followAct.isChecked()
+		? QStringLiteral("following playback")
+		: QStringLiteral("following off"), 1500);
+}
+
+void MainWin::onMpvTime(double t)
+{
+	m_edit.setPlayTime(t);
 }
 
 void MainWin::setSearchText(const QString &s)

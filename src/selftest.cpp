@@ -56,6 +56,9 @@ void runSelftest(MainWin *w, const QString &video)
 		w->setPause(false);
 		log(QStringLiteral("play sent"));
 	});
+	QTimer::singleShot(4600, w, [w, log] {
+		log(QStringLiteral("playcue=%1").arg(w->playCue()));
+	});
 	QTimer::singleShot(5000, w, [w, log] {
 		w->setPause(true);
 		log(QStringLiteral("pause sent"));
@@ -67,6 +70,9 @@ void runSelftest(MainWin *w, const QString &video)
 		    .arg(c).arg(w->edit().cueStart(c), 0, 'f', 3));
 		w->seekCue(c, true);
 		log(QStringLiteral("seek-pause sent"));
+	});
+	QTimer::singleShot(8100, w, [w, log] {
+		log(QStringLiteral("playcue2=%1").arg(w->playCue()));
 	});
 	QTimer::singleShot(8300, w, [w, log] {
 		w->togglePause();                    // Space path

@@ -26,6 +26,10 @@ SrtEdit<Host>::SrtEdit(Host *host)
 	m_gutterFont = f;
 	m_gutterFont.setPointSizeF(f.pointSizeF() * 0.62);
 	document()->setDocumentMargin(28);
+	m_glide.setTargetObject(verticalScrollBar());
+	m_glide.setPropertyName("value");
+	m_glide.setDuration(260);
+	m_glide.setEasingCurve(QEasingCurve::OutCubic);
 	m_gutter.installEventFilter(this);
 	m_gutter.setCursor(Qt::PointingHandCursor);
 	connect(verticalScrollBar(), &QScrollBar::valueChanged,
@@ -67,8 +71,82 @@ void SrtEdit<Host>::setCues(std::vector<srt::cue> cues)
 	m_gutterW = QFontMetrics(m_gutterFont).horizontalAdvance(widest) + 26;
 	setViewportMargins(m_gutterW, 0, 0, 0);
 	layoutGutter();
+	m_glide.stop();
+	m_playCue = -1;
+	m_playSel.clear();
 	moveCursor(QTextCursor::Start);
 	updateCurrentCueHighlight();
+}
+
+template <class Host>
+int SrtEdit<Host>::cueAt(double t) const
+{
+	const auto it = std::ranges::upper_bound(m_cues, t, {},
+	                                         &srt::cue::start);
+	if (it == m_cues.begin())
+		return -1;
+	const auto prev = it - 1;
+	return t < prev->end ? int(prev - m_cues.begin()) : -1;
+}
+
+template <class Host>
+void SrtEdit<Host>::setPlayTime(double t)
+{
+	const int cue = cueAt(t);
+	if (cue == m_playCue)
+		return;
+	m_playCue = cue;
+	updatePlayHighlight();
+	m_gutter.update();
+	if (m_follow && cue >= 0)
+		glideTo(cue);
+}
+
+template <class Host>
+void SrtEdit<Host>::setFollow(bool on)
+{
+	m_follow = on;
+	if (on && m_playCue >= 0)
+		glideTo(m_playCue);
+	if (!on)
+		m_glide.stop();
+}
+
+template <class Host>
+void SrtEdit<Host>::updatePlayHighlight()
+{
+	m_playSel.clear();
+	if (m_playCue >= 0) {
+		const QTextBlock b = document()->findBlockByNumber(m_playCue);
+		ExtraSelection sel;
+		sel.cursor = QTextCursor(document());
+		sel.cursor.setPosition(b.position());
+		sel.cursor.setPosition(b.position() + b.length() - 1,
+		                       QTextCursor::KeepAnchor);
+		QColor bg = palette().color(QPalette::Highlight);
+		bg.setAlpha(55);
+		sel.format.setBackground(bg);
+		sel.format.setProperty(QTextFormat::FullWidthSelection, true);
+		m_playSel = {sel};
+	}
+	applySelections();
+}
+
+// Keep the active cue in the upper third, lyrics-style.
+template <class Host>
+void SrtEdit<Host>::glideTo(int cue)
+{
+	const QTextBlock b = document()->findBlockByNumber(cue);
+	if (!b.isValid())
+		return;
+	const QRectF r = document()->documentLayout()->blockBoundingRect(b);
+	const int want = int(r.center().y() - viewport()->height() * 0.35);
+	const int target = std::clamp(want, 0,
+	                              verticalScrollBar()->maximum());
+	m_glide.stop();
+	m_glide.setStartValue(verticalScrollBar()->value());
+	m_glide.setEndValue(target);
+	m_glide.start();
 }
 
 template <class Host>
@@ -103,6 +181,12 @@ void SrtEdit<Host>::keyPressEvent(QKeyEvent *ev)
 		case Qt::Key_Escape:
 			m_host->hideSearch();
 			return;
+		case Qt::Key_F:
+			if (ev->text() == QStringLiteral("f")) {
+				m_host->toggleFollow();
+				return;
+			}
+			break;
 		case Qt::Key_C:
 			if (ev->text() == QStringLiteral("c")) {
 				m_host->setPause(false);
@@ -220,9 +304,9 @@ void SrtEdit<Host>::paintGutter()
 	// Same background as the text, only quieter ink: the gutter
 	// should read as part of the page, not as a panel.
 	p.fillRect(m_gutter.rect(), palette().color(QPalette::Base));
-	QColor ink = palette().color(QPalette::Text);
-	ink.setAlpha(110);
-	p.setPen(ink);
+	QColor dim = palette().color(QPalette::Text);
+	dim.setAlpha(110);
+	const QColor full = palette().color(QPalette::Text);
 	p.setFont(m_gutterFont);
 	const int w = m_gutterW - 12;
 	const int lineH = fontMetrics().height();
@@ -230,6 +314,7 @@ void SrtEdit<Host>::paintGutter()
 		const int cue = b.blockNumber();
 		if (size_t(cue) < m_cues.size()) {
 			const qreal y = r.top() + b.blockFormat().topMargin();
+			p.setPen(cue == m_playCue ? full : dim);
 			p.drawText(QRectF(0, y, w, lineH),
 			           Qt::AlignRight | Qt::AlignVCenter,
 			           fmtTime(m_cues[size_t(cue)].start, false));
@@ -270,7 +355,7 @@ void SrtEdit<Host>::updateCurrentCueHighlight()
 template <class Host>
 void SrtEdit<Host>::applySelections()
 {
-	setExtraSelections(m_lineSel + m_matchSel);
+	setExtraSelections(m_lineSel + m_playSel + m_matchSel);
 }
 
 template class SrtEdit<MainWin>;

@@ -32,11 +32,14 @@ public:
 	void setPause(bool on);
 	void togglePause();
 	void seekRel(double dt);
+	void toggleFollow();
+	void onMpvTime(double t);
 
 	// ---- selftest hooks ----
 	void setSearchText(const QString &s);
 	void setRegexEnabled(bool on);
 	int matchCount() const { return int(m_matchStarts.size()); }
+	int playCue() const { return m_edit.playCue(); }
 	bool searchBarVisible() const { return m_searchBar.isVisible(); }
 	QRect searchBarGeometry() const { return m_searchBar.geometry(); }
 	auto &edit() { return m_edit; }
@@ -60,9 +63,9 @@ private:
 
 	SrtEdit<MainWin>   m_edit;
 	SearchBar<MainWin> m_searchBar;
-	MpvLink            m_mpv;
+	MpvLink<MainWin>   m_mpv;
 	QLabel             m_state;
-	QAction            m_nextAct, m_prevAct;
+	QAction            m_nextAct, m_prevAct, m_followAct;
 	QTextCursor        m_searchAnchor;
 	std::vector<int>   m_matchStarts;
 };

@@ -1,21 +1,27 @@
 #include "mpvlink.hpp"
 
 #include "discovery.hpp"
+#include "mainwin.hpp"
 
 #include <QCoreApplication>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <chrono>
 #include <thread>
 
-MpvLink::MpvLink()
+template <class Host>
+MpvLink<Host>::MpvLink(Host *host)
+	: m_host(host)
 {
-	// mpv replies to nothing we care about; keep the buffer empty.
 	connect(&m_conn, &QLocalSocket::readyRead,
-	        this, [this] { m_conn.readAll(); });
+	        this, &MpvLink::onReadyRead);
 }
 
-bool MpvLink::openFor(const QString &video, const QString &srt, QString *err)
+template <class Host>
+bool MpvLink<Host>::openFor(const QString &video, const QString &srt,
+                            QString *err)
 {
 	shutdown();
 	m_video = video;
@@ -26,7 +32,8 @@ bool MpvLink::openFor(const QString &video, const QString &srt, QString *err)
 	return ensureAlive(err);
 }
 
-bool MpvLink::ensureAlive(QString *err)
+template <class Host>
+bool MpvLink<Host>::ensureAlive(QString *err)
 {
 	if (m_conn.state() == QLocalSocket::ConnectedState)
 		return true;
@@ -68,7 +75,8 @@ bool MpvLink::ensureAlive(QString *err)
 	return false;
 }
 
-bool MpvLink::send(const QString &line, QString *err)
+template <class Host>
+bool MpvLink<Host>::send(const QString &line, QString *err)
 {
 	if (!ensureAlive(err))
 		return false;
@@ -79,7 +87,8 @@ bool MpvLink::send(const QString &line, QString *err)
 	return m_conn.bytesToWrite() == 0 || m_conn.waitForBytesWritten(500);
 }
 
-bool MpvLink::seek(double t, bool forcePause, QString *err)
+template <class Host>
+bool MpvLink<Host>::seek(double t, bool forcePause, QString *err)
 {
 	const QString s = QStringLiteral("no-osd seek %1 absolute+exact")
 	                  .arg(t, 0, 'f', 3);
@@ -87,24 +96,28 @@ bool MpvLink::seek(double t, bool forcePause, QString *err)
 		? QStringLiteral("no-osd set pause yes; ") + s : s, err);
 }
 
-bool MpvLink::seekRel(double dt, QString *err)
+template <class Host>
+bool MpvLink<Host>::seekRel(double dt, QString *err)
 {
 	return send(QStringLiteral("no-osd seek %1").arg(dt, 0, 'f', 1), err);
 }
 
-bool MpvLink::setPause(bool on, QString *err)
+template <class Host>
+bool MpvLink<Host>::setPause(bool on, QString *err)
 {
 	return send(QStringLiteral("no-osd set pause %1")
 	            .arg(on ? QStringLiteral("yes") : QStringLiteral("no")),
 	            err);
 }
 
-bool MpvLink::cyclePause(QString *err)
+template <class Host>
+bool MpvLink<Host>::cyclePause(QString *err)
 {
 	return send(QStringLiteral("no-osd cycle pause"), err);
 }
 
-void MpvLink::shutdown()
+template <class Host>
+void MpvLink<Host>::shutdown()
 {
 	if (m_spawned && m_proc.state() == QProcess::Running) {
 		QString e;
@@ -114,17 +127,64 @@ void MpvLink::shutdown()
 		QFile::remove(m_sock);
 	}
 	m_conn.abort();
+	m_inbuf.clear();
 	m_spawned = false;
 	m_video.clear();
 	m_srt.clear();
 	m_sock.clear();
 }
 
-bool MpvLink::tryConnect()
+template <class Host>
+bool MpvLink<Host>::tryConnect()
 {
 	if (m_sock.isEmpty())
 		return false;
 	m_conn.abort();
+	m_inbuf.clear();
 	m_conn.connectToServer(m_sock);
-	return m_conn.waitForConnected(200);
+	if (!m_conn.waitForConnected(200))
+		return false;
+	observe();
+	return true;
 }
+
+// Property observation is per-client: register on every connect.
+template <class Host>
+void MpvLink<Host>::observe()
+{
+	m_conn.write("{\"command\":[\"observe_property\",1,"
+	             "\"playback-time\"]}\n");
+	m_conn.flush();
+}
+
+template <class Host>
+void MpvLink<Host>::onReadyRead()
+{
+	m_inbuf += m_conn.readAll();
+	while (true) {
+		const qsizetype nl = m_inbuf.indexOf('\n');
+		if (nl < 0)
+			return;
+		const QJsonDocument doc =
+			QJsonDocument::fromJson(m_inbuf.left(nl));
+		m_inbuf.remove(0, nl + 1);
+		if (doc.isObject())
+			dispatch(doc.object());
+	}
+}
+
+template <class Host>
+void MpvLink<Host>::dispatch(const QJsonObject &ev)
+{
+	if (ev.value(QStringLiteral("event"))
+	    != QStringLiteral("property-change"))
+		return;
+	if (ev.value(QStringLiteral("name"))
+	    != QStringLiteral("playback-time"))
+		return;
+	const QJsonValue v = ev.value(QStringLiteral("data"));
+	if (v.isDouble())
+		m_host->onMpvTime(v.toDouble());
+}
+
+template class MpvLink<MainWin>;

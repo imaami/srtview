@@ -21,6 +21,8 @@
 //   T               seek + force pause
 //   Space           play/pause toggle
 //   Left / Right    seek 5 s back / forward
+//   f               toggle follow: the cue being spoken is tinted in
+//                   sync, and the view glides along while following
 //   c / P           play / pause (srtjump muscle memory)
 //
 // Env: SRTVIEW_MPV_ARGS -- extra mpv arguments (split on whitespace)
