@@ -31,10 +31,11 @@ fi
 __cxxflags="$CXXFLAGS"
 [[ "$__cxxflags" =~ (^|[[:blank:]])-m(arch|cpu|tune)= ]] || {
 	if (( __cxx_is_clang )); then
+		[[ "$__arch" == 'aarch64' ]] && __mcpu=cpu || __mcpu=arch
 		__cxxflags+=\ $("$__cxx" -### -c -xc++ /dev/null              \
 		                         -m{arch,cpu,tune}=native 2>&1        |
 		                grep -Eo '"-(target-cpu|tune-cpu)" "[^"]+"'   |
-		                sed -Ee 's/"-target-cpu" "([^"]+)"/-mcpu=\1/' \
+		                sed -Ee 's/"-target-cpu" "([^"]+)"/-m'"$__mcpu"'=\1/' \
 		                     -e 's/"-tune-cpu" "([^"]+)"/-mtune=\1/'  |
 		                grep -v '=$'                                  |
 		                xargs)
