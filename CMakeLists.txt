@@ -9,4 +9,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
+include(CTest)
+
 add_subdirectory(src)
+if(BUILD_TESTING)
+	add_subdirectory(tests)
+endif()
