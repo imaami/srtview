@@ -9,11 +9,11 @@
 /.vscode/
 /build/
 /doc/html/
+CMakeCache.txt
 /doc/latex/
 /doc/man/
 /doc/rtf/
 /doc/xml/
-CMakeCache.txt
 CMakeFiles/
 Makefile
 cmake_install.cmake
