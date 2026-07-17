@@ -5,6 +5,8 @@
 #ifndef SRTVIEW_SRC_PLAYBACK_HPP_
 #define SRTVIEW_SRC_PLAYBACK_HPP_
 
+#include "trail.hpp"
+
 #include <QAction>
 
 class mpv_link_base;
@@ -15,7 +17,7 @@ class PlaybackCtl
 {
 public:
 	PlaybackCtl(mpv_link_base &link, srt_view_base &view,
-	            QStatusBar &status);
+	            QStatusBar &status, Trail &trail);
 
 	void seekCue(int cue, bool forcePause);
 	void setPause(bool on);
@@ -25,12 +27,16 @@ public:
 	void onMpvTime(double t);
 	void onMpvState(bool responsive);
 
+	// Undo applier: return to a recorded position, pause untouched.
+	void applyTime(double t);
+
 	QAction &followAction() { return m_followAct; }
 
 private:
 	mpv_link_base  &m_link;
 	srt_view_base  &m_view;
 	QStatusBar     &m_status;
+	Trail          &m_trail;
 	QAction         m_followAct;
 };
 

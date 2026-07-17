@@ -93,6 +93,14 @@ protected:
 				s_->hideSearch();
 				return true;
 			}
+			if (ke->key() == Qt::Key_Up) {
+				s_->historyStep(true);
+				return true;
+			}
+			if (ke->key() == Qt::Key_Down) {
+				s_->historyStep(false);
+				return true;
+			}
 		}
 		return QWidget::eventFilter(obj, ev);
 	}

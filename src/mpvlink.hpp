@@ -44,6 +44,9 @@ public:
 
 	bool spawned() const { return m_spawned; }
 
+	// Last observed playback-time, or negative before any event.
+	double lastTime() const { return m_lastTime; }
+
 protected:
 	mpv_link_base();
 

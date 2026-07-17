@@ -20,8 +20,8 @@ MainWin::MainWin()
 	: m_view(&m_playback, &m_search, this)
 	, m_bar(&m_search, &m_view)
 	, m_link(&m_playback)
-	, m_playback(m_link, m_view, *statusBar())
-	, m_search(m_bar, m_view, *statusBar())
+	, m_playback(m_link, m_view, *statusBar(), m_trail)
+	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail)
 {
 	setCentralWidget(&m_view);
 	setAcceptDrops(true);
@@ -41,6 +41,10 @@ MainWin::MainWin()
 	file->addSeparator();
 	file->addAction(QStringLiteral("&Quit"), QKeySequence::Quit,
 	                this, [this] { close(); });
+
+	auto *edit = menuBar()->addMenu(QStringLiteral("&Edit"));
+	edit->addAction(QStringLiteral("&Undo step"), QKeySequence::Undo,
+	                this, [this] { undoStep(); });
 
 	auto *pb = menuBar()->addMenu(QStringLiteral("&Playback"));
 	pb->addAction(QStringLiteral("Play/pause\t(Space)"),
@@ -116,6 +120,34 @@ bool MainWin::openPath(QString const &path)
 	                               : QStringLiteral("reused")));
 	m_view.setFocus();
 	return true;
+}
+
+// Fundo: walk one step back along the search/jump/seek breadcrumb
+// trail.  Each application runs with recording suppressed.
+void MainWin::undoStep()
+{
+	if (m_trail.empty()) {
+		statusBar()->showMessage(QStringLiteral("nothing to undo"),
+		                         1500);
+		return;
+	}
+	trail_step const s = m_trail.pop();
+	m_trail.setApplying(true);
+	switch (s.k) {
+	case trail_step::search_text:
+		m_search.applyPattern(s.text);
+		statusBar()->showMessage(QStringLiteral("undo \u2192 search "
+			"\"%1\"").arg(s.text), 2000);
+		break;
+	case trail_step::search_jump:
+		m_search.applyCursor(s.cursor);
+		break;
+	case trail_step::video_jump:
+	case trail_step::side_seek:
+		m_playback.applyTime(s.time);
+		break;
+	}
+	m_trail.setApplying(false);
 }
 
 void MainWin::dragEnterEvent(QDragEnterEvent *ev)

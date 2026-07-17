@@ -74,6 +74,36 @@ void runSelftest(MainWin *w, QString const &video)
 	QTimer::singleShot(8100, w, [w, log] {
 		log(QStringLiteral("playcue2=%1").arg(w->view().playCue()));
 	});
+	// --- fundo + history: search, navigate, jump, then walk back ---
+	QTimer::singleShot(9000, w, [w, log] {
+		log(QStringLiteral("c0=%1").arg(w->view().currentCue()));
+		w->search().setSearchText(QStringLiteral("consequat"));
+		log(QStringLiteral("c1=%1").arg(w->view().currentCue()));
+	});
+	QTimer::singleShot(9200, w, [w, log] {
+		w->search().findAgain(false);
+		int const c2 = w->view().currentCue();
+		log(QStringLiteral("c2=%1").arg(c2));
+		w->playback().seekCue(c2, true);
+	});
+	QTimer::singleShot(9700, w, [w] { w->undoStep(); });   // video jump
+	QTimer::singleShot(10100, w, [w, log] {
+		log(QStringLiteral("undo1 playcue=%1").arg(w->view().playCue()));
+		w->undoStep();                                     // find jump
+		log(QStringLiteral("undo2 cue=%1").arg(w->view().currentCue()));
+	});
+	QTimer::singleShot(10400, w, [w, log] {
+		w->undoStep();                                     // anchor jump
+		log(QStringLiteral("undo3 cue=%1").arg(w->view().currentCue()));
+		w->undoStep();                                     // text step
+		log(QStringLiteral("undo4 pattern=%1").arg(w->bar().pattern()));
+	});
+	QTimer::singleShot(10800, w, [w, log] {
+		w->search().historyStep(true);
+		log(QStringLiteral("hist1 pattern=%1").arg(w->bar().pattern()));
+		w->search().historyStep(false);
+		log(QStringLiteral("hist2 pattern=%1").arg(w->bar().pattern()));
+	});
 	QTimer::singleShot(8300, w, [w, log] {
 		w->playback().togglePause();                    // Space path
 		log(QStringLiteral("toggle sent"));
@@ -83,7 +113,7 @@ void runSelftest(MainWin *w, QString const &video)
 		w->grab().save(shot);
 		log(QStringLiteral("screenshot %1").arg(shot));
 	});
-	QTimer::singleShot(10000, w, [w, log] {
+	QTimer::singleShot(11400, w, [w, log] {
 		log(QStringLiteral("done"));
 		w->close();
 		QApplication::exit(0);

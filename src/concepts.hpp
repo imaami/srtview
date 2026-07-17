@@ -21,6 +21,7 @@ concept search_host = requires(T &h, bool b) {
 	h.commitSearch();
 	h.searchChanged();
 	h.findAgain(b);
+	h.historyStep(b);
 };
 
 template <typename T>

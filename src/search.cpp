@@ -1,5 +1,6 @@
 #include "search.hpp"
 
+#include "prefs.hpp"
 #include "searchbar.hpp"
 #include "srtedit.hpp"
 
@@ -37,8 +38,9 @@ void collectMatches(QTextDocument *doc, QRegularExpression const &re,
 } // namespace
 
 SearchCtl::SearchCtl(search_bar_base &bar, srt_view_base &view,
-                     QStatusBar &status)
-	: m_bar(bar), m_view(view), m_status(status)
+                     QStatusBar &status, Prefs &prefs, Trail &trail)
+	: m_bar(bar), m_view(view), m_status(status), m_prefs(prefs),
+	  m_trail(trail)
 {
 	m_nextAct.setText(QStringLiteral("Find &next"));
 	m_nextAct.setShortcut(QKeySequence(Qt::Key_F3));
@@ -59,8 +61,12 @@ void SearchCtl::showSearch()
 	m_bar.open(target());
 }
 
+// Dismissing does not revert anything -- the highlights, pattern
+// and cursor all stay -- so leaving the bar is an effective use of
+// the pattern and gets recorded like a commit.
 void SearchCtl::hideSearch()
 {
+	recordUse();
 	m_bar.dismiss();
 	m_view.setFocus();
 }
@@ -77,7 +83,12 @@ void SearchCtl::commitSearch()
 // or after where the search began.
 void SearchCtl::searchChanged()
 {
+	if (!m_stepping && !m_trail.applying())
+		m_histPos = -1;              // fresh typing leaves history
 	highlightAll();
+	if (m_trail.applying())
+		return;                      // undo restores text only; the
+	                                 // cursor has its own steps
 	if (m_matchStarts.empty() || m_bar.pattern().isEmpty())
 		return;
 	QTextCursor const from = m_anchor.isNull()
@@ -97,6 +108,9 @@ void SearchCtl::findAgain(bool backward)
 	QRegularExpression const re = pattern();
 	if (!re.isValid() || re.pattern().isEmpty())
 		return;
+	recordUse();
+	m_trail.push({trail_step::search_jump, {},
+	              m_view.textCursor().position(), 0.0});
 	QTextDocument::FindFlags fl;
 	if (backward)
 		fl |= QTextDocument::FindBackward;
@@ -125,6 +139,49 @@ void SearchCtl::setSearchText(QString const &s)
 void SearchCtl::setRegexEnabled(bool on)
 {
 	m_bar.setRegexEnabled(on);
+}
+
+void SearchCtl::recordUse()
+{
+	QString const p = m_bar.pattern();
+	if (p == m_recorded)
+		return;
+	m_trail.push({trail_step::search_text, m_recorded, 0, 0.0});
+	m_trail.push({trail_step::search_jump, {},
+	              m_anchor.isNull() ? 0 : m_anchor.position(), 0.0});
+	m_recorded = p;
+	m_prefs.addSearch(p);
+}
+
+void SearchCtl::historyStep(bool back)
+{
+	QStringList const h = m_prefs.searchHistory();
+	if (h.isEmpty())
+		return;
+	if (m_histPos < 0)
+		m_draft = m_bar.pattern();
+	int pos = m_histPos + (back ? 1 : -1);
+	if (pos >= h.size())
+		return;                              // already at the oldest
+	m_histPos = pos < 0 ? -1 : pos;
+	m_stepping = true;
+	m_bar.setPattern(m_histPos < 0 ? m_draft : h[m_histPos]);
+	m_stepping = false;
+}
+
+void SearchCtl::applyPattern(QString const &text)
+{
+	m_bar.setPattern(text);          // trail is in applying mode:
+	m_recorded = text;               // highlights refresh, no jump
+}
+
+void SearchCtl::applyCursor(int position)
+{
+	QTextCursor c(m_view.document());
+	c.setPosition(std::min(position,
+	                       std::max(0, int(m_view.document()
+	                                       ->characterCount()) - 1)));
+	m_view.setTextCursor(c);
 }
 
 QRegularExpression SearchCtl::pattern() const

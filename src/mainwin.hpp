@@ -11,6 +11,7 @@
 #include "search.hpp"
 #include "searchbar.hpp"
 #include "srtedit.hpp"
+#include "trail.hpp"
 
 #include <QLabel>
 #include <QMainWindow>
@@ -21,6 +22,7 @@ public:
 	MainWin();
 
 	bool openPath(QString const &path);
+	void undoStep();
 
 	// Component / controller access (menus are wired internally;
 	// these exist for the selftest driver).
@@ -45,6 +47,7 @@ private:
 	void setState(QString const &s);
 
 	Prefs                           m_prefs;
+	Trail                           m_trail;
 	QMenu                          *m_recentMenu = nullptr;
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;
 	SearchBar<SearchCtl>            m_bar;

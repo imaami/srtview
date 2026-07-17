@@ -16,6 +16,10 @@ public:
 	QStringList recentFiles() const;
 	void addRecentFile(QString const &path);
 
+	// Endless, most-recently-used first.
+	QStringList searchHistory() const;
+	void addSearch(QString const &pattern);
+
 private:
 	static constexpr int kMaxRecent = 20;
 

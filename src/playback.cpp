@@ -4,11 +4,12 @@
 #include "srtedit.hpp"
 #include "timefmt.hpp"
 
+
 #include <QStatusBar>
 
 PlaybackCtl::PlaybackCtl(mpv_link_base &link, srt_view_base &view,
-                         QStatusBar &status)
-	: m_link(link), m_view(view), m_status(status)
+                         QStatusBar &status, Trail &trail)
+	: m_link(link), m_view(view), m_status(status), m_trail(trail)
 {
 	m_followAct.setText(QStringLiteral("&Follow playback\t(f)"));
 	m_followAct.setCheckable(true);
@@ -23,6 +24,9 @@ void PlaybackCtl::seekCue(int cue, bool forcePause)
 		return;
 	QString err;
 	double const t = m_view.cueStart(cue);
+	if (m_link.lastTime() >= 0.0)
+		m_trail.push({trail_step::video_jump, {}, 0,
+		              m_link.lastTime()});
 	if (!m_link.seek(t, forcePause, &err)) {
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 		return;
@@ -50,8 +54,22 @@ void PlaybackCtl::togglePause()
 void PlaybackCtl::seekRel(double dt)
 {
 	QString err;
+	if (m_link.lastTime() >= 0.0)
+		m_trail.push({trail_step::side_seek, {}, 0,
+		              m_link.lastTime()});
 	if (!m_link.seekRel(dt, &err))
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
+}
+
+void PlaybackCtl::applyTime(double t)
+{
+	QString err;
+	if (!m_link.seek(t, false, &err)) {
+		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
+		return;
+	}
+	m_status.showMessage(QStringLiteral("undo \u2192 %1")
+	                     .arg(fmtTime(t, true)), 2000);
 }
 
 void PlaybackCtl::toggleFollow()
