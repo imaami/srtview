@@ -4,6 +4,7 @@ add_executable(srtview
 	srtedit.cpp
 	searchbar.cpp
 	playback.cpp
+	prefs.cpp
 	search.cpp
 	mpvlink.cpp
 	srt.cpp

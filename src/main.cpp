@@ -29,6 +29,11 @@
 //      SRTVIEW_DEBUG    -- log IPC traffic and player health to
 //                          stderr; state flips are logged always
 //
+// Session state (last browsed directory, recent files) persists via
+// QSettings.  On WSLg (detected by its PulseAudio bridge socket),
+// mpv is spawned with --audio-stream-silence=yes to sidestep known
+// audio-ack wedges; override through SRTVIEW_MPV_ARGS.
+//
 // A player spawned by srtview that stops responding (seen on WSLg,
 // where flaky PulseAudio acks can block mpv's core inside the audio
 // output with no timeout) is killed and respawned at the last

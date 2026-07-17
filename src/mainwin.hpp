@@ -7,6 +7,7 @@
 
 #include "mpvlink.hpp"
 #include "playback.hpp"
+#include "prefs.hpp"
 #include "search.hpp"
 #include "searchbar.hpp"
 #include "srtedit.hpp"
@@ -29,6 +30,7 @@ public:
 	SearchCtl       &search() { return m_search; }
 
 protected:
+	bool eventFilter(QObject *obj, QEvent *ev) override;
 	void dragEnterEvent(QDragEnterEvent *ev) override;
 	void dropEvent(QDropEvent *ev) override;
 	void closeEvent(QCloseEvent *ev) override;
@@ -36,11 +38,14 @@ protected:
 
 private:
 	static bool droppable(QMimeData const *md);
-	void openDialog();
+	void openDialog(QString const &startDir);
+	void rebuildRecentMenu();
 	void closeFile();
 	bool fail(QString const &msg);
 	void setState(QString const &s);
 
+	Prefs                           m_prefs;
+	QMenu                          *m_recentMenu = nullptr;
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;
 	SearchBar<SearchCtl>            m_bar;
 	MpvLink<PlaybackCtl>            m_link;

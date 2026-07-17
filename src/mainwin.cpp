@@ -9,6 +9,8 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
@@ -29,7 +31,11 @@ MainWin::MainWin()
 	// --- menus ---
 	auto *file = menuBar()->addMenu(QStringLiteral("&File"));
 	file->addAction(QStringLiteral("&Open\u2026"), QKeySequence::Open,
-	                this, [this] { openDialog(); });
+	                this, [this] { openDialog(m_prefs.lastDir()); });
+	m_recentMenu = file->addMenu(QStringLiteral("Open &recent"));
+	m_recentMenu->installEventFilter(this);
+	connect(m_recentMenu, &QMenu::aboutToShow,
+	        this, [this] { rebuildRecentMenu(); });
 	file->addAction(QStringLiteral("&Close"), QKeySequence::Close,
 	                this, [this] { closeFile(); });
 	file->addSeparator();
@@ -96,6 +102,9 @@ bool MainWin::openPath(QString const &path)
 	if (!m_link.openFor(video, srt, &err))
 		return fail(err);
 
+	m_prefs.addRecentFile(video);
+	m_prefs.setLastDir(QFileInfo(video).absolutePath());
+
 	auto const n = cues.size();
 	m_view.setCues(std::move(cues));
 	m_search.searchChanged();
@@ -152,15 +161,63 @@ bool MainWin::droppable(QMimeData const *md)
 	return false;
 }
 
-void MainWin::openDialog()
+void MainWin::openDialog(QString const &startDir)
 {
-	QString const p = QFileDialog::getOpenFileName(this,
-		QStringLiteral("Open video or subtitle"), QString(),
+	QFileDialog dlg(this, QStringLiteral("Open video or subtitle"),
+	                startDir);
+	dlg.setFileMode(QFileDialog::ExistingFile);
+	dlg.setNameFilter(
 		QStringLiteral("Video / SRT (*.mp4 *.mkv *.webm *.avi *.mov "
 		               "*.m4v *.mpg *.mpeg *.ts *.wmv *.srt);;"
 		               "All files (*)"));
-	if (!p.isEmpty())
-		openPath(p);
+	int const r = dlg.exec();
+	// Remember where the user browsed to, accepted or not: cancel
+	// after navigating still means "continue from there next time".
+	m_prefs.setLastDir(dlg.directory().absolutePath());
+	if (r != QDialog::Accepted || dlg.selectedFiles().isEmpty())
+		return;
+	openPath(dlg.selectedFiles().first());
+}
+
+void MainWin::rebuildRecentMenu()
+{
+	m_recentMenu->clear();
+	QStringList const files = m_prefs.recentFiles();
+	if (files.isEmpty()) {
+		m_recentMenu->addAction(QStringLiteral("(empty)"))
+			->setEnabled(false);
+		return;
+	}
+	for (QString const &path : files) {
+		QAction *act = m_recentMenu->addAction(
+			QFileInfo(path).fileName());
+		act->setToolTip(path);
+		act->setData(path);
+		connect(act, &QAction::triggered,
+		        this, [this, path] { openPath(path); });
+	}
+}
+
+// Right-click on a recent entry: offer to open the file dialog in
+// that entry's directory, for revisiting previously used places.
+bool MainWin::eventFilter(QObject *obj, QEvent *ev)
+{
+	if (obj != m_recentMenu || ev->type() != QEvent::ContextMenu)
+		return QMainWindow::eventFilter(obj, ev);
+	auto *ce = static_cast<QContextMenuEvent *>(ev);
+	QAction *act = m_recentMenu->actionAt(ce->pos());
+	if (!act || act->data().toString().isEmpty())
+		return true;
+	QMenu ctx;
+	QAction *view = ctx.addAction(
+		QStringLiteral("&View file location\u2026"));
+	if (ctx.exec(ce->globalPos()) != view)
+		return true;
+	QString const dir = QFileInfo(act->data().toString())
+	                    .absolutePath();
+	m_recentMenu->close();
+	openDialog(dir);
+	return true;
 }
 
 void MainWin::closeFile()

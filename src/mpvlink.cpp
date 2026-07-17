@@ -57,6 +57,17 @@ bool mpv_link_base::ensureAlive(QString *err)
 	                 QStringLiteral("--sub-auto=no")};
 	if (m_resumeTime >= 0.0)
 		args << QStringLiteral("--start=%1").arg(m_resumeTime, 0, 'f', 3);
+	// WSLg's PulseAudio bridge can drop stream acknowledgments,
+	// wedging mpv's core inside ao_pulse (no-timeout waits) on the
+	// seek/pause storms this tool generates; keeping the stream open
+	// avoids the restarts that trigger it.  Detect by the presence
+	// of the bridge's own socket.  SRTVIEW_MPV_ARGS comes later on
+	// the command line, so users can override (mpv is last-wins).
+	if (QFile::exists(QStringLiteral("/mnt/wslg/PulseServer"))) {
+		args << QStringLiteral("--audio-stream-silence=yes");
+		dbg(QStringLiteral("WSLg pulse bridge detected: adding "
+		                   "--audio-stream-silence=yes"));
+	}
 	args += QProcess::splitCommand(qEnvironmentVariable("SRTVIEW_MPV_ARGS"));
 	args << QStringLiteral("--") << m_video;
 	// Forward mpv's stdout/stderr to ours instead of the QProcess
