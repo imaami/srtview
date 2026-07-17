@@ -3,9 +3,11 @@
 #include "discovery.hpp"
 #include "palettefix.hpp"
 #include "srt.hpp"
+#include "timefmt.hpp"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMenuBar>
@@ -79,9 +81,16 @@ bool MainWin::openPath(const QString &path)
 		if (srt.isEmpty())
 			return fail(err);
 	}
-	std::vector<Cue> cues = parseSrt(srt, &err);
+	QFile srtFile(srt);
+	if (!srtFile.open(QIODevice::ReadOnly))
+		return fail(QStringLiteral("%1: %2").arg(srt,
+		                                         srtFile.errorString()));
+	const QByteArray raw = srtFile.readAll();
+	std::vector<srt::cue> cues = srt::parse(srt::to_utf8(
+		{raw.constData(), size_t(raw.size())}));
 	if (cues.empty())
-		return fail(QStringLiteral("%1: %2").arg(srt, err));
+		return fail(QStringLiteral("%1: no cues found (not an SRT "
+		                           "file?)").arg(srt));
 
 	if (!m_mpv.openFor(video, srt, &err))
 		return fail(err);

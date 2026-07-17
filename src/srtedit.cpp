@@ -37,7 +37,7 @@ SrtEdit<Host>::SrtEdit(Host *host)
 }
 
 template <class Host>
-void SrtEdit<Host>::setCues(std::vector<Cue> cues)
+void SrtEdit<Host>::setCues(std::vector<srt::cue> cues)
 {
 	m_cues = std::move(cues);
 	QTextDocument *doc = document();
@@ -52,11 +52,13 @@ void SrtEdit<Host>::setCues(std::vector<Cue> cues)
 	QTextCursor cur(doc);
 	cur.setBlockFormat(bf);
 	bool first = true;
-	for (const Cue &c : m_cues) {
+	for (const srt::cue &c : m_cues) {
 		if (!first)
 			cur.insertBlock(bfGap, QTextCharFormat());
 		first = false;
-		cur.insertHtml(cueHtml(c.text));
+		const std::string html = srt::cue_html(c.text);
+		cur.insertHtml(QString::fromUtf8(html.data(),
+		                                 qsizetype(html.size())));
 	}
 
 	// gutter width from the widest start time in this file
@@ -150,7 +152,7 @@ bool SrtEdit<Host>::event(QEvent *ev)
 		const QPoint vp = viewport()->mapFrom(this, he->pos());
 		const int cue = cursorForPosition(vp).blockNumber();
 		if (cue >= 0 && size_t(cue) < m_cues.size()) {
-			const Cue &c = m_cues[size_t(cue)];
+			const srt::cue &c = m_cues[size_t(cue)];
 			QToolTip::showText(he->globalPos(),
 				QStringLiteral("#%1   %2 \u2192 %3")
 				.arg(cue + 1)

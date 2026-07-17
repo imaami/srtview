@@ -10,6 +10,7 @@
 #pragma once
 
 #include "srt.hpp"
+#include "timefmt.hpp"
 
 #include <QFont>
 #include <QTextEdit>
@@ -26,7 +27,7 @@ class SrtEdit : public QTextEdit
 public:
 	explicit SrtEdit(Host *host);
 
-	void setCues(std::vector<Cue> cues);
+	void setCues(std::vector<srt::cue> cues);
 
 	int cueCount() const { return int(m_cues.size()); }
 	double cueStart(int i) const
@@ -59,6 +60,6 @@ private:
 	QWidget                 m_gutter;
 	QFont                   m_gutterFont;
 	int                     m_gutterW = 0;
-	std::vector<Cue>        m_cues;
+	std::vector<srt::cue>   m_cues;
 	QList<ExtraSelection>   m_lineSel, m_matchSel;
 };

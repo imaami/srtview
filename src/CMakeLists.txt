@@ -5,6 +5,7 @@ add_executable(srtview
 	searchbar.cpp
 	mpvlink.cpp
 	srt.cpp
+	timefmt.cpp
 	discovery.cpp
 	palettefix.cpp
 	selftest.cpp

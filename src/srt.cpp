@@ -1,448 +1,439 @@
 #include "srt.hpp"
 
-#include <QFile>
+#include <optional>
 
-#include <cmath>
-#include <cstdint>
-
-namespace {
-
-// ---------------------------------------------------------- scanning --
-
-std::string_view trimView(std::string_view v)
-{
-	size_t a = 0, b = v.size();
-	while (a < b && static_cast<unsigned char>(v[a]) <= ' ')
-		++a;
-	while (b > a && static_cast<unsigned char>(v[b - 1]) <= ' ')
-		--b;
-	return v.substr(a, b - a);
-}
-
-bool allDigits(std::string_view v)
-{
-	if (v.empty())
-		return false;
-	for (const char c : v)
-		if (c < '0' || c > '9')
-			return false;
-	return true;
-}
-
-// One line per call.  The reference lists CRLF, LF and bare-CR
-// (classic Mac) files as all occurring in the wild; handle all three.
-struct LineCursor {
-	const char *p;
-	const char *end;
-
-	bool next(std::string_view &line)
-	{
-		if (p >= end)
-			return false;
-		const char *e = p;
-		while (e < end && *e != '\n' && *e != '\r')
-			++e;
-		line = {p, size_t(e - p)};
-		if (e < end) {
-			if (*e == '\r' && e + 1 < end && e[1] == '\n')
-				e += 2;
-			else
-				++e;
-		}
-		p = e;
-		return true;
-	}
-};
-
-// Consumes "H+:MM:SS[,.]m{1,3}" starting at p; advances p on success.
-// Reference form is zero-padded HH:MM:SS,mmm with a comma; longer
-// hour fields, a period separator (a documented common deviation) and
-// short millisecond fields are accepted as tolerances.
-bool parseStamp(const char *&p, const char *end, double &out)
-{
-	const auto digits = [&](int minN, int maxN, unsigned &v) {
-		int n = 0;
-		v = 0;
-		while (p < end && *p >= '0' && *p <= '9' && n < maxN) {
-			v = v * 10 + unsigned(*p - '0');
-			++p;
-			++n;
-		}
-		return n >= minN;
-	};
-	unsigned h, m, s, ms;
-	if (!digits(1, 9, h) || p >= end || *p != ':')
-		return false;
-	++p;
-	if (!digits(2, 2, m) || p >= end || *p != ':')
-		return false;
-	++p;
-	if (!digits(2, 2, s) || p >= end || (*p != ',' && *p != '.'))
-		return false;
-	++p;
-	const char *msStart = p;
-	if (!digits(1, 3, ms))
-		return false;
-	switch (p - msStart) {
-	case 1: ms *= 100; break;
-	case 2: ms *= 10;  break;
-	default:           break;
-	}
-	out = h * 3600.0 + m * 60.0 + s + ms / 1000.0;
-	return true;
-}
-
-// Timecode line: "start --> end", whitespace-tolerant.  Anything
-// after the second stamp (SubRip's X1:/X2:/Y1:/Y2: positioning
-// extension, or other junk) is ignored.
-bool parseTimestampLine(std::string_view line, double &a, double &b)
-{
-	const char *p = line.data();
-	const char *end = p + line.size();
-	const auto ws = [&] {
-		while (p < end && (*p == ' ' || *p == '\t'))
-			++p;
-	};
-	ws();
-	if (!parseStamp(p, end, a))
-		return false;
-	ws();
-	if (end - p < 3 || p[0] != '-' || p[1] != '-' || p[2] != '>')
-		return false;
-	p += 3;
-	ws();
-	return parseStamp(p, end, b);
-}
-
-bool isTimestampLine(std::string_view line)
-{
-	double a, b;
-	return parseTimestampLine(line, a, b);
-}
+namespace srt {
 
 // ---------------------------------------------------------- encoding --
 
-bool validUtf8(std::string_view v)
-{
-	const auto *p = reinterpret_cast<const unsigned char *>(v.data());
-	const auto *end = p + v.size();
-	while (p < end) {
-		if (*p < 0x80) {
-			++p;
-			continue;
-		}
-		int n;
-		if      ((*p & 0xE0) == 0xC0 && *p >= 0xC2) n = 1;
-		else if ((*p & 0xF0) == 0xE0)               n = 2;
-		else if ((*p & 0xF8) == 0xF0 && *p <= 0xF4) n = 3;
-		else
-			return false;
-		if (end - p <= n)
-			return false;
-		for (int i = 1; i <= n; ++i)
-			if ((p[i] & 0xC0) != 0x80)
-				return false;
-		p += n + 1;
-	}
-	return true;
-}
+namespace {
 
-// The 0x80..0x9F range where Windows-1252 differs from Latin-1.
-constexpr char16_t kCp1252C1[32] = {
-	0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
-	0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
-	0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
-	0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+// UTF-8 validator: byte-class table + state transition table; the
+// scan loop is two table loads per byte, no branches.  Strictness:
+// rejects C0/C1 and F5..FF leads, overlongs (E0 A0.., F0 90..
+// minima), surrogates (ED 9F.. maximum) and anything above U+10FFFF
+// (F4 8F.. maximum).
+enum : std::uint8_t {
+	asc, c_80_8f, c_90_9f, c_a0_bf, l2, e0, l3, ed, f0, l4, f4, bad,
+	nclass
 };
 
-QByteArray cp1252ToUtf8(const QByteArray &raw)
-{
-	QString s;
-	s.reserve(raw.size());
-	for (const char cc : raw) {
-		const auto c = static_cast<unsigned char>(cc);
-		s.append(QChar(c >= 0x80 && c <= 0x9F ? kCp1252C1[c - 0x80]
-		                                      : char16_t(c)));
+constexpr auto u8cls = [] {
+	std::array<std::uint8_t, 256> t{};
+	for (int c = 0x00; c <= 0x7F; ++c) t[c] = asc;
+	for (int c = 0x80; c <= 0x8F; ++c) t[c] = c_80_8f;
+	for (int c = 0x90; c <= 0x9F; ++c) t[c] = c_90_9f;
+	for (int c = 0xA0; c <= 0xBF; ++c) t[c] = c_a0_bf;
+	for (int c = 0xC0; c <= 0xC1; ++c) t[c] = bad;
+	for (int c = 0xC2; c <= 0xDF; ++c) t[c] = l2;
+	t[0xE0] = e0;
+	for (int c = 0xE1; c <= 0xEC; ++c) t[c] = l3;
+	t[0xED] = ed;
+	t[0xEE] = l3;
+	t[0xEF] = l3;
+	t[0xF0] = f0;
+	for (int c = 0xF1; c <= 0xF3; ++c) t[c] = l4;
+	t[0xF4] = f4;
+	for (int c = 0xF5; c <= 0xFF; ++c) t[c] = bad;
+	return t;
+}();
+
+enum : std::uint8_t { ok, one, two, e0_1, ed_1, f0_1, f4_1, three, rej,
+                      nstate };
+
+constexpr auto u8next = [] {
+	std::array<std::array<std::uint8_t, nclass>, nstate> t{};
+	for (auto &row : t)
+		row.fill(rej);
+	t[ok][asc] = ok;
+	t[ok][l2] = one;
+	t[ok][e0] = e0_1;
+	t[ok][l3] = two;
+	t[ok][ed] = ed_1;
+	t[ok][f0] = f0_1;
+	t[ok][l4] = three;
+	t[ok][f4] = f4_1;
+	for (std::uint8_t c : {c_80_8f, c_90_9f, c_a0_bf}) {
+		t[one][c] = ok;
+		t[two][c] = one;
+		t[three][c] = two;
 	}
-	return s.toUtf8();
+	t[e0_1][c_a0_bf] = one;                // E0 needs A0..BF
+	t[ed_1][c_80_8f] = one;                // ED allows 80..9F
+	t[ed_1][c_90_9f] = one;
+	t[f0_1][c_90_9f] = two;                // F0 needs 90..BF
+	t[f0_1][c_a0_bf] = two;
+	t[f4_1][c_80_8f] = two;                // F4 allows 80..8F
+	return t;
+}();
+
+// Flat UTF-8 encoder shared by the transcoders.
+void put_utf8(std::string &out, char32_t cp)
+{
+	if (cp < 0x80) {
+		out += char(cp);
+		return;
+	}
+	if (cp < 0x800) {
+		out += char(0xC0 | (cp >> 6));
+		out += char(0x80 | (cp & 0x3F));
+		return;
+	}
+	if (cp < 0x10000) {
+		out += char(0xE0 | (cp >> 12));
+		out += char(0x80 | ((cp >> 6) & 0x3F));
+		out += char(0x80 | (cp & 0x3F));
+		return;
+	}
+	out += char(0xF0 | (cp >> 18));
+	out += char(0x80 | ((cp >> 12) & 0x3F));
+	out += char(0x80 | ((cp >> 6) & 0x3F));
+	out += char(0x80 | (cp & 0x3F));
 }
 
-// Normalize the raw file bytes to UTF-8.  The reference lists UTF-8
-// (with or without BOM) and legacy "ANSI" (Windows-1252) as the
-// encodings found in practice; UTF-16 files with BOMs also exist.
-QByteArray toUtf8(const QByteArray &raw)
+// Windows-1252 -> Unicode: full 256-entry table (identity except the
+// C1 block), so the transcoding loop selects nothing.
+constexpr auto kCp1252 = [] {
+	std::array<char32_t, 256> t{};
+	for (int c = 0; c < 256; ++c)
+		t[c] = char32_t(c);
+	constexpr char32_t c1[32]{
+		0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+		0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+		0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+		0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+	};
+	for (int c = 0; c < 32; ++c)
+		t[0x80 + c] = c1[c];
+	return t;
+}();
+
+std::string cp1252_to_utf8(std::string_view raw)
 {
-	const auto u = [&](qsizetype i) {
-		return static_cast<unsigned char>(raw[i]);
-	};
-	// Assemble UTF-16 code units bytewise: the payload starts at an
-	// odd offset, so a char16_t* cast would be a misaligned pointer.
-	const auto utf16 = [&](bool bigEndian) {
-		QString s;
-		s.reserve((raw.size() - 2) / 2);
-		for (qsizetype i = 2; i + 1 < raw.size(); i += 2)
-			s.append(QChar(char16_t(bigEndian
-				? (u(i) << 8) | u(i + 1)
-				: (u(i + 1) << 8) | u(i))));
-		return s.toUtf8();
-	};
-	if (raw.size() >= 2 && u(0) == 0xFF && u(1) == 0xFE)          // LE
-		return utf16(false);
-	if (raw.size() >= 2 && u(0) == 0xFE && u(1) == 0xFF)          // BE
-		return utf16(true);
-	if (raw.size() >= 3 && u(0) == 0xEF && u(1) == 0xBB && u(2) == 0xBF)
-		return raw.mid(3);
-	if (!validUtf8({raw.constData(), size_t(raw.size())}))
-		return cp1252ToUtf8(raw);
-	return raw;
+	std::string out;
+	out.reserve(raw.size() + raw.size() / 4);
+	for (const char c : raw)
+		put_utf8(out, kCp1252[static_cast<unsigned char>(c)]);
+	return out;
+}
+
+// UTF-16 code units assembled bytewise (the payload sits at an odd
+// offset, so a char16_t* cast would be misaligned); hi/lo are the
+// byte offsets of the high and low octet within a unit.
+struct u16_cursor {
+	std::string_view b;
+	std::size_t      i;
+	int              hi, lo;
+
+	bool next(char32_t &u)
+	{
+		if (i + 1 >= b.size())
+			return false;
+		u = char32_t(byte(i + hi)) << 8 | byte(i + lo);
+		i += 2;
+		return true;
+	}
+
+	// Consume the next unit iff it is a low surrogate.
+	bool take_low(char32_t &v)
+	{
+		const u16_cursor save = *this;
+		if (next(v) && v >= 0xDC00 && v < 0xE000)
+			return true;
+		*this = save;
+		return false;
+	}
+
+private:
+	unsigned byte(std::size_t k) const
+	{
+		return static_cast<unsigned char>(b[k]);
+	}
+};
+
+std::string utf16_to_utf8(std::string_view payload, int hi, int lo)
+{
+	std::string out;
+	out.reserve(payload.size() * 3 / 2);
+	u16_cursor cu{payload, 0, hi, lo};
+	for (char32_t u; cu.next(u);) {
+		char32_t v;
+		if (u >= 0xD800 && u < 0xDC00 && cu.take_low(v))
+			u = 0x10000 + ((u - 0xD800) << 10) + (v - 0xDC00);
+		if (u >= 0xD800 && u < 0xE000)
+			u = 0xFFFD;                  // lone surrogate
+		put_utf8(out, u);
+	}
+	return out;
 }
 
 } // namespace
 
+bool valid_utf8(std::string_view v)
+{
+	std::uint8_t st = ok;
+	for (const char c : v)
+		st = u8next[st][u8cls[static_cast<unsigned char>(c)]];
+	return st == ok;
+}
+
+std::string to_utf8(std::string_view raw)
+{
+	if (raw.starts_with("\xFF\xFE"))
+		return utf16_to_utf8(raw.substr(2), 1, 0);
+	if (raw.starts_with("\xFE\xFF"))
+		return utf16_to_utf8(raw.substr(2), 0, 1);
+	if (raw.starts_with("\xEF\xBB\xBF"))
+		raw.remove_prefix(3);
+	if (!valid_utf8(raw))
+		return cp1252_to_utf8(raw);
+	return std::string(raw);
+}
+
 // ------------------------------------------------------------ parser --
-// Block structure per the reference: sequence number, timecode line,
-// text lines, blank-line separator.  Deviations handled:
-//   - counters are optional and their values untrusted (wild files
-//     misnumber freely)
-//   - a timecode line met while collecting text starts a new cue
-//     (missing blank separator, a documented common error)
-//   - a digits-only line while collecting text is the next block's
-//     counter only when a timecode line follows; otherwise it is
-//     caption text (a lone "42" stays a caption)
-//   - anything between blocks that is neither blank, counter nor
-//     timecode is skipped (site banners, stray headers)
-
-std::vector<Cue> parseSrtData(std::string_view utf8)
-{
-	std::vector<Cue> cues;
-	LineCursor cur{utf8.data(), utf8.data() + utf8.size()};
-	std::string_view line;
-	Cue open;
-	bool haveOpen = false;
-
-	const auto close = [&] {
-		if (haveOpen) {
-			cues.push_back(std::move(open));
-			open = {};
-			haveOpen = false;
-		}
-	};
-
-	while (cur.next(line)) {
-		double a, b;
-		if (!haveOpen) {
-			if (parseTimestampLine(line, a, b)) {
-				open.start = a;
-				open.end = b;
-				haveOpen = true;
-			}
-			continue;
-		}
-		const std::string_view t = trimView(line);
-		if (t.empty()) {
-			close();
-			continue;
-		}
-		if (parseTimestampLine(line, a, b)) {
-			close();                     // missing blank separator
-			open.start = a;
-			open.end = b;
-			haveOpen = true;
-			continue;
-		}
-		if (allDigits(t)) {
-			LineCursor peek = cur;       // counter iff timecode next
-			std::string_view nextLine;
-			if (peek.next(nextLine) && isTimestampLine(nextLine)) {
-				close();
-				continue;
-			}
-		}
-		if (!open.text.isEmpty())
-			open.text += QChar(QChar::LineSeparator);
-		open.text += QString::fromUtf8(t.data(), qsizetype(t.size()));
-	}
-	close();
-	return cues;
-}
-
-std::vector<Cue> parseSrt(const QString &path, QString *err)
-{
-	QFile f(path);
-	if (!f.open(QIODevice::ReadOnly)) {
-		*err = f.errorString();
-		return {};
-	}
-	const QByteArray buf = toUtf8(f.readAll());
-	std::vector<Cue> cues =
-		parseSrtData({buf.constData(), size_t(buf.size())});
-	if (cues.empty())
-		*err = QStringLiteral("no cues found (not an SRT file?)");
-	return cues;
-}
-
-// ---------------------------------------------------------- markup --
 
 namespace {
 
-// Sanitized " key=\"value\"" sequence for a <font ...> tag, or empty
-// if anything is off-whitelist or malformed (caller then escapes the
-// whole tag).  Accepted attributes per the reference: color, face,
-// size.
-QString fontAttrs(QStringView s)
-{
-	QString out;
-	qsizetype i = 0;
-	const auto ws = [&] {
-		while (i < s.size() && s[i].isSpace())
-			++i;
-	};
-	while (true) {
-		ws();
-		if (i >= s.size())
-			break;
-		const qsizetype k0 = i;
-		while (i < s.size() && s[i].isLetter())
-			++i;
-		const QStringView key = s.mid(k0, i - k0);
-		ws();
-		if (i >= s.size() || s[i] != QLatin1Char('='))
-			return {};
-		++i;
-		ws();
-		QStringView val;
-		if (i < s.size() && (s[i] == QLatin1Char('"')
-		                     || s[i] == QLatin1Char('\''))) {
-			const QChar q = s[i];
-			++i;
-			const qsizetype v0 = i;
-			while (i < s.size() && s[i] != q)
-				++i;
-			if (i >= s.size())
-				return {};
-			val = s.mid(v0, i - v0);
-			++i;
-		} else {
-			const qsizetype v0 = i;
-			while (i < s.size() && !s[i].isSpace())
-				++i;
-			val = s.mid(v0, i - v0);
-		}
-		if (val.isEmpty())
-			return {};
-		QLatin1StringView name;
-		bool ok = true;
-		if (key.compare(QLatin1StringView("color"),
-		                Qt::CaseInsensitive) == 0) {
-			name = QLatin1StringView("color");
-			for (const QChar c : val)
-				ok = ok && (c == QLatin1Char('#') || c.isLetterOrNumber());
-		} else if (key.compare(QLatin1StringView("face"),
-		                       Qt::CaseInsensitive) == 0) {
-			name = QLatin1StringView("face");
-			for (const QChar c : val)
-				ok = ok && (c.isLetterOrNumber() || c == QLatin1Char(' ')
-				            || c == QLatin1Char('-')
-				            || c == QLatin1Char('_'));
-		} else if (key.compare(QLatin1StringView("size"),
-		                       Qt::CaseInsensitive) == 0) {
-			name = QLatin1StringView("size");
-			for (const QChar c : val)
-				ok = ok && c.isDigit();
-		} else {
-			return {};
-		}
-		if (!ok)
-			return {};
-		out += QLatin1Char(' ');
-		out += name;
-		out += QLatin1StringView("=\"");
-		out += val;
-		out += QLatin1Char('"');
+struct collector : parser<collector> {
+	std::vector<cue> cues;
+
+	void on_cue(double a, double b, std::string &&t)
+	{
+		cues.push_back({a, b, std::move(t)});
 	}
-	return out;
+};
+
+} // namespace
+
+std::vector<cue> parse(std::string_view utf8)
+{
+	collector c;
+	c.parse(utf8);
+	return std::move(c.cues);
+}
+
+// ------------------------------------------------------------ markup --
+
+namespace {
+
+// Escape table: nullptr means the byte passes through unchanged, so
+// UTF-8 multibyte sequences flow untouched.
+constexpr auto esc_tab = [] {
+	std::array<const char *, 256> t{};
+	t[static_cast<unsigned char>('&')] = "&amp;";
+	t[static_cast<unsigned char>('<')] = "&lt;";
+	t[static_cast<unsigned char>('>')] = "&gt;";
+	t[static_cast<unsigned char>('"')] = "&quot;";
+	t[static_cast<unsigned char>('\n')] = "<br>";
+	return t;
+}();
+
+bool ieq(std::string_view a, std::string_view b)
+{
+	const auto lower = [](char c) {
+		return c >= 'A' && c <= 'Z' ? char(c + 32) : c;
+	};
+	return a.size() == b.size()
+	    && std::ranges::equal(a, b, {}, lower, lower);
+}
+
+constexpr std::string_view simple_tags[]{
+	"i", "b", "u", "/i", "/b", "/u", "/font"};
+
+// Attribute value classes, one table, per-attribute masks.
+enum : std::uint8_t {
+	a_color = 1 << 0,                      // # and alphanumerics
+	a_face  = 1 << 1,                      // family names, incl. UTF-8
+	a_size  = 1 << 2,                      // digits
+};
+
+constexpr auto attr_cls = [] {
+	std::array<std::uint8_t, 256> t{};
+	for (int c = '0'; c <= '9'; ++c) t[c] = a_color | a_face | a_size;
+	for (int c = 'a'; c <= 'z'; ++c) t[c] = a_color | a_face;
+	for (int c = 'A'; c <= 'Z'; ++c) t[c] = a_color | a_face;
+	t[static_cast<unsigned char>('#')] |= a_color;
+	t[static_cast<unsigned char>(' ')] |= a_face;
+	t[static_cast<unsigned char>('-')] |= a_face;
+	t[static_cast<unsigned char>('_')] |= a_face;
+	for (int c = 0x80; c <= 0xFF; ++c) t[c] |= a_face;
+	return t;
+}();
+
+bool all_in(std::string_view v, std::uint8_t mask)
+{
+	return !v.empty() && std::ranges::all_of(v, [mask](char c) {
+		return (attr_cls[static_cast<unsigned char>(c)] & mask) != 0;
+	});
+}
+
+// Attribute scanner with an explicit receiver, like detail::scanner.
+struct attr_cursor {
+	std::string_view s;
+
+	bool done() const { return s.empty(); }
+
+	void spaces()
+	{
+		s.remove_prefix(std::min(s.find_first_not_of(" \t"), s.size()));
+	}
+
+	std::string_view ident()
+	{
+		std::size_t n = 0;
+		while (n < s.size() && (attr_cls[static_cast<unsigned char>(s[n])]
+		                        & (a_color | a_face)) && !detail::in(s[n], detail::b_digit))
+			++n;
+		const std::string_view v = s.substr(0, n);
+		s.remove_prefix(n);
+		return v;
+	}
+
+	bool ch(char c)
+	{
+		if (!s.starts_with(c))
+			return false;
+		s.remove_prefix(1);
+		return true;
+	}
+
+	std::optional<std::string_view> value()
+	{
+		if (s.empty())
+			return std::nullopt;
+		if (s.front() == '"' || s.front() == '\'')
+			return quoted();
+		const std::size_t n = std::min(s.find_first_of(" \t"), s.size());
+		const std::string_view v = s.substr(0, n);
+		s.remove_prefix(n);
+		return v.empty() ? std::nullopt : std::optional(v);
+	}
+
+private:
+	std::optional<std::string_view> quoted()
+	{
+		const char q = s.front();
+		s.remove_prefix(1);
+		const std::size_t n = s.find(q);
+		if (n == std::string_view::npos)
+			return std::nullopt;
+		const std::string_view v = s.substr(0, n);
+		s.remove_prefix(n + 1);
+		return v;
+	}
+};
+
+// Emit one sanitized attribute, table-dispatched by name.
+bool append_attr(std::string &out, std::string_view key,
+                 std::string_view val)
+{
+	static constexpr struct {
+		std::string_view name;
+		std::uint8_t     mask;
+	} kAttrs[]{{"color", a_color}, {"face", a_face}, {"size", a_size}};
+
+	for (const auto &a : kAttrs) {
+		if (!ieq(key, a.name))
+			continue;
+		if (!all_in(val, a.mask))
+			return false;
+		out += ' ';
+		out += a.name;
+		out += "=\"";
+		out += val;
+		out += '"';
+		return true;
+	}
+	return false;
+}
+
+// Sanitized " key=\"value\"..." for a <font ...> tag, empty on
+// anything off-whitelist or malformed (caller then escapes the tag).
+std::string font_attrs(std::string_view s)
+{
+	std::string out;
+	attr_cursor cu{s};
+	while (true) {
+		cu.spaces();
+		if (cu.done())
+			return out;
+		const std::string_view key = cu.ident();
+		cu.spaces();
+		if (key.empty() || !cu.ch('='))
+			return {};
+		cu.spaces();
+		const std::optional<std::string_view> val = cu.value();
+		if (!val || !append_attr(out, key, *val))
+			return {};
+	}
+}
+
+// "{\...}" ASS override block: consumed length, or 0.
+std::size_t skip_ass(std::string_view s)
+{
+	if (!s.starts_with("{\\"))
+		return 0;
+	const std::size_t close = s.find('}');
+	return close == std::string_view::npos ? 0 : close + 1;
+}
+
+// "<...>" whitelisted tag: emits and returns consumed length, or 0.
+std::size_t emit_tag(std::string_view s, std::string &out)
+{
+	const std::size_t close = s.find('>', 1);
+	if (close == std::string_view::npos || close > 96)
+		return 0;
+	const std::string_view inner = detail::trim(s.substr(1, close - 1));
+	const auto same = [inner](std::string_view t) { return ieq(inner, t); };
+	if (std::ranges::any_of(simple_tags, same)) {
+		out += '<';
+		out += inner;
+		out += '>';
+		return close + 1;
+	}
+	if (inner.size() < 5 || !ieq(inner.substr(0, 4), "font")
+	    || !detail::in(inner[4], detail::b_space))
+		return 0;
+	const std::string attrs = font_attrs(inner.substr(5));
+	if (attrs.empty())
+		return 0;
+	out += "<font";
+	out += attrs;
+	out += '>';
+	return close + 1;
+}
+
+// One piece of output; returns bytes consumed (always >= 1).
+std::size_t piece(std::string_view s, std::string &out)
+{
+	const unsigned char c = static_cast<unsigned char>(s.front());
+	if (c == '{') {
+		const std::size_t n = skip_ass(s);
+		if (n)
+			return n;
+	}
+	if (c == '<') {
+		const std::size_t n = emit_tag(s, out);
+		if (n)
+			return n;
+	}
+	if (esc_tab[c]) {
+		out += esc_tab[c];
+		return 1;
+	}
+	out += char(c);
+	return 1;
 }
 
 } // namespace
 
-QString cueHtml(const QString &text)
+std::string cue_html(std::string_view text)
 {
-	QString out;
+	std::string out;
 	out.reserve(text.size() + text.size() / 8 + 8);
-	const qsizetype n = text.size();
-	const QStringView tv(text);
-	const auto is = [](QStringView a, QLatin1StringView b) {
-		return a.compare(b, Qt::CaseInsensitive) == 0;
-	};
-	for (qsizetype i = 0; i < n; ++i) {
-		const QChar c = text[i];
-		if (c == QChar(QChar::LineSeparator)) {
-			out += QLatin1StringView("<br>");
-		} else if (c == QLatin1Char('{') && i + 1 < n
-		           && text[i + 1] == QLatin1Char('\\')) {
-			const qsizetype close = text.indexOf(QLatin1Char('}'), i);
-			if (close >= 0) {
-				i = close;                  // drop {\...} ASS override
-				continue;
-			}
-			out += c;                       // unterminated: literal
-		} else if (c == QLatin1Char('<')) {
-			const qsizetype close = text.indexOf(QLatin1Char('>'), i + 1);
-			bool emitted = false;
-			if (close > 0 && close - i <= 96) {
-				const QStringView inner =
-					tv.mid(i + 1, close - i - 1).trimmed();
-				if (is(inner, QLatin1StringView("i"))
-				    || is(inner, QLatin1StringView("b"))
-				    || is(inner, QLatin1StringView("u"))
-				    || is(inner, QLatin1StringView("/i"))
-				    || is(inner, QLatin1StringView("/b"))
-				    || is(inner, QLatin1StringView("/u"))
-				    || is(inner, QLatin1StringView("/font"))) {
-					out += QLatin1Char('<');
-					out += inner;
-					out += QLatin1Char('>');
-					i = close;
-					emitted = true;
-				} else if (inner.startsWith(QLatin1StringView("font"),
-				                            Qt::CaseInsensitive)
-				           && inner.size() > 4 && inner[4].isSpace()) {
-					const QString attrs = fontAttrs(inner.mid(5));
-					if (!attrs.isEmpty()) {
-						out += QLatin1StringView("<font");
-						out += attrs;
-						out += QLatin1Char('>');
-						i = close;
-						emitted = true;
-					}
-				}
-			}
-			if (!emitted)
-				out += QLatin1StringView("&lt;");
-		} else if (c == QLatin1Char('&')) {
-			out += QLatin1StringView("&amp;");
-		} else if (c == QLatin1Char('>')) {
-			out += QLatin1StringView("&gt;");
-		} else if (c == QLatin1Char('"')) {
-			out += QLatin1StringView("&quot;");
-		} else {
-			out += c;
-		}
-	}
+	for (std::size_t i = 0; i < text.size();)
+		i += piece(text.substr(i), out);
 	return out;
 }
 
-QString fmtTime(double t, bool withMs)
-{
-	int ms = int(std::lround(t * 1000.0));
-	int h = ms / 3600000; ms %= 3600000;
-	int m = ms / 60000;   ms %= 60000;
-	int s = ms / 1000;    ms %= 1000;
-	QString out = (h > 0)
-		? QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0'))
-		                            .arg(s, 2, 10, QLatin1Char('0'))
-		: QStringLiteral("%1:%2").arg(m).arg(s, 2, 10, QLatin1Char('0'));
-	if (withMs)
-		out += QStringLiteral(".%1").arg(ms, 3, 10, QLatin1Char('0'));
-	return out;
-}
+} // namespace srt
