@@ -55,6 +55,8 @@ bool mpv_link_base::ensureAlive(QString *err)
 	                 QStringLiteral("--input-ipc-server=") + m_sock,
 	                 QStringLiteral("--sub-file=") + m_srt,
 	                 QStringLiteral("--sub-auto=no")};
+	if (m_resumeTime >= 0.0)
+		args << QStringLiteral("--start=%1").arg(m_resumeTime, 0, 'f', 3);
 	args += QProcess::splitCommand(qEnvironmentVariable("SRTVIEW_MPV_ARGS"));
 	args << QStringLiteral("--") << m_video;
 	// Forward mpv's stdout/stderr to ours instead of the QProcess
@@ -149,6 +151,8 @@ void mpv_link_base::fill()
 		return;
 	m_inbuf += chunk;
 	m_lastRx = m_clock.elapsed();
+	dbg(QStringLiteral("rx %1 bytes: %2").arg(chunk.size())
+	    .arg(QString::fromUtf8(chunk.left(120)).trimmed()));
 }
 
 bool mpv_link_base::takeTime(double &t)
@@ -166,13 +170,17 @@ bool mpv_link_base::takeTime(double &t)
 		if (ev.value(QStringLiteral("event"))
 		    != QStringLiteral("property-change"))
 			continue;
-		if (ev.value(QStringLiteral("name"))
-		    != QStringLiteral("playback-time"))
-			continue;
 		QJsonValue const v = ev.value(QStringLiteral("data"));
-		if (!v.isDouble())
+		if (ev.value(QStringLiteral("name"))
+		    == QStringLiteral("pause")) {
+			m_lastPause = v.toBool(m_lastPause);
+			continue;
+		}
+		if (ev.value(QStringLiteral("name"))
+		    != QStringLiteral("playback-time") || !v.isDouble())
 			continue;
 		t = v.toDouble();
+		m_lastTime = t;
 		return true;
 	}
 }
@@ -189,6 +197,45 @@ bool mpv_link_base::tryConnect()
 	m_lastRx = m_clock.elapsed();        // fresh connection, fresh clock
 	observe();
 	dbg(QStringLiteral("connected to %1").arg(m_sock));
+	return true;
+}
+
+bool mpv_link_base::recoverWedged()
+{
+	if (!m_spawned) {
+		note(QStringLiteral("wedged player was not started by "
+		                    "srtview; not killing it"));
+		return false;
+	}
+	if (m_clock.elapsed() - m_lastRespawn < 30000)
+		return false;
+	m_lastRespawn = m_clock.elapsed();
+	m_recovering = true;
+	double const t = m_lastTime;
+	bool const paused = m_lastPause;
+	note(QStringLiteral("killing wedged mpv, respawning at %1s "
+	                    "(%2)")
+	     .arg(t < 0.0 ? 0.0 : t, 0, 'f', 3)
+	     .arg(paused ? QStringLiteral("paused")
+	                 : QStringLiteral("playing")));
+	m_proc.kill();
+	m_proc.waitForFinished(2000);
+	m_conn.abort();
+	m_inbuf.clear();
+	m_spawned = false;
+	m_resumeTime = t < 0.0 ? -1.0 : t;
+	QString err;
+	bool const ok = ensureAlive(&err);
+	m_resumeTime = -1.0;
+	if (!ok) {
+		note(QStringLiteral("respawn failed: ") + err);
+		m_recovering = false;
+		return true;
+	}
+	if (!paused)
+		setPause(false, &err);
+	note(QStringLiteral("respawn complete"));
+	m_recovering = false;
 	return true;
 }
 
@@ -225,6 +272,8 @@ void mpv_link_base::dbg(QString const &msg) const
 void mpv_link_base::observe()
 {
 	m_conn.write("{\"command\":[\"observe_property\",1,"
-	             "\"playback-time\"]}\n");
+	             "\"playback-time\"]}\n"
+	             "{\"command\":[\"observe_property\",2,"
+	             "\"pause\"]}\n");
 	m_conn.flush();
 }

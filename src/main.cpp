@@ -29,6 +29,13 @@
 //      SRTVIEW_DEBUG    -- log IPC traffic and player health to
 //                          stderr; state flips are logged always
 //
+// A player spawned by srtview that stops responding (seen on WSLg,
+// where flaky PulseAudio acks can block mpv's core inside the audio
+// output with no timeout) is killed and respawned at the last
+// observed position and pause state.  WSLg audio mitigation knobs to
+// try via SRTVIEW_MPV_ARGS: --audio-stream-silence=yes,
+// --pulse-latency-hacks=yes; --ao=null confirms the diagnosis.
+//
 // Build:  cmake -B build && cmake --build build
 // Deps :  qt6-base-dev (Widgets, Network), a C++20 compiler
 

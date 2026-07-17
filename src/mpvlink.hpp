@@ -64,6 +64,14 @@ protected:
 	void sendPing();
 	bool connectedNow() const;
 	qint64 msecsSinceRx() const;
+	bool recovering() const { return m_recovering; }
+
+	// Wedge escalation: if this instance spawned the player, kill it
+	// (a wedged core cannot process a graceful quit) and respawn at
+	// the last observed position and pause state.  Throttled; a
+	// reused player is never killed.  Returns true if a respawn was
+	// attempted.
+	bool recoverWedged();
 
 	// Unconditional for state flips; verbose traffic only with
 	// SRTVIEW_DEBUG set.
@@ -79,8 +87,13 @@ private:
 	QByteArray    m_inbuf;
 	QElapsedTimer m_clock;
 	qint64        m_lastRx = 0;
+	qint64        m_lastRespawn = -60000;
+	double        m_lastTime = -1.0;     // last observed playback-time
+	double        m_resumeTime = -1.0;   // --start for the next spawn
 	QString       m_video, m_srt, m_sock;
+	bool          m_lastPause = true;    // last observed pause state
 	bool          m_spawned = false;
+	bool          m_recovering = false;
 };
 
 template <mpv_observer Obs>
@@ -109,9 +122,11 @@ private:
 	// the observer and logged.
 	void tick()
 	{
-		if (!connectedNow())
+		if (recovering() || !connectedNow())
 			return;
 		sendPing();
+		dbg(QStringLiteral("tick: rx silence %1 ms")
+		    .arg(msecsSinceRx()));
 		bool const ok = msecsSinceRx() < kWedgeMs;
 		if (ok == m_ok)
 			return;
@@ -120,6 +135,8 @@ private:
 		        : QStringLiteral("mpv unresponsive: no IPC traffic "
 		                         "for %1 ms").arg(msecsSinceRx()));
 		m_obs->onMpvState(ok);
+		if (!ok)
+			recoverWedged();
 	}
 
 	static constexpr qint64 kWedgeMs = 6000;
