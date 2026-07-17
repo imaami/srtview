@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 	MainWin w;
 	w.show();
 
-	const QStringList args = app.arguments();
+	QStringList const args = app.arguments();
 	if (args.size() >= 3 && args[1] == QStringLiteral("--selftest"))
 		runSelftest(&w, args[2]);
 	else if (args.size() >= 2)

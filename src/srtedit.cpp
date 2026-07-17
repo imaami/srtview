@@ -1,7 +1,5 @@
 #include "srtedit.hpp"
 
-#include "mainwin.hpp"
-
 #include <QAbstractTextDocumentLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -12,8 +10,8 @@
 
 #include <algorithm>
 
-SrtEdit::SrtEdit(MainWin *host)
-	: QTextEdit(host), m_host(host), m_gutter(this)
+srt_view_base::srt_view_base(QWidget *parent)
+	: QTextEdit(parent), m_gutter(this)
 {
 	setReadOnly(true);
 	setFrameShape(QFrame::NoFrame);
@@ -39,7 +37,7 @@ SrtEdit::SrtEdit(MainWin *host)
 	        this, [this] { updateCurrentCueHighlight(); });
 }
 
-void SrtEdit::setCues(std::vector<srt::cue> cues)
+void srt_view_base::setCues(std::vector<srt::cue> cues)
 {
 	m_cues = std::move(cues);
 	QTextDocument *doc = document();
@@ -54,17 +52,17 @@ void SrtEdit::setCues(std::vector<srt::cue> cues)
 	QTextCursor cur(doc);
 	cur.setBlockFormat(bf);
 	bool first = true;
-	for (const srt::cue &c : m_cues) {
+	for (srt::cue const &c : m_cues) {
 		if (!first)
 			cur.insertBlock(bfGap, QTextCharFormat());
 		first = false;
-		const std::string html = srt::cue_html(c.text);
+		std::string const html = srt::cue_html(c.text);
 		cur.insertHtml(QString::fromUtf8(html.data(),
 		                                 qsizetype(html.size())));
 	}
 
 	// gutter width from the widest start time in this file
-	const QString widest = m_cues.empty()
+	QString const widest = m_cues.empty()
 		? QString() : fmtTime(m_cues.back().start, false);
 	m_gutterW = QFontMetrics(m_gutterFont).horizontalAdvance(widest) + 26;
 	setViewportMargins(m_gutterW, 0, 0, 0);
@@ -76,19 +74,19 @@ void SrtEdit::setCues(std::vector<srt::cue> cues)
 	updateCurrentCueHighlight();
 }
 
-int SrtEdit::cueAt(double t) const
+int srt_view_base::cueAt(double t) const
 {
-	const auto it = std::ranges::upper_bound(m_cues, t, {},
+	auto const it = std::ranges::upper_bound(m_cues, t, {},
 	                                         &srt::cue::start);
 	if (it == m_cues.begin())
 		return -1;
-	const auto prev = it - 1;
+	auto const prev = it - 1;
 	return t < prev->end ? int(prev - m_cues.begin()) : -1;
 }
 
-void SrtEdit::setPlayTime(double t)
+void srt_view_base::setPlayTime(double t)
 {
-	const int cue = cueAt(t);
+	int const cue = cueAt(t);
 	if (cue == m_playCue)
 		return;
 	m_playCue = cue;
@@ -98,7 +96,7 @@ void SrtEdit::setPlayTime(double t)
 		glideTo(cue);
 }
 
-void SrtEdit::setFollow(bool on)
+void srt_view_base::setFollow(bool on)
 {
 	m_follow = on;
 	if (on && m_playCue >= 0)
@@ -107,11 +105,11 @@ void SrtEdit::setFollow(bool on)
 		m_glide.stop();
 }
 
-void SrtEdit::updatePlayHighlight()
+void srt_view_base::updatePlayHighlight()
 {
 	m_playSel.clear();
 	if (m_playCue >= 0) {
-		const QTextBlock b = document()->findBlockByNumber(m_playCue);
+		QTextBlock const b = document()->findBlockByNumber(m_playCue);
 		ExtraSelection sel;
 		sel.cursor = QTextCursor(document());
 		sel.cursor.setPosition(b.position());
@@ -127,14 +125,14 @@ void SrtEdit::updatePlayHighlight()
 }
 
 // Keep the active cue in the upper third, lyrics-style.
-void SrtEdit::glideTo(int cue)
+void srt_view_base::glideTo(int cue)
 {
-	const QTextBlock b = document()->findBlockByNumber(cue);
+	QTextBlock const b = document()->findBlockByNumber(cue);
 	if (!b.isValid())
 		return;
-	const QRectF r = document()->documentLayout()->blockBoundingRect(b);
-	const int want = int(r.center().y() - viewport()->height() * 0.35);
-	const int target = std::clamp(want, 0,
+	QRectF const r = document()->documentLayout()->blockBoundingRect(b);
+	int const want = int(r.center().y() - viewport()->height() * 0.35);
+	int const target = std::clamp(want, 0,
 	                              verticalScrollBar()->maximum());
 	m_glide.stop();
 	m_glide.setStartValue(verticalScrollBar()->value());
@@ -142,89 +140,28 @@ void SrtEdit::glideTo(int cue)
 	m_glide.start();
 }
 
-void SrtEdit::setMatchSelections(const QList<ExtraSelection> &sel)
+void srt_view_base::setMatchSelections(QList<ExtraSelection> const &sel)
 {
 	m_matchSel = sel;
 	applySelections();
 }
 
-void SrtEdit::keyPressEvent(QKeyEvent *ev)
-{
-	if (!(ev->modifiers() & (Qt::ControlModifier | Qt::AltModifier
-	                         | Qt::MetaModifier))) {
-		switch (ev->key()) {
-		case Qt::Key_Return:
-		case Qt::Key_Enter:
-		case Qt::Key_T:
-			if (!m_cues.empty())
-				m_host->seekCue(currentCue(),
-				                ev->text() == QStringLiteral("T"));
-			return;
-		case Qt::Key_Space:
-			m_host->togglePause();
-			return;
-		case Qt::Key_Left:
-			m_host->seekRel(-5.0);
-			return;
-		case Qt::Key_Right:
-			m_host->seekRel(5.0);
-			return;
-		case Qt::Key_Escape:
-			m_host->hideSearch();
-			return;
-		case Qt::Key_F:
-			if (ev->text() == QStringLiteral("f")) {
-				m_host->toggleFollow();
-				return;
-			}
-			break;
-		case Qt::Key_C:
-			if (ev->text() == QStringLiteral("c")) {
-				m_host->setPause(false);
-				return;
-			}
-			break;
-		case Qt::Key_P:
-			if (ev->text() == QStringLiteral("P")) {
-				m_host->setPause(true);
-				return;
-			}
-			break;
-		case Qt::Key_Slash:
-			m_host->showSearch();
-			return;
-		case Qt::Key_N:
-			m_host->findAgain(ev->text() == QStringLiteral("N"));
-			return;
-		default:
-			break;
-		}
-	}
-	QTextEdit::keyPressEvent(ev);
-}
 
-void SrtEdit::mouseDoubleClickEvent(QMouseEvent *ev)
-{
-	QTextEdit::mouseDoubleClickEvent(ev);
-	if (!m_cues.empty())
-		m_host->seekCue(currentCue(), false);
-}
 
-void SrtEdit::resizeEvent(QResizeEvent *ev)
+void srt_view_base::resizeEvent(QResizeEvent *ev)
 {
 	QTextEdit::resizeEvent(ev);
 	layoutGutter();
-	m_host->layoutOverlays();
 }
 
-bool SrtEdit::event(QEvent *ev)
+bool srt_view_base::event(QEvent *ev)
 {
 	if (ev->type() == QEvent::ToolTip && !m_cues.empty()) {
 		auto *he = static_cast<QHelpEvent *>(ev);
-		const QPoint vp = viewport()->mapFrom(this, he->pos());
-		const int cue = cursorForPosition(vp).blockNumber();
+		QPoint const vp = viewport()->mapFrom(this, he->pos());
+		int const cue = cursorForPosition(vp).blockNumber();
 		if (cue >= 0 && size_t(cue) < m_cues.size()) {
-			const srt::cue &c = m_cues[size_t(cue)];
+			srt::cue const &c = m_cues[size_t(cue)];
 			QToolTip::showText(he->globalPos(),
 				QStringLiteral("#%1   %2 \u2192 %3")
 				.arg(cue + 1)
@@ -236,43 +173,23 @@ bool SrtEdit::event(QEvent *ev)
 	return QTextEdit::event(ev);
 }
 
-bool SrtEdit::eventFilter(QObject *obj, QEvent *ev)
-{
-	if (obj == &m_gutter) {
-		if (ev->type() == QEvent::Paint) {
-			paintGutter();
-			return true;
-		}
-		if (ev->type() == QEvent::MouseButtonPress) {
-			auto *me = static_cast<QMouseEvent *>(ev);
-			const int cue = cueAtGutterY(int(me->position().y()));
-			if (cue >= 0) {
-				setTextCursor(QTextCursor(
-					document()->findBlockByNumber(cue)));
-				m_host->seekCue(cue, false);
-			}
-			return true;
-		}
-	}
-	return QTextEdit::eventFilter(obj, ev);
-}
 
-void SrtEdit::layoutGutter()
+void srt_view_base::layoutGutter()
 {
-	const QRect cr = contentsRect();
+	QRect const cr = contentsRect();
 	m_gutter.setGeometry(cr.left(), cr.top(), m_gutterW, cr.height());
 }
 
 // Visible blocks under the current scroll offset, gutter-space rects;
 // the visitor binds statically.
 template <typename F>
-void SrtEdit::visitVisibleBlocks(F f)
+void srt_view_base::visitVisibleBlocks(F f)
 {
 	auto *lay = document()->documentLayout();
-	const int yoff = verticalScrollBar()->value();
+	int const yoff = verticalScrollBar()->value();
 	for (QTextBlock b = document()->firstBlock(); b.isValid();
 	     b = b.next()) {
-		const QRectF r = lay->blockBoundingRect(b).translated(0, -yoff);
+		QRectF const r = lay->blockBoundingRect(b).translated(0, -yoff);
 		if (r.top() > m_gutter.height())
 			break;
 		if (r.bottom() < 0)
@@ -282,7 +199,7 @@ void SrtEdit::visitVisibleBlocks(F f)
 	}
 }
 
-void SrtEdit::paintGutter()
+void srt_view_base::paintGutter()
 {
 	QPainter p(&m_gutter);
 	// Same background as the text, only quieter ink: the gutter
@@ -290,14 +207,14 @@ void SrtEdit::paintGutter()
 	p.fillRect(m_gutter.rect(), palette().color(QPalette::Base));
 	QColor dim = palette().color(QPalette::Text);
 	dim.setAlpha(110);
-	const QColor full = palette().color(QPalette::Text);
+	QColor const full = palette().color(QPalette::Text);
 	p.setFont(m_gutterFont);
-	const int w = m_gutterW - 12;
-	const int lineH = fontMetrics().height();
-	visitVisibleBlocks([&](const QTextBlock &b, const QRectF &r) {
-		const int cue = b.blockNumber();
+	int const w = m_gutterW - 12;
+	int const lineH = fontMetrics().height();
+	visitVisibleBlocks([&](QTextBlock const &b, QRectF const &r) {
+		int const cue = b.blockNumber();
 		if (size_t(cue) < m_cues.size()) {
-			const qreal y = r.top() + b.blockFormat().topMargin();
+			qreal const y = r.top() + b.blockFormat().topMargin();
 			p.setPen(cue == m_playCue ? full : dim);
 			p.drawText(QRectF(0, y, w, lineH),
 			           Qt::AlignRight | Qt::AlignVCenter,
@@ -307,10 +224,10 @@ void SrtEdit::paintGutter()
 	});
 }
 
-int SrtEdit::cueAtGutterY(int y)
+int srt_view_base::cueAtGutterY(int y)
 {
 	int hit = -1;
-	visitVisibleBlocks([&](const QTextBlock &b, const QRectF &r) {
+	visitVisibleBlocks([&](QTextBlock const &b, QRectF const &r) {
 		if (y >= r.top() && y < r.bottom()) {
 			hit = b.blockNumber();
 			return false;
@@ -320,7 +237,7 @@ int SrtEdit::cueAtGutterY(int y)
 	return (hit >= 0 && size_t(hit) < m_cues.size()) ? hit : -1;
 }
 
-void SrtEdit::updateCurrentCueHighlight()
+void srt_view_base::updateCurrentCueHighlight()
 {
 	ExtraSelection sel;
 	sel.cursor = textCursor();
@@ -334,7 +251,7 @@ void SrtEdit::updateCurrentCueHighlight()
 	m_gutter.update();
 }
 
-void SrtEdit::applySelections()
+void srt_view_base::applySelections()
 {
 	setExtraSelections(m_lineSel + m_playSel + m_matchSel);
 }

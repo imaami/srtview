@@ -104,7 +104,7 @@ struct line_cursor {
 	{
 		if (rest.empty())
 			return false;
-		const std::size_t n = rest.find_first_of("\r\n");
+		std::size_t const n = rest.find_first_of("\r\n");
 		line = rest.substr(0, n);
 		rest.remove_prefix(std::min(n, rest.size()));
 		drop_break();
@@ -126,8 +126,8 @@ private:
 // Byte scanner with an explicit receiver: every call site shows what
 // advances.
 struct scanner {
-	const char *p;
-	const char *end;
+	char const *p;
+	char const *end;
 
 	explicit scanner(std::string_view v)
 		: p(v.data()), end(v.data() + v.size()) {}
@@ -236,7 +236,7 @@ public:
 	}
 
 private:
-	void step(std::string_view line, const detail::line_cursor &ahead)
+	void step(std::string_view line, detail::line_cursor const &ahead)
 	{
 		detail::stamp_pair ts;
 		if (detail::timecode_line(line, ts)) {
@@ -246,7 +246,7 @@ private:
 		}
 		if (!open_)
 			return;                       // junk between blocks
-		const std::string_view t = detail::trim(line);
+		std::string_view const t = detail::trim(line);
 		if (t.empty()) {
 			flush();
 			return;

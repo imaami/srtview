@@ -5,8 +5,11 @@
 // become invisible while everything else looks fine.  Repairs only
 // genuinely broken pairs (WCAG-ish contrast < 2.5) so sane themes
 // pass through untouched.
-#pragma once
+#ifndef SRTVIEW_SRC_PALETTEFIX_HPP_
+#define SRTVIEW_SRC_PALETTEFIX_HPP_
 
 class QWidget;
 
 void repairMenuPalette(QWidget *w);
+
+#endif // SRTVIEW_SRC_PALETTEFIX_HPP_

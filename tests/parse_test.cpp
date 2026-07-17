@@ -11,7 +11,7 @@ namespace {
 
 int g_fail = 0;
 
-void check(bool ok, const char *what)
+void check(bool ok, char const *what)
 {
 	std::printf("%s  %s\n", ok ? "OK  " : "FAIL", what);
 	if (!ok)
@@ -94,7 +94,7 @@ void testEncodings()
 {
 	using srt::to_utf8;
 	using srt::valid_utf8;
-	const std::string body = "1\n00:00:01,000 --> 00:00:02,000\n"
+	std::string const body = "1\n00:00:01,000 --> 00:00:02,000\n"
 	                         "caf\xc3\xa9\n";
 
 	check(to_utf8(body) == body, "plain UTF-8 passthrough");
@@ -102,11 +102,11 @@ void testEncodings()
 
 	std::string le("\xff\xfe", 2), be("\xfe\xff", 2);
 	// "café" line in UTF-16: build from the UTF-8 body's code points
-	const char16_t units[] = {'1', '\n', '0', '0', ':', '0', '0', ':',
+	char16_t const units[] = {'1', '\n', '0', '0', ':', '0', '0', ':',
 		'0', '1', ',', '0', '0', '0', ' ', '-', '-', '>', ' ', '0',
 		'0', ':', '0', '0', ':', '0', '2', ',', '0', '0', '0', '\n',
 		'c', 'a', 'f', 0x00E9, '\n'};
-	for (const char16_t u : units) {
+	for (char16_t const u : units) {
 		le += char(u & 0xff); le += char(u >> 8);
 		be += char(u >> 8);   be += char(u & 0xff);
 	}
@@ -141,7 +141,7 @@ void testEncodings()
 void testMarkup()
 {
 	using srt::cue_html;
-	struct { const char *in, *want; } cases[] = {
+	struct { char const *in, *want; } cases[] = {
 		{ "{\\an8}Neque <i>porro</i> <b>quisquam</b> "
 		  "<font color=\"#e05050\">est</font>, 3 < 5 && x",
 		  "Neque <i>porro</i> <b>quisquam</b> "
@@ -164,8 +164,8 @@ void testMarkup()
 		{ "a\nb", "a<br>b" },
 		{ "caf\xc3\xa9 <i>x</i>", "caf\xc3\xa9 <i>x</i>" },
 	};
-	for (const auto &c : cases) {
-		const std::string got = cue_html(c.in);
+	for (auto const &c : cases) {
+		std::string const got = cue_html(c.in);
 		check(got == c.want, c.in);
 		if (got != c.want)
 			std::printf("      got: %s\n     want: %s\n", got.c_str(),

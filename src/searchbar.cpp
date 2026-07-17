@@ -1,14 +1,16 @@
 #include "searchbar.hpp"
 
-#include "mainwin.hpp"
-
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QPainter>
 
-SearchBar::SearchBar(MainWin *host, QWidget *parent)
-	: QWidget(parent), m_host(host)
+search_bar_base::search_bar_base(QWidget *parent)
+	: QWidget(parent)
 {
+	// The bar overlays the reading view and would inherit its scaled
+	// reading font; chrome uses the application font.
+	setFont(QApplication::font());
 	setAutoFillBackground(true);
 	setStyleSheet(QStringLiteral(
 		"SearchBar, QWidget { background: palette(window); }"
@@ -55,21 +57,6 @@ SearchBar::SearchBar(MainWin *host, QWidget *parent)
 	m_close.setAutoRaise(true);
 	frame->addWidget(&m_close);
 
-	connect(&m_edit, &QLineEdit::textChanged,
-	        this, [this] { m_host->searchChanged(); });
-	connect(&m_edit, &QLineEdit::returnPressed,
-	        this, [this] { m_host->commitSearch(); });
-	connect(&m_regex, &QToolButton::toggled,
-	        this, [this] { m_host->searchChanged(); });
-	connect(&m_case, &QToolButton::toggled,
-	        this, [this] { m_host->searchChanged(); });
-	connect(&m_prev, &QToolButton::clicked,
-	        this, [this] { m_host->findAgain(true); });
-	connect(&m_next, &QToolButton::clicked,
-	        this, [this] { m_host->findAgain(false); });
-	connect(&m_close, &QToolButton::clicked,
-	        this, [this] { m_host->hideSearch(); });
-
 	m_anim.setTargetObject(this);
 	m_anim.setPropertyName("pos");
 	m_anim.setDuration(140);
@@ -77,7 +64,7 @@ SearchBar::SearchBar(MainWin *host, QWidget *parent)
 	hide();
 }
 
-void SearchBar::setCount(int idx, int n)
+void search_bar_base::setCount(int idx, int n)
 {
 	m_count.setText(n <= 0 ? QStringLiteral("\u2014")
 		: QStringLiteral("%1/%2")
@@ -90,7 +77,7 @@ void SearchBar::setCount(int idx, int n)
 	m_edit.setPalette(pal);
 }
 
-void SearchBar::open(const QPoint &target)
+void search_bar_base::open(QPoint const &target)
 {
 	// A pending dismiss()-finished hide() would fire when slideTo()
 	// stops the running animation (stop() emits finished); cancel it
@@ -107,7 +94,7 @@ void SearchBar::open(const QPoint &target)
 	m_edit.selectAll();
 }
 
-void SearchBar::dismiss()
+void search_bar_base::dismiss()
 {
 	if (!isVisible())
 		return;
@@ -116,26 +103,15 @@ void SearchBar::dismiss()
 	        this, [this] { hide(); }, Qt::SingleShotConnection);
 }
 
-void SearchBar::reposition(const QPoint &target)
+void search_bar_base::reposition(QPoint const &target)
 {
 	m_target = target;
 	if (isVisible())
 		move(target);
 }
 
-bool SearchBar::eventFilter(QObject *obj, QEvent *ev)
-{
-	if (obj == &m_edit && ev->type() == QEvent::KeyPress) {
-		auto *ke = static_cast<QKeyEvent *>(ev);
-		if (ke->key() == Qt::Key_Escape) {
-			m_host->hideSearch();
-			return true;
-		}
-	}
-	return QWidget::eventFilter(obj, ev);
-}
 
-void SearchBar::paintEvent(QPaintEvent *)
+void search_bar_base::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
 	p.setRenderHint(QPainter::Antialiasing);
@@ -145,7 +121,7 @@ void SearchBar::paintEvent(QPaintEvent *)
 	                  8.0, 8.0);
 }
 
-void SearchBar::slideTo(const QPoint &to)
+void search_bar_base::slideTo(QPoint const &to)
 {
 	m_anim.stop();
 	m_anim.setStartValue(pos());

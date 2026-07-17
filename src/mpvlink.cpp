@@ -1,7 +1,6 @@
 #include "mpvlink.hpp"
 
 #include "discovery.hpp"
-#include "mainwin.hpp"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -11,14 +10,7 @@
 #include <chrono>
 #include <thread>
 
-MpvLink::MpvLink(MainWin *host)
-	: m_host(host)
-{
-	connect(&m_conn, &QLocalSocket::readyRead,
-	        this, &MpvLink::onReadyRead);
-}
-
-bool MpvLink::openFor(const QString &video, const QString &srt,
+bool mpv_link_base::openFor(QString const &video, QString const &srt,
                             QString *err)
 {
 	shutdown();
@@ -30,7 +22,7 @@ bool MpvLink::openFor(const QString &video, const QString &srt,
 	return ensureAlive(err);
 }
 
-bool MpvLink::ensureAlive(QString *err)
+bool mpv_link_base::ensureAlive(QString *err)
 {
 	if (m_conn.state() == QLocalSocket::ConnectedState)
 		return true;
@@ -72,7 +64,7 @@ bool MpvLink::ensureAlive(QString *err)
 	return false;
 }
 
-bool MpvLink::send(const QString &line, QString *err)
+bool mpv_link_base::send(QString const &line, QString *err)
 {
 	if (!ensureAlive(err))
 		return false;
@@ -83,32 +75,32 @@ bool MpvLink::send(const QString &line, QString *err)
 	return m_conn.bytesToWrite() == 0 || m_conn.waitForBytesWritten(500);
 }
 
-bool MpvLink::seek(double t, bool forcePause, QString *err)
+bool mpv_link_base::seek(double t, bool forcePause, QString *err)
 {
-	const QString s = QStringLiteral("no-osd seek %1 absolute+exact")
+	QString const s = QStringLiteral("no-osd seek %1 absolute+exact")
 	                  .arg(t, 0, 'f', 3);
 	return send(forcePause
 		? QStringLiteral("no-osd set pause yes; ") + s : s, err);
 }
 
-bool MpvLink::seekRel(double dt, QString *err)
+bool mpv_link_base::seekRel(double dt, QString *err)
 {
 	return send(QStringLiteral("no-osd seek %1").arg(dt, 0, 'f', 1), err);
 }
 
-bool MpvLink::setPause(bool on, QString *err)
+bool mpv_link_base::setPause(bool on, QString *err)
 {
 	return send(QStringLiteral("no-osd set pause %1")
 	            .arg(on ? QStringLiteral("yes") : QStringLiteral("no")),
 	            err);
 }
 
-bool MpvLink::cyclePause(QString *err)
+bool mpv_link_base::cyclePause(QString *err)
 {
 	return send(QStringLiteral("no-osd cycle pause"), err);
 }
 
-void MpvLink::shutdown()
+void mpv_link_base::shutdown()
 {
 	if (m_spawned && m_proc.state() == QProcess::Running) {
 		QString e;
@@ -125,7 +117,38 @@ void MpvLink::shutdown()
 	m_sock.clear();
 }
 
-bool MpvLink::tryConnect()
+void mpv_link_base::fill()
+{
+	m_inbuf += m_conn.readAll();
+}
+
+bool mpv_link_base::takeTime(double &t)
+{
+	while (true) {
+		qsizetype const nl = m_inbuf.indexOf('\n');
+		if (nl < 0)
+			return false;
+		QJsonDocument const doc =
+			QJsonDocument::fromJson(m_inbuf.left(nl));
+		m_inbuf.remove(0, nl + 1);
+		if (!doc.isObject())
+			continue;
+		QJsonObject const ev = doc.object();
+		if (ev.value(QStringLiteral("event"))
+		    != QStringLiteral("property-change"))
+			continue;
+		if (ev.value(QStringLiteral("name"))
+		    != QStringLiteral("playback-time"))
+			continue;
+		QJsonValue const v = ev.value(QStringLiteral("data"));
+		if (!v.isDouble())
+			continue;
+		t = v.toDouble();
+		return true;
+	}
+}
+
+bool mpv_link_base::tryConnect()
 {
 	if (m_sock.isEmpty())
 		return false;
@@ -138,38 +161,9 @@ bool MpvLink::tryConnect()
 	return true;
 }
 
-// Property observation is per-client: register on every connect.
-void MpvLink::observe()
+void mpv_link_base::observe()
 {
 	m_conn.write("{\"command\":[\"observe_property\",1,"
 	             "\"playback-time\"]}\n");
 	m_conn.flush();
-}
-
-void MpvLink::onReadyRead()
-{
-	m_inbuf += m_conn.readAll();
-	while (true) {
-		const qsizetype nl = m_inbuf.indexOf('\n');
-		if (nl < 0)
-			return;
-		const QJsonDocument doc =
-			QJsonDocument::fromJson(m_inbuf.left(nl));
-		m_inbuf.remove(0, nl + 1);
-		if (doc.isObject())
-			dispatch(doc.object());
-	}
-}
-
-void MpvLink::dispatch(const QJsonObject &ev)
-{
-	if (ev.value(QStringLiteral("event"))
-	    != QStringLiteral("property-change"))
-		return;
-	if (ev.value(QStringLiteral("name"))
-	    != QStringLiteral("playback-time"))
-		return;
-	const QJsonValue v = ev.value(QStringLiteral("data"));
-	if (v.isDouble())
-		m_host->onMpvTime(v.toDouble());
 }

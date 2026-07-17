@@ -112,7 +112,7 @@ std::string cp1252_to_utf8(std::string_view raw)
 {
 	std::string out;
 	out.reserve(raw.size() + raw.size() / 4);
-	for (const char c : raw)
+	for (char const c : raw)
 		put_utf8(out, kCp1252[static_cast<unsigned char>(c)]);
 	return out;
 }
@@ -137,7 +137,7 @@ struct u16_cursor {
 	// Consume the next unit iff it is a low surrogate.
 	bool take_low(char32_t &v)
 	{
-		const u16_cursor save = *this;
+		u16_cursor const save = *this;
 		if (next(v) && v >= 0xDC00 && v < 0xE000)
 			return true;
 		*this = save;
@@ -172,7 +172,7 @@ std::string utf16_to_utf8(std::string_view payload, int hi, int lo)
 bool valid_utf8(std::string_view v)
 {
 	std::uint8_t st = ok;
-	for (const char c : v)
+	for (char const c : v)
 		st = u8next[st][u8cls[static_cast<unsigned char>(c)]];
 	return st == ok;
 }
@@ -219,7 +219,7 @@ namespace {
 // Escape table: nullptr means the byte passes through unchanged, so
 // UTF-8 multibyte sequences flow untouched.
 constexpr auto esc_tab = [] {
-	std::array<const char *, 256> t{};
+	std::array<char const *, 256> t{};
 	t[static_cast<unsigned char>('&')] = "&amp;";
 	t[static_cast<unsigned char>('<')] = "&lt;";
 	t[static_cast<unsigned char>('>')] = "&gt;";
@@ -230,7 +230,7 @@ constexpr auto esc_tab = [] {
 
 bool ieq(std::string_view a, std::string_view b)
 {
-	const auto lower = [](char c) {
+	auto const lower = [](char c) {
 		return c >= 'A' && c <= 'Z' ? char(c + 32) : c;
 	};
 	return a.size() == b.size()
@@ -284,7 +284,7 @@ struct attr_cursor {
 		while (n < s.size() && (attr_cls[static_cast<unsigned char>(s[n])]
 		                        & (a_color | a_face)) && !detail::in(s[n], detail::b_digit))
 			++n;
-		const std::string_view v = s.substr(0, n);
+		std::string_view const v = s.substr(0, n);
 		s.remove_prefix(n);
 		return v;
 	}
@@ -303,8 +303,8 @@ struct attr_cursor {
 			return std::nullopt;
 		if (s.front() == '"' || s.front() == '\'')
 			return quoted();
-		const std::size_t n = std::min(s.find_first_of(" \t"), s.size());
-		const std::string_view v = s.substr(0, n);
+		std::size_t const n = std::min(s.find_first_of(" \t"), s.size());
+		std::string_view const v = s.substr(0, n);
 		s.remove_prefix(n);
 		return v.empty() ? std::nullopt : std::optional(v);
 	}
@@ -312,12 +312,12 @@ struct attr_cursor {
 private:
 	std::optional<std::string_view> quoted()
 	{
-		const char q = s.front();
+		char const q = s.front();
 		s.remove_prefix(1);
-		const std::size_t n = s.find(q);
+		std::size_t const n = s.find(q);
 		if (n == std::string_view::npos)
 			return std::nullopt;
-		const std::string_view v = s.substr(0, n);
+		std::string_view const v = s.substr(0, n);
 		s.remove_prefix(n + 1);
 		return v;
 	}
@@ -332,7 +332,7 @@ bool append_attr(std::string &out, std::string_view key,
 		std::uint8_t     mask;
 	} kAttrs[]{{"color", a_color}, {"face", a_face}, {"size", a_size}};
 
-	for (const auto &a : kAttrs) {
+	for (auto const &a : kAttrs) {
 		if (!ieq(key, a.name))
 			continue;
 		if (!all_in(val, a.mask))
@@ -357,12 +357,12 @@ std::string font_attrs(std::string_view s)
 		cu.spaces();
 		if (cu.done())
 			return out;
-		const std::string_view key = cu.ident();
+		std::string_view const key = cu.ident();
 		cu.spaces();
 		if (key.empty() || !cu.ch('='))
 			return {};
 		cu.spaces();
-		const std::optional<std::string_view> val = cu.value();
+		std::optional<std::string_view> const val = cu.value();
 		if (!val || !append_attr(out, key, *val))
 			return {};
 	}
@@ -373,18 +373,18 @@ std::size_t skip_ass(std::string_view s)
 {
 	if (!s.starts_with("{\\"))
 		return 0;
-	const std::size_t close = s.find('}');
+	std::size_t const close = s.find('}');
 	return close == std::string_view::npos ? 0 : close + 1;
 }
 
 // "<...>" whitelisted tag: emits and returns consumed length, or 0.
 std::size_t emit_tag(std::string_view s, std::string &out)
 {
-	const std::size_t close = s.find('>', 1);
+	std::size_t const close = s.find('>', 1);
 	if (close == std::string_view::npos || close > 96)
 		return 0;
-	const std::string_view inner = detail::trim(s.substr(1, close - 1));
-	const auto same = [inner](std::string_view t) { return ieq(inner, t); };
+	std::string_view const inner = detail::trim(s.substr(1, close - 1));
+	auto const same = [inner](std::string_view t) { return ieq(inner, t); };
 	if (std::ranges::any_of(simple_tags, same)) {
 		out += '<';
 		out += inner;
@@ -394,7 +394,7 @@ std::size_t emit_tag(std::string_view s, std::string &out)
 	if (inner.size() < 5 || !ieq(inner.substr(0, 4), "font")
 	    || !detail::in(inner[4], detail::b_space))
 		return 0;
-	const std::string attrs = font_attrs(inner.substr(5));
+	std::string const attrs = font_attrs(inner.substr(5));
 	if (attrs.empty())
 		return 0;
 	out += "<font";
@@ -406,14 +406,14 @@ std::size_t emit_tag(std::string_view s, std::string &out)
 // One piece of output; returns bytes consumed (always >= 1).
 std::size_t piece(std::string_view s, std::string &out)
 {
-	const unsigned char c = static_cast<unsigned char>(s.front());
+	unsigned char const c = static_cast<unsigned char>(s.front());
 	if (c == '{') {
-		const std::size_t n = skip_ass(s);
+		std::size_t const n = skip_ass(s);
 		if (n)
 			return n;
 	}
 	if (c == '<') {
-		const std::size_t n = emit_tag(s, out);
+		std::size_t const n = emit_tag(s, out);
 		if (n)
 			return n;
 	}

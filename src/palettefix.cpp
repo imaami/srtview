@@ -8,9 +8,9 @@
 
 namespace {
 
-double relLuminance(const QColor &c)
+double relLuminance(QColor const &c)
 {
-	const auto lin = [](double v) {
+	auto const lin = [](double v) {
 		v /= 255.0;
 		return v <= 0.04045 ? v / 12.92
 		                    : std::pow((v + 0.055) / 1.055, 2.4);
@@ -19,7 +19,7 @@ double relLuminance(const QColor &c)
 	     + 0.0722 * lin(c.blue());
 }
 
-double contrastRatio(const QColor &a, const QColor &b)
+double contrastRatio(QColor const &a, QColor const &b)
 {
 	double l1 = relLuminance(a), l2 = relLuminance(b);
 	if (l1 < l2)
@@ -43,9 +43,9 @@ void repairMenuPalette(QWidget *w)
 		{QPalette::Base,   QPalette::Text},
 	};
 	bool changed = false;
-	for (const auto g : groups) {
-		for (const auto &[bgRole, fgRole] : pairs) {
-			const QColor bg = p.color(g, bgRole);
+	for (auto const g : groups) {
+		for (auto const &[bgRole, fgRole] : pairs) {
+			QColor const bg = p.color(g, bgRole);
 			if (contrastRatio(bg, p.color(g, fgRole)) >= kMinContrast)
 				continue;
 			QColor fix = p.color(g, QPalette::WindowText);

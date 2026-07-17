@@ -3,6 +3,8 @@ add_executable(srtview
 	mainwin.cpp
 	srtedit.cpp
 	searchbar.cpp
+	playback.cpp
+	search.cpp
 	mpvlink.cpp
 	srt.cpp
 	timefmt.cpp
