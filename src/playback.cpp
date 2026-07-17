@@ -66,3 +66,17 @@ void PlaybackCtl::onMpvTime(double t)
 {
 	m_view.setPlayTime(t);
 }
+
+void PlaybackCtl::onMpvState(bool responsive)
+{
+	if (responsive) {
+		m_status.showMessage(QStringLiteral("mpv responding again"),
+		                     3000);
+		return;
+	}
+	// Persistent until recovery: this is the "player seized up"
+	// failure, now visible instead of silent.
+	m_status.showMessage(QStringLiteral(
+		"mpv is not responding \u2014 run srtview from a terminal "
+		"(SRTVIEW_DEBUG=1) for details"), 0);
+}

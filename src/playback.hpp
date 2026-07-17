@@ -23,6 +23,7 @@ public:
 	void seekRel(double dt);
 	void toggleFollow();
 	void onMpvTime(double t);
+	void onMpvState(bool responsive);
 
 	QAction &followAction() { return m_followAct; }
 

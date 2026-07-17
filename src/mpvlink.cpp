@@ -8,7 +8,23 @@
 #include <QJsonObject>
 
 #include <chrono>
+#include <cstdio>
 #include <thread>
+
+namespace {
+
+bool debugEnabled()
+{
+	static bool const on = qEnvironmentVariableIsSet("SRTVIEW_DEBUG");
+	return on;
+}
+
+} // namespace
+
+mpv_link_base::mpv_link_base()
+{
+	m_clock.start();
+}
 
 bool mpv_link_base::openFor(QString const &video, QString const &srt,
                             QString *err)
@@ -41,8 +57,16 @@ bool mpv_link_base::ensureAlive(QString *err)
 	                 QStringLiteral("--sub-auto=no")};
 	args += QProcess::splitCommand(qEnvironmentVariable("SRTVIEW_MPV_ARGS"));
 	args << QStringLiteral("--") << m_video;
+	// Forward mpv's stdout/stderr to ours instead of the QProcess
+	// default of capture pipes.  A captured pipe that nobody drains
+	// holds 64 KiB; once graphics-stack warnings (chatty on WSLg)
+	// fill it, mpv's next write blocks forever and its core wedges.
+	// Forwarding removes the pipe entirely and makes mpv's own
+	// diagnostics visible when srtview runs from a terminal.
+	m_proc.setProcessChannelMode(QProcess::ForwardedChannels);
 	m_proc.setProgram(QStringLiteral("mpv"));
 	m_proc.setArguments(args);
+	dbg(QStringLiteral("spawning mpv, socket %1").arg(m_sock));
 	m_proc.start();
 	if (!m_proc.waitForStarted(3000)) {
 		*err = QStringLiteral("cannot start mpv: %1")
@@ -68,6 +92,7 @@ bool mpv_link_base::send(QString const &line, QString *err)
 {
 	if (!ensureAlive(err))
 		return false;
+	dbg(QStringLiteral("tx: ") + line);
 	m_conn.write(line.toUtf8() + '\n');
 	m_conn.flush();
 	// flush() usually drains the whole buffer; only wait if the
@@ -119,7 +144,11 @@ void mpv_link_base::shutdown()
 
 void mpv_link_base::fill()
 {
-	m_inbuf += m_conn.readAll();
+	QByteArray const chunk = m_conn.readAll();
+	if (chunk.isEmpty())
+		return;
+	m_inbuf += chunk;
+	m_lastRx = m_clock.elapsed();
 }
 
 bool mpv_link_base::takeTime(double &t)
@@ -157,8 +186,40 @@ bool mpv_link_base::tryConnect()
 	m_conn.connectToServer(m_sock);
 	if (!m_conn.waitForConnected(200))
 		return false;
+	m_lastRx = m_clock.elapsed();        // fresh connection, fresh clock
 	observe();
+	dbg(QStringLiteral("connected to %1").arg(m_sock));
 	return true;
+}
+
+void mpv_link_base::sendPing()
+{
+	m_conn.write("{\"command\":[\"get_property\",\"pid\"],"
+	             "\"request_id\":900913}\n");
+	m_conn.flush();
+}
+
+bool mpv_link_base::connectedNow() const
+{
+	return m_conn.state() == QLocalSocket::ConnectedState;
+}
+
+qint64 mpv_link_base::msecsSinceRx() const
+{
+	return m_clock.elapsed() - m_lastRx;
+}
+
+void mpv_link_base::note(QString const &msg) const
+{
+	std::fprintf(stderr, "srtview[%9.3f]: %s\n",
+	             m_clock.elapsed() / 1000.0, qPrintable(msg));
+	std::fflush(stderr);
+}
+
+void mpv_link_base::dbg(QString const &msg) const
+{
+	if (debugEnabled())
+		note(msg);
 }
 
 void mpv_link_base::observe()

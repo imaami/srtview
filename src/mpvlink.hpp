@@ -17,10 +17,12 @@
 #include "concepts.hpp"
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QLocalSocket>
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QTimer>
 
 class mpv_link_base : public QObject
 {
@@ -43,7 +45,7 @@ public:
 	bool spawned() const { return m_spawned; }
 
 protected:
-	mpv_link_base() = default;
+	mpv_link_base();
 
 	// Drain the socket into the line buffer.
 	void fill();
@@ -55,15 +57,30 @@ protected:
 
 	QLocalSocket &conn() { return m_conn; }
 
+	// Liveness: any bytes from mpv stamp the receive clock; a cheap
+	// get_property ping forces traffic even when nothing is playing.
+	// A wedged mpv core keeps the socket connected but answers
+	// nothing -- exactly the failure mode seen in the field.
+	void sendPing();
+	bool connectedNow() const;
+	qint64 msecsSinceRx() const;
+
+	// Unconditional for state flips; verbose traffic only with
+	// SRTVIEW_DEBUG set.
+	void note(QString const &msg) const;
+	void dbg(QString const &msg) const;
+
 private:
 	bool tryConnect();
 	void observe();
 
-	QProcess     m_proc;
-	QLocalSocket m_conn;
-	QByteArray   m_inbuf;
-	QString      m_video, m_srt, m_sock;
-	bool         m_spawned = false;
+	QProcess      m_proc;
+	QLocalSocket  m_conn;
+	QByteArray    m_inbuf;
+	QElapsedTimer m_clock;
+	qint64        m_lastRx = 0;
+	QString       m_video, m_srt, m_sock;
+	bool          m_spawned = false;
 };
 
 template <mpv_observer Obs>
@@ -75,6 +92,9 @@ public:
 	{
 		connect(&conn(), &QLocalSocket::readyRead,
 		        this, [this] { pump(); });
+		m_health.setInterval(2000);
+		connect(&m_health, &QTimer::timeout, this, [this] { tick(); });
+		m_health.start();
 	}
 
 private:
@@ -85,7 +105,28 @@ private:
 			m_obs->onMpvTime(t);
 	}
 
-	Obs *m_obs;
+	// Watchdog: ping, then judge by silence.  Flips are reported to
+	// the observer and logged.
+	void tick()
+	{
+		if (!connectedNow())
+			return;
+		sendPing();
+		bool const ok = msecsSinceRx() < kWedgeMs;
+		if (ok == m_ok)
+			return;
+		m_ok = ok;
+		note(ok ? QStringLiteral("mpv responding again")
+		        : QStringLiteral("mpv unresponsive: no IPC traffic "
+		                         "for %1 ms").arg(msecsSinceRx()));
+		m_obs->onMpvState(ok);
+	}
+
+	static constexpr qint64 kWedgeMs = 6000;
+
+	Obs   *m_obs;
+	QTimer m_health;
+	bool   m_ok = true;
 };
 
 #endif // SRTVIEW_SRC_MPVLINK_HPP_

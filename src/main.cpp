@@ -26,6 +26,8 @@
 //   c / P           play / pause (srtjump muscle memory)
 //
 // Env: SRTVIEW_MPV_ARGS -- extra mpv arguments (split on whitespace)
+//      SRTVIEW_DEBUG    -- log IPC traffic and player health to
+//                          stderr; state flips are logged always
 //
 // Build:  cmake -B build && cmake --build build
 // Deps :  qt6-base-dev (Widgets, Network), a C++20 compiler
