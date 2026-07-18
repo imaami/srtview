@@ -104,6 +104,21 @@ void runSelftest(MainWin *w, QString const &video)
 		w->search().historyStep(false);
 		log(QStringLiteral("hist2 pattern=%1").arg(w->bar().pattern()));
 	});
+	// --- redo: climb back up the branch, history detour and all ---
+	QTimer::singleShot(11000, w, [w, log] {
+		w->redoStep();
+		log(QStringLiteral("redo1 pattern=%1").arg(w->bar().pattern()));
+		w->redoStep();
+		log(QStringLiteral("redo2 cue=%1").arg(w->view().currentCue()));
+	});
+	QTimer::singleShot(11200, w, [w, log] {
+		w->redoStep();
+		log(QStringLiteral("redo3 cue=%1").arg(w->view().currentCue()));
+		w->redoStep();                       // video jump forward
+	});
+	QTimer::singleShot(11800, w, [w, log] {
+		log(QStringLiteral("redo4 playcue=%1").arg(w->view().playCue()));
+	});
 	QTimer::singleShot(8300, w, [w, log] {
 		w->playback().togglePause();                    // Space path
 		log(QStringLiteral("toggle sent"));
@@ -113,7 +128,7 @@ void runSelftest(MainWin *w, QString const &video)
 		w->grab().save(shot);
 		log(QStringLiteral("screenshot %1").arg(shot));
 	});
-	QTimer::singleShot(11400, w, [w, log] {
+	QTimer::singleShot(12200, w, [w, log] {
 		log(QStringLiteral("done"));
 		w->close();
 		QApplication::exit(0);

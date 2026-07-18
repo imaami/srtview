@@ -109,8 +109,7 @@ void SearchCtl::findAgain(bool backward)
 	if (!re.isValid() || re.pattern().isEmpty())
 		return;
 	recordUse();
-	m_trail.push({trail_step::search_jump, {},
-	              m_view.textCursor().position(), 0.0});
+	int const posBefore = m_view.textCursor().position();
 	QTextDocument::FindFlags fl;
 	if (backward)
 		fl |= QTextDocument::FindBackward;
@@ -120,6 +119,14 @@ void SearchCtl::findAgain(bool backward)
 		m_status.showMessage(m_view.find(re, fl)
 			? QStringLiteral("search wrapped")
 			: QStringLiteral("no match"), 1500);
+	}
+	int const posAfter = m_view.textCursor().position();
+	if (posAfter != posBefore) {
+		trail_step jump;
+		jump.k = trail_step::search_jump;
+		jump.curBefore = posBefore;
+		jump.curAfter = posAfter;
+		m_trail.act(jump);
 	}
 	updateCounter(m_view.textCursor());
 }
@@ -146,9 +153,16 @@ void SearchCtl::recordUse()
 	QString const p = m_bar.pattern();
 	if (p == m_recorded)
 		return;
-	m_trail.push({trail_step::search_text, m_recorded, 0, 0.0});
-	m_trail.push({trail_step::search_jump, {},
-	              m_anchor.isNull() ? 0 : m_anchor.position(), 0.0});
+	trail_step text;
+	text.k = trail_step::search_text;
+	text.textBefore = m_recorded;
+	text.textAfter = p;
+	m_trail.act(text);
+	trail_step jump;
+	jump.k = trail_step::search_jump;
+	jump.curBefore = m_anchor.isNull() ? 0 : m_anchor.position();
+	jump.curAfter = m_view.textCursor().position();
+	m_trail.act(jump);
 	m_recorded = p;
 	m_prefs.addSearch(p);
 }

@@ -45,6 +45,8 @@ MainWin::MainWin()
 	auto *edit = menuBar()->addMenu(QStringLiteral("&Edit"));
 	edit->addAction(QStringLiteral("&Undo step"), QKeySequence::Undo,
 	                this, [this] { undoStep(); });
+	edit->addAction(QStringLiteral("&Redo step"), QKeySequence::Redo,
+	                this, [this] { redoStep(); });
 
 	auto *pb = menuBar()->addMenu(QStringLiteral("&Playback"));
 	pb->addAction(QStringLiteral("Play/pause\t(Space)"),
@@ -122,29 +124,62 @@ bool MainWin::openPath(QString const &path)
 	return true;
 }
 
-// Fundo: walk one step back along the search/jump/seek breadcrumb
-// trail.  Each application runs with recording suppressed.
+// Fundo: walk the undo tree.  Undo climbs down toward the past
+// applying each step's before-state; redo climbs back up the branch
+// last grown or adopted, applying after-states.  Side branches
+// persist; retracing an identical action adopts its old branch.
+// Application runs with recording suppressed.
 void MainWin::undoStep()
 {
-	if (m_trail.empty()) {
+	std::optional<trail_step> const s = m_trail.undo();
+	if (!s) {
 		statusBar()->showMessage(QStringLiteral("nothing to undo"),
 		                         1500);
 		return;
 	}
-	trail_step const s = m_trail.pop();
 	m_trail.setApplying(true);
-	switch (s.k) {
+	switch (s->k) {
 	case trail_step::search_text:
-		m_search.applyPattern(s.text);
+		m_search.applyPattern(s->textBefore);
 		statusBar()->showMessage(QStringLiteral("undo \u2192 search "
-			"\"%1\"").arg(s.text), 2000);
+			"\"%1\"").arg(s->textBefore), 2000);
 		break;
 	case trail_step::search_jump:
-		m_search.applyCursor(s.cursor);
+		m_search.applyCursor(s->curBefore);
 		break;
 	case trail_step::video_jump:
 	case trail_step::side_seek:
-		m_playback.applyTime(s.time);
+		m_playback.applyTime(s->timeBefore);
+		statusBar()->showMessage(QStringLiteral("undo \u2192 %1")
+			.arg(fmtTime(s->timeBefore, true)), 2000);
+		break;
+	}
+	m_trail.setApplying(false);
+}
+
+void MainWin::redoStep()
+{
+	std::optional<trail_step> const s = m_trail.redo();
+	if (!s) {
+		statusBar()->showMessage(QStringLiteral("nothing to redo"),
+		                         1500);
+		return;
+	}
+	m_trail.setApplying(true);
+	switch (s->k) {
+	case trail_step::search_text:
+		m_search.applyPattern(s->textAfter);
+		statusBar()->showMessage(QStringLiteral("redo \u2192 search "
+			"\"%1\"").arg(s->textAfter), 2000);
+		break;
+	case trail_step::search_jump:
+		m_search.applyCursor(s->curAfter);
+		break;
+	case trail_step::video_jump:
+	case trail_step::side_seek:
+		m_playback.applyTime(s->timeAfter);
+		statusBar()->showMessage(QStringLiteral("redo \u2192 %1")
+			.arg(fmtTime(s->timeAfter, true)), 2000);
 		break;
 	}
 	m_trail.setApplying(false);

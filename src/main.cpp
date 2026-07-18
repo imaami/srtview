@@ -23,8 +23,11 @@
 //   Left / Right    seek 5 s back / forward
 //   f               toggle follow: the cue being spoken is tinted in
 //                   sync, and the view glides along while following
-//   Ctrl+Z          undo one step: walks the search / jump / seek
-//                   breadcrumb trail backwards (pause/play excluded)
+//   Ctrl+Z          undo one step: climbs down the fundo tree of
+//                   search / jump / seek breadcrumbs (pause excluded)
+//   Ctrl+Shift+Z    redo: climbs back up the branch last grown or
+//                   re-entered; side branches persist, and repeating
+//                   an identical action re-enters its old branch
 //   Up / Down (in the search field)  cycle the persistent search
 //                   history
 //   c / P           play / pause (srtjump muscle memory)

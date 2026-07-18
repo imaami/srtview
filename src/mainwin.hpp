@@ -23,6 +23,7 @@ public:
 
 	bool openPath(QString const &path);
 	void undoStep();
+	void redoStep();
 
 	// Component / controller access (menus are wired internally;
 	// these exist for the selftest driver).

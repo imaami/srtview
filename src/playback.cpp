@@ -24,13 +24,18 @@ void PlaybackCtl::seekCue(int cue, bool forcePause)
 		return;
 	QString err;
 	double const t = m_view.cueStart(cue);
-	if (m_link.lastTime() >= 0.0)
-		m_trail.push({trail_step::video_jump, {}, 0,
-		              m_link.lastTime()});
+	if (m_link.lastTime() >= 0.0) {
+		trail_step jump;
+		jump.k = trail_step::video_jump;
+		jump.timeBefore = m_link.lastTime();
+		jump.timeAfter = t;
+		m_trail.act(jump);
+	}
 	if (!m_link.seek(t, forcePause, &err)) {
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 		return;
 	}
+	m_view.setPlayTime(t);
 	m_status.showMessage(QStringLiteral("#%1 \u2192 %2%3")
 		.arg(cue + 1).arg(fmtTime(t, true),
 		     forcePause ? QStringLiteral("  [paused]") : QString()),
@@ -54,9 +59,13 @@ void PlaybackCtl::togglePause()
 void PlaybackCtl::seekRel(double dt)
 {
 	QString err;
-	if (m_link.lastTime() >= 0.0)
-		m_trail.push({trail_step::side_seek, {}, 0,
-		              m_link.lastTime()});
+	if (m_link.lastTime() >= 0.0) {
+		trail_step seek;
+		seek.k = trail_step::side_seek;
+		seek.timeBefore = m_link.lastTime();
+		seek.timeAfter = m_link.lastTime() + dt;
+		m_trail.act(seek);
+	}
 	if (!m_link.seekRel(dt, &err))
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 }
@@ -68,8 +77,10 @@ void PlaybackCtl::applyTime(double t)
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 		return;
 	}
-	m_status.showMessage(QStringLiteral("undo \u2192 %1")
-	                     .arg(fmtTime(t, true)), 2000);
+	// Reflect immediately: mpv's echo is not guaranteed (see
+	// mpv_link_base::seek) and the highlight should not wait a
+	// round-trip anyway.
+	m_view.setPlayTime(t);
 }
 
 void PlaybackCtl::toggleFollow()

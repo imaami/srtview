@@ -14,6 +14,47 @@ aarch64)
 	__build_type=Release ;;
 esac
 
+[[ "$__arch" == 'aarch64' ]] && __mcpu=cpu || __mcpu=arch
+
+__cc="$CC"
+__cc_is_clang=0
+if [[ "$__cc" ]]; then
+	[[ ! "$("$__cc" --version 2>&1)" =~ [Cc]lang ]] || __cc_is_clang=1
+else
+	case "$__arch" in
+	aarch64)
+		__cc='clang'
+		__cc_is_clang=1 ;;
+	*)
+		__cc='gcc' ;;
+	esac
+fi
+
+__cflags="$CFLAGS"
+[[ "$__cflags" =~ (^|[[:blank:]])-m(arch|cpu|tune)= ]] || {
+	if (( __cc_is_clang )); then
+		__cflags+=\ $("$__cc" -### -c -xc /dev/null                 \
+		                      -m{arch,cpu,tune}=native 2>&1         |
+		              grep -Eo '"-t(arget|une)-cpu" "[^"]+"'        |
+		              sed -Ee 's/"-target-cpu" "([^"]+)"/-m'"$__mcpu"'=\1/' \
+		                   -e 's/"-tune-cpu" "([^"]+)"/-mtune=\1/'  |
+		              grep -v '=$'                                  |
+		              xargs)
+	else
+		__cflags+=\ $(COLUMNS=4096                     \
+		              "$__cc" -Q --help=target         \
+		                      -m{arch,cpu,tune}=native |
+		              tr -d ' \t'                      |
+		              grep -E '^-m(arch|cpu|tune)=.+$' |
+		              xargs)
+	fi
+
+	[[ "$__cflags" =~ (^|[[:blank:]])-m(arch|cpu|tune)= ]] ||
+		__cflags+=' -march=native -mtune=native'
+
+	__cflags="${__cflags# }"
+}
+
 __cxx="$CXX"
 __cxx_is_clang=0
 if [[ "$__cxx" ]]; then
@@ -31,10 +72,9 @@ fi
 __cxxflags="$CXXFLAGS"
 [[ "$__cxxflags" =~ (^|[[:blank:]])-m(arch|cpu|tune)= ]] || {
 	if (( __cxx_is_clang )); then
-		[[ "$__arch" == 'aarch64' ]] && __mcpu=cpu || __mcpu=arch
 		__cxxflags+=\ $("$__cxx" -### -c -xc++ /dev/null              \
 		                         -m{arch,cpu,tune}=native 2>&1        |
-		                grep -Eo '"-(target-cpu|tune-cpu)" "[^"]+"'   |
+		                grep -Eo '"-t(arget|une)-cpu" "[^"]+"'        |
 		                sed -Ee 's/"-target-cpu" "([^"]+)"/-m'"$__mcpu"'=\1/' \
 		                     -e 's/"-tune-cpu" "([^"]+)"/-mtune=\1/'  |
 		                grep -v '=$'                                  |
@@ -61,6 +101,8 @@ rm -f -r "$d/build/"                        &&
 mkdir -p "$d/build"                         &&
 cmake -B "$d/build" -S "$d"                 \
       -DCMAKE_BUILD_TYPE="$__build_type"    \
+      -DCMAKE_C_COMPILER="$__cc"            \
+      -DCMAKE_C_FLAGS="$__cflags"           \
       -DCMAKE_CXX_COMPILER="$__cxx"         \
       -DCMAKE_CXX_FLAGS="$__cxxflags"       \
       -DCMAKE_EXPORT_COMPILE_COMMANDS=1     \

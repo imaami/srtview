@@ -117,8 +117,14 @@ bool mpv_link_base::seek(double t, bool forcePause, QString *err)
 {
 	QString const s = QStringLiteral("no-osd seek %1 absolute+exact")
 	                  .arg(t, 0, 'f', 3);
-	return send(forcePause
-		? QStringLiteral("no-osd set pause yes; ") + s : s, err);
+	if (!send(forcePause
+	          ? QStringLiteral("no-osd set pause yes; ") + s : s, err))
+		return false;
+	// Best-known position is the commanded one until mpv reports
+	// otherwise: mpv does not always echo a property change for a
+	// seek returning to the last value it reported.
+	m_lastTime = t;
+	return true;
 }
 
 bool mpv_link_base::seekRel(double dt, QString *err)
