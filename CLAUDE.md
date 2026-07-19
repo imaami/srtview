@@ -40,7 +40,7 @@ Tests mirror the layering: `tests/parse_test.cpp` links `srt.cpp` with no Qt at 
 
 ## Conventions
 
-- Tabs for indentation throughout (C, C++, CMake).
-- C core uses Doxygen `/** */` comments; C++ uses `//` header-comment style.
+- Tabs indent, spaces align (C, C++, CMake): continuation lines of a declaration or argument list are tab-indented to the statement's level, then space-padded into column alignment. Do not "fix" space-aligned continuations into tabs.
+- C core uses Doxygen `/** */` for API documentation (file headers, structs, public functions); internal implementation notes and test commentary are plain `/* */`. C++ uses `//` header-comment style.
 - `.gitignore` must stay sorted in the C locale (`LC_ALL=C sort`) — see AGENTS.md for the pre-commit check to run after `git add`.
 - Untracked files (check `git status`) are arbitrary local temporaries, not part of the repo — only work with repository content.

@@ -76,17 +76,18 @@ void PlaybackCtl::seekRel(double dt)
 	}
 }
 
-void PlaybackCtl::applyTime(double t)
+bool PlaybackCtl::applyTime(double t)
 {
 	QString err;
 	if (!m_link.seek(t, false, &err)) {
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
-		return;
+		return false;
 	}
 	// Reflect immediately: mpv's echo is not guaranteed (see
 	// mpv_link_base::seek) and the highlight should not wait a
 	// round-trip anyway.
 	m_view.setPlayTime(t);
+	return true;
 }
 
 void PlaybackCtl::toggleFollow()

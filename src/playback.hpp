@@ -28,7 +28,8 @@ public:
 	void onMpvState(bool responsive);
 
 	// Undo applier: return to a recorded position, pause untouched.
-	void applyTime(double t);
+	// False when mpv refused the seek and playback did not move.
+	bool applyTime(double t);
 
 	QAction &followAction() { return m_followAct; }
 

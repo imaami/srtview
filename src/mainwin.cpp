@@ -149,7 +149,10 @@ void MainWin::undoStep()
 		break;
 	case trail_step::video_jump:
 	case trail_step::side_seek:
-		m_playback.applyTime(s->timeBefore);
+		if (!m_playback.applyTime(s->timeBefore)) {
+			m_trail.redo();  // playback never moved: stay put
+			break;
+		}
 		statusBar()->showMessage(QStringLiteral("undo \u2192 %1")
 			.arg(fmtTime(s->timeBefore, true)), 2000);
 		break;
@@ -177,7 +180,10 @@ void MainWin::redoStep()
 		break;
 	case trail_step::video_jump:
 	case trail_step::side_seek:
-		m_playback.applyTime(s->timeAfter);
+		if (!m_playback.applyTime(s->timeAfter)) {
+			m_trail.undo();  // playback never moved: stay put
+			break;
+		}
 		statusBar()->showMessage(QStringLiteral("redo \u2192 %1")
 			.arg(fmtTime(s->timeAfter, true)), 2000);
 		break;

@@ -35,75 +35,108 @@ struct fundo {
 	int                error; //!< Error number from construction.
 };
 
-/* Initializes and returns a new undo tree by-value.
+/** @brief Initializes and returns a new undo tree by-value.
+ *
  * Allocates the root node; check .error before use.
+ *
+ * @return The new tree.
  */
 extern struct fundo
 fundo (void);
 
-/* Initializes, but does not allocate, an undo tree.
- * Allocates the root node. Returns 0 on success and
- * an error number on failure.
+/** @brief Initializes, but does not allocate, an undo tree.
+ *
+ * Allocates the root node.
+ *
+ * @param dest The tree to initialize.
+ * @return     0 on success and an error number on failure.
  */
 extern int
 fundo_init (struct fundo *dest);
 
-/* Frees the whole tree, including every side branch,
- * but not the object itself.
+/** @brief Frees the whole tree, including every side branch,
+ *         but not the object itself.
+ *
+ * @param dest The tree to uninitialize.
  */
 extern void
 fundo_fini (struct fundo *dest);
 
-/* Allocates and initializes a new undo tree.
- * Returns a pointer to the created tree.
+/** @brief Allocates and initializes a new undo tree.
+ *
+ * @return A pointer to the created tree.
  */
 extern struct fundo *
 fundo_create (void);
 
-/* Uninitializes and frees the tree, then sets the
- * caller's pointer to nullptr.
+/** @brief Uninitializes and frees the tree, then sets the
+ *         caller's pointer to nullptr.
+ *
+ * @param p_dest Pointer to the caller's tree pointer.
  */
 extern void
 fundo_destroy (struct fundo **p_dest);
 
-/* Records an action of @a size bytes at @a data. If a child of the
- * current node holds a byte-identical payload, descends into it
- * (adoption); otherwise grows a new branch. Either way the redo
- * direction now points along the taken action. Returns 0 on success
- * and an error number on failure.
+/** @brief Records an action of @a size bytes at @a data.
+ *
+ * If a child of the current node holds a byte-identical payload,
+ * descends into it (adoption); otherwise grows a new branch. Either
+ * way the redo direction now points along the taken action.
+ *
+ * @param f    The tree to record into.
+ * @param data The action payload bytes.
+ * @param size The payload byte count.
+ * @return     0 on success and an error number on failure.
  */
 extern int
 fundo_act (struct fundo *f,
            void const   *data,
            size_t        size);
 
-/* Steps one node down toward the past. Returns the payload of the
- * action being undone (the node departed from), with its size in
- * @a size if non-null, or nullptr at the root.
+/** @brief Steps one node down toward the past.
+ *
+ * @param f    The tree to step in.
+ * @param size Receives the payload size if non-null.
+ * @return     The payload of the action being undone (the node
+ *             departed from), or nullptr at the root.
  */
 extern void const *
 fundo_undo (struct fundo *f,
             size_t       *size);
 
-/* Steps one node up along the last grown or adopted branch. Returns
- * the payload of the action being redone, with its size in @a size
- * if non-null, or nullptr when there is nothing to redo.
+/** @brief Steps one node up along the last grown or adopted branch.
+ *
+ * @param f    The tree to step in.
+ * @param size Receives the payload size if non-null.
+ * @return     The payload of the action being redone, or nullptr
+ *             when there is nothing to redo.
  */
 extern void const *
 fundo_redo (struct fundo *f,
             size_t       *size);
 
-/* Returns true if undo is possible (not at the root). */
+/** @brief Whether undo is possible (not at the root).
+ *
+ * @param f The tree to inspect.
+ * @return  @a true if the current node has a parent.
+ */
 extern bool
 fundo_can_undo (struct fundo const *f);
 
-/* Returns true if redo is possible (a branch was grown or adopted
- * above the current node).
+/** @brief Whether redo is possible (a branch was grown or adopted
+ *         above the current node).
+ *
+ * @param f The tree to inspect.
+ * @return  @a true if the current node has a redo direction.
  */
 extern bool
 fundo_can_redo (struct fundo const *f);
 
-/* Returns the number of branches growing out of the current node. */
+/** @brief The number of branches growing out of the current node.
+ *
+ * @param f The tree to inspect.
+ * @return  The current node's child count.
+ */
 extern size_t
 fundo_branches (struct fundo const *f);
 
