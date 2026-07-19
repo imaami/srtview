@@ -3,7 +3,7 @@
 #ifndef SRTVIEW_SRC_FUNDO_PRIV_H_
 #define SRTVIEW_SRC_FUNDO_PRIV_H_
 
-#include <stdint.h> /* SIZE_MAX */
+#include <string.h> /* memcmp() */
 
 #include "fundo.h"
 #include "list_priv.h"
@@ -42,7 +42,8 @@ fundo_find_child_ (struct fundo_node const *parent,
 	list_foreach (it, &parent->children) {
 		struct fundo_node *c =
 			container_of(it, struct fundo_node, hook);
-		if (mem_same(c->data, data, c->size, size))
+		if (c->size == size &&
+		    (!size || !memcmp(c->data, data, size)))
 			return c;
 	}
 	return nullptr;

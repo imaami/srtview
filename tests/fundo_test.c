@@ -146,7 +146,8 @@ test_edges (void)
 	fundo_act(p, nullptr, 0);              /* adoption of empty    */
 	fundo_undo(p, nullptr);
 	check(fundo_branches(p) == 1, "empty payloads deduplicate");
-	check(fundo_act(p, nullptr, 7) != 0, "null data with size fails");
+	check(fundo_act(p, &n, 0) != 0, "nonnull data with zero size fails");
+	check(fundo_act(p, nullptr, 7) == 0, "null data with size succeeds");
 	fundo_destroy(&p);
 	check(p == nullptr, "destroy nulls the pointer");
 }

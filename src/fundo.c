@@ -1,7 +1,9 @@
 /** @file
  */
 #include <errno.h>
+#include <stdint.h> /* PTRDIFF_MAX */
 #include <stdlib.h>
+#include <string.h>
 
 #include "fundo_priv.h"
 
@@ -15,13 +17,21 @@
  */
 static struct fundo_node *
 fundo_node_create (void const *data,
-                   size_t      size)
+                   size_t      size,
+                   int        *error)
 {
-	struct fundo_node *n = (!data || size) &&
-	                       size <= (size_t)PTRDIFF_MAX - sizeof *n
-	                       ? calloc(1, sizeof *n + size)
-	                       : nullptr;
-	if (n) {
+	struct fundo_node *n = nullptr;
+	int e = (data && !size) || size > (size_t)PTRDIFF_MAX - sizeof *n
+	        ? EINVAL
+	        : 0;
+
+	if (!e) do {
+		n = malloc(sizeof *n + size);
+		if (!n) {
+			e = errno ? errno : ENOMEM;
+			break;
+		}
+
 		*n = (struct fundo_node){
 			.hook = list(&n->hook),
 			.children = list(&n->children),
@@ -29,9 +39,18 @@ fundo_node_create (void const *data,
 			.last = nullptr,
 			.size = size
 		};
-		if (data)
+
+		if (data) {
 			memcpy(n->data, data, size);
-	}
+			break;
+		}
+
+		if (size)
+			memset(n->data, 0, size);
+	} while (0);
+
+	if (error)
+		*error = e;
 
 	return n;
 }
@@ -39,9 +58,13 @@ fundo_node_create (void const *data,
 struct fundo
 fundo (void)
 {
-	typeof(fundo().cur) node = fundo_node_create(nullptr, 0);
-	return node ? (struct fundo){ .root = node, .cur = node }
-	            : (struct fundo){ .error = errno ? errno : ENOMEM };
+	int e;
+	typeof(fundo().cur) n = fundo_node_create(nullptr, 0, &e);
+	return (struct fundo){
+		.root  = n,
+		.cur   = n,
+		.error = e
+	};
 }
 
 int
@@ -109,7 +132,7 @@ fundo_act (struct fundo *f,
            void const   *data,
            size_t        size)
 {
-	if (!f || !f->cur || (!data && size))
+	if (!f || !f->cur || (data && !size))
 		return EFAULT;
 
 	struct fundo_node *hit = fundo_find_child_(f->cur, data, size);
@@ -120,9 +143,11 @@ fundo_act (struct fundo *f,
 		return 0;
 	}
 
-	struct fundo_node *n = fundo_node_create(data, size);
+	int e;
+	struct fundo_node *n = fundo_node_create(data, size, &e);
 	if (!n)
-		return errno ? errno : ENOMEM;
+		return e;
+
 	n->parent = f->cur;
 	list_append(&f->cur->children, &n->hook);
 	f->cur->last = n;
