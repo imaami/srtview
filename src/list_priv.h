@@ -26,26 +26,51 @@ struct list
 	for (struct list *n__ = (list__)->next; \
 	     (node__) = n__, n__ = n__->next, (node__) != (list__);)
 
+
+/** @brief Initialize a list by value.
+ *
+ * In normal circumstances and if used correctly, this function's job
+ * is to make `obj->prev` and `obj->next` point to `obj` itself. It's
+ * possible to use this in other ways, too, if you actually know what
+ * you're doing (see e.g. `list_fini()`).
+ *
+ * @note If you're using this as a RAII-style initializer - which is
+ *       the primary intended purpose - the input argument *must* be
+ *       a pointer to the *same* object you assign the return value.
+ *
+ * @param self The list to initialize.
+ */
+force_inline struct list
+list (struct list *self)
+{
+	return (struct list){ self, self };
+}
+
 /** @brief Initialize a list.
  *
- * @param list The list to initialize.
+ * After the call `obj->prev` and `obj->next` will point to `obj` itself.
+ *
+ * @param obj The list to initialize.
  */
 force_inline void
-list_init (struct list *list)
+list_init (struct list *obj)
 {
-	list->next = list;
-	list->prev = list;
+	*obj = list(obj);
 }
 
 /** @brief Uninitialize a list.
  *
- * @param list The list to uninitialize.
+ * After the call `obj->prev` and `obj->next` will be `nullptr`.
+ *
+ * @note Existing links involving `obj` will be left dangling.
+ *       Any cleanup actions must be done before calling this.
+ *
+ * @param obj The list to uninitialize and "poison".
  */
 force_inline void
-list_fini (struct list *list)
+list_fini (struct list *obj)
 {
-	list->next = list;
-	list->prev = list;
+	*obj = list(nullptr);
 }
 
 /** @brief Return a pointer to the first node of a list without removing it.
@@ -56,7 +81,9 @@ list_fini (struct list *list)
 force_inline struct list *
 list_head (struct list const *list)
 {
-	return list->next != list ? list->next : nullptr;
+	return list != (struct list const *)list->next
+	       ? list->next
+	       : nullptr;
 }
 
 /** @brief Return a pointer to the last node of a list without removing it.
@@ -67,7 +94,9 @@ list_head (struct list const *list)
 force_inline struct list *
 list_tail (struct list const *list)
 {
-	return list->prev != list ? list->prev : nullptr;
+	return list != (struct list const *)list->prev
+	       ? list->prev
+	       : nullptr;
 }
 
 /** @brief Add a node to the end of a list.

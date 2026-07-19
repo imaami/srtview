@@ -5,27 +5,49 @@
 
 #include "fundo_priv.h"
 
+/** @brief Allocate a node for at most `size` payload bytes,
+ *         optionally initializing said payload from `data`.
+ *
+ * @param data Payload bytes. May be `nullptr`.
+ * @param size Payload byte count. Must be nonzero if `data`
+ *             is not `nullptr`.
+ * @return     The new node or `nullptr` on failure.
+ */
+static struct fundo_node *
+fundo_node_create (void const *data,
+                   size_t      size)
+{
+	struct fundo_node *n = (!data || size) &&
+	                       size <= (size_t)PTRDIFF_MAX - sizeof *n
+	                       ? calloc(1, sizeof *n + size)
+	                       : nullptr;
+	if (n) {
+		*n = (struct fundo_node){
+			.hook = list(&n->hook),
+			.children = list(&n->children),
+			.parent = nullptr,
+			.last = nullptr,
+			.size = size
+		};
+		if (data)
+			memcpy(n->data, data, size);
+	}
+
+	return n;
+}
+
 struct fundo
 fundo (void)
 {
-	struct fundo ret = {0};
-
-	ret.root = fundo_node_new_(nullptr, 0);
-	if (!ret.root) {
-		ret.error = errno ? errno : ENOMEM;
-		return ret;
-	}
-	ret.cur = ret.root;
-	return ret;
+	typeof(fundo().cur) node = fundo_node_create(nullptr, 0);
+	return node ? (struct fundo){ .root = node, .cur = node }
+	            : (struct fundo){ .error = errno ? errno : ENOMEM };
 }
 
 int
 fundo_init (struct fundo *dest)
 {
-	if (!dest)
-		return EFAULT;
-	*dest = fundo();
-	return dest->error;
+	return dest ? (*dest = fundo()).error : EFAULT;
 }
 
 /* Iterative teardown driven by the list mechanism itself: descend to
@@ -33,20 +55,23 @@ fundo_init (struct fundo *dest)
  * leaf hunt trivial and no recursion is needed.
  */
 static void
-fundo_free_tree_ (struct fundo_node *root)
+fundo_free_tree_ (struct fundo_node **root)
 {
-	struct fundo_node *n = root;
-
-	while (n) {
-		struct list *head = list_head(&n->children);
-		if (head) {
-			n = container_of(head, struct fundo_node, hook);
-			continue;
+	if (root) {
+		for (struct fundo_node *n = *root; n; ) {
+			struct list *head = list_head(&n->children);
+			if (head) {
+				n = container_of(head, struct fundo_node, hook);
+				continue;
+			}
+			struct fundo_node *up = n->parent;
+			list_del(&n->hook);
+			*n = (struct fundo_node){0};
+			free(n);
+			n = up;
 		}
-		struct fundo_node *up = n->parent;
-		list_del(&n->hook);
-		free(n);
-		n = up;
+
+		*root = nullptr;
 	}
 }
 
@@ -54,7 +79,7 @@ void
 fundo_fini (struct fundo *dest)
 {
 	if (dest) {
-		fundo_free_tree_(dest->root);
+		fundo_free_tree_(&dest->root);
 		*dest = (struct fundo){0};
 	}
 }
@@ -95,12 +120,13 @@ fundo_act (struct fundo *f,
 		return 0;
 	}
 
-	struct fundo_node *n = fundo_node_new_(data, size);
+	struct fundo_node *n = fundo_node_create(data, size);
 	if (!n)
 		return errno ? errno : ENOMEM;
 	n->parent = f->cur;
 	list_append(&f->cur->children, &n->hook);
 	f->cur->last = n;
+	f->cur->count++;
 	f->cur = n;
 	return 0;
 }
@@ -147,12 +173,5 @@ fundo_can_redo (struct fundo const *f)
 size_t
 fundo_branches (struct fundo const *f)
 {
-	size_t count = 0;
-	struct list *it;
-
-	if (!f || !f->cur)
-		return 0;
-	list_foreach (it, &f->cur->children)
-		++count;
-	return count;
+	return f && f->cur ? f->cur->count : 0;
 }

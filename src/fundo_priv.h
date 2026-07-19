@@ -3,11 +3,10 @@
 #ifndef SRTVIEW_SRC_FUNDO_PRIV_H_
 #define SRTVIEW_SRC_FUNDO_PRIV_H_
 
-#include "cutil.h"
+#include <stdint.h> /* SIZE_MAX */
+
 #include "fundo.h"
 #include "list_priv.h"
-
-#include <stdint.h> /* SIZE_MAX */
 
 /** @brief One recorded action: a node in the undo tree.
  *
@@ -21,34 +20,10 @@ struct fundo_node
 	struct list        children; //!< Sentinel of the child ring.
 	struct fundo_node *parent;   //!< Toward the past; root: nullptr.
 	struct fundo_node *last;     //!< Redo direction; may be nullptr.
+	size_t             count;    //!< Child count
 	size_t             size;     //!< Payload byte count.
 	unsigned char      data[];   //!< The opaque action payload.
 };
-
-/** @brief Allocate a node adopting @a size payload bytes from @a data.
- *
- * @param data Payload bytes, may be nullptr when @a size is 0.
- * @param size Payload byte count.
- * @return     The new node or nullptr on allocation failure.
- */
-force_inline struct fundo_node *
-fundo_node_new_ (void const *data,
-                 size_t      size)
-{
-	if (size > SIZE_MAX - sizeof *fundo_node_new_(data, size))
-		return nullptr;
-	struct fundo_node *n = malloc(sizeof *n + size);
-	if (!n)
-		return nullptr;
-	list_init(&n->hook);
-	list_init(&n->children);
-	n->parent = nullptr;
-	n->last = nullptr;
-	n->size = size;
-	if (size)
-		memcpy(n->data, data, size);
-	return n;
-}
 
 /** @brief Find a child of @a parent with a byte-identical payload.
  *

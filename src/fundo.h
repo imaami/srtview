@@ -19,10 +19,13 @@
 #ifndef SRTVIEW_SRC_FUNDO_H_
 #define SRTVIEW_SRC_FUNDO_H_
 
-#include <stddef.h>
-
 #ifdef __cplusplus
+# include <cstddef>
+# define STD(x) std::x
 extern "C" {
+#else
+# include <stddef.h>
+# define STD(x) x
 #endif
 
 struct fundo_node;
@@ -93,7 +96,7 @@ fundo_destroy (struct fundo **p_dest);
 extern int
 fundo_act (struct fundo *f,
            void const   *data,
-           size_t        size);
+           STD(size_t)   size);
 
 /** @brief Steps one node down toward the past.
  *
@@ -106,7 +109,7 @@ fundo_act (struct fundo *f,
  */
 extern void const *
 fundo_undo (struct fundo *f,
-            size_t       *size);
+            STD(size_t)  *size);
 
 /** @brief Steps one node up along the last grown or adopted branch.
  *
@@ -118,7 +121,7 @@ fundo_undo (struct fundo *f,
  */
 extern void const *
 fundo_redo (struct fundo *f,
-            size_t       *size);
+            STD(size_t)  *size);
 
 /** @brief Whether undo is possible (not at the root).
  *
@@ -142,11 +145,13 @@ fundo_can_redo (struct fundo const *f);
  * @param f The tree to inspect.
  * @return  The current node's child count.
  */
-extern size_t
+extern STD(size_t)
 fundo_branches (struct fundo const *f);
 
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
+
+#undef STD
 
 #endif /* SRTVIEW_SRC_FUNDO_H_ */
