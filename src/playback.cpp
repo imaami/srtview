@@ -24,16 +24,19 @@ void PlaybackCtl::seekCue(int cue, bool forcePause)
 		return;
 	QString err;
 	double const t = m_view.cueStart(cue);
-	if (m_link.lastTime() >= 0.0) {
-		trail_step jump;
-		jump.k = trail_step::video_jump;
-		jump.timeBefore = m_link.lastTime();
-		jump.timeAfter = t;
-		m_trail.act(jump);
-	}
+	// Capture before the seek (which advances lastTime), record only
+	// after it succeeds: a refused seek must not leave a trail step.
+	double const before = m_link.lastTime();
 	if (!m_link.seek(t, forcePause, &err)) {
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 		return;
+	}
+	if (before >= 0.0) {
+		trail_step jump;
+		jump.k = trail_step::video_jump;
+		jump.timeBefore = before;
+		jump.timeAfter = t;
+		m_trail.act(jump);
 	}
 	m_view.setPlayTime(t);
 	m_status.showMessage(QStringLiteral("#%1 \u2192 %2%3")
@@ -59,15 +62,18 @@ void PlaybackCtl::togglePause()
 void PlaybackCtl::seekRel(double dt)
 {
 	QString err;
-	if (m_link.lastTime() >= 0.0) {
+	double const before = m_link.lastTime();
+	if (!m_link.seekRel(dt, &err)) {
+		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
+		return;
+	}
+	if (before >= 0.0) {
 		trail_step seek;
 		seek.k = trail_step::side_seek;
-		seek.timeBefore = m_link.lastTime();
-		seek.timeAfter = m_link.lastTime() + dt;
+		seek.timeBefore = before;
+		seek.timeAfter = before + dt;
 		m_trail.act(seek);
 	}
-	if (!m_link.seekRel(dt, &err))
-		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 }
 
 void PlaybackCtl::applyTime(double t)

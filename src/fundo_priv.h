@@ -7,6 +7,8 @@
 #include "fundo.h"
 #include "list_priv.h"
 
+#include <stdint.h> /* SIZE_MAX */
+
 /** @brief One recorded action: a node in the undo tree.
  *
  * The tree is built from the same circular sentinel lists as
@@ -33,6 +35,8 @@ force_inline struct fundo_node *
 fundo_node_new_ (void const *data,
                  size_t      size)
 {
+	if (size > SIZE_MAX - sizeof *fundo_node_new_(data, size))
+		return nullptr;
 	struct fundo_node *n = malloc(sizeof *n + size);
 	if (!n)
 		return nullptr;

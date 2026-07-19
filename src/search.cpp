@@ -55,6 +55,10 @@ SearchCtl::SearchCtl(search_bar_base &bar, srt_view_base &view,
 void SearchCtl::showSearch()
 {
 	m_anchor = m_view.textCursor();
+	// Each opening starts a fresh history walk: recordUse() may have
+	// reordered the list since, making the old position meaningless.
+	m_histPos = -1;
+	m_draft.clear();
 	// Size first: the target x depends on the bar's final width,
 	// which before the first layout pass is garbage.
 	m_bar.adjustSize();
