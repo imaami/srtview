@@ -1,7 +1,19 @@
 #!/usr/bin/bash
 
+set +eu
+
 d=$(dirname "$0") && d=$(realpath -eq "$d") &&
 [[ -d "$d/src" && -f "$d/CMakeLists.txt" ]] || exit $?
+
+[[ ! "$NO_STRIP" =~ ^(1|[Oo][Nn]|[Tt][Rr][Uu][Ee]|[Yy]([Ee][Ss])?)$ ]]
+declare -i __no_strip=$?
+
+while (( $# )); do
+	case "$1" in
+	--no-strip) declare -i "${1//-/_}"=1 ;;
+	esac
+	shift
+done
 
 __arch=$(arch 2>/dev/null || lscpu --json 2>/dev/null | jq -r \
          '.lscpu[] | select(.field == "Architecture:") .data' 2>/dev/null)
@@ -109,4 +121,7 @@ cmake -B "$d/build" -S "$d"                 \
       -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
       -DCMAKE_VERBOSE_MAKEFILE=1            &&
 cmake --build "$d/build" -j "$__ncpu"       &&
-strip --strip-all "$d/build/srtview"
+{
+	(( __no_strip )) ||
+	strip --strip-all "$d/build/srtview";
+}
