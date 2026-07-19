@@ -52,6 +52,8 @@ redo_is (struct fundo *f, char const *want)
 static void
 test_linear (void)
 {
+	struct fundo_node const *at;
+	void const *d;
 	struct fundo f;
 	size_t n;
 
@@ -61,14 +63,26 @@ test_linear (void)
 
 	check(act(&f, "A") == 0 && act(&f, "B") == 0 && act(&f, "C") == 0,
 	      "three linear actions");
-	check(undo_is(&f, "C") && undo_is(&f, "B") && undo_is(&f, "A"),
-	      "undo walks back C, B, A");
+	check(undo_is(&f, "B") && undo_is(&f, "A"),
+	      "undo returns the node arrived at");
+	n = 99;
+	check(fundo_undo(&f, &n) != nullptr && n == 0,
+	      "undoing the first action arrives at the empty root");
 	check(!fundo_can_undo(&f) && fundo_undo(&f, &n) == nullptr,
 	      "undo stops at the root");
 	check(redo_is(&f, "A") && redo_is(&f, "B") && redo_is(&f, "C"),
 	      "redo walks forward A, B, C");
 	check(!fundo_can_redo(&f) && fundo_redo(&f, &n) == nullptr,
 	      "redo stops at the tip");
+
+	at = fundo_at(&f);
+	d = fundo_data(at, &n);
+	check(at && is(d, n, "C"), "fundo_at/fundo_data read the current node");
+	at = fundo_up(at);
+	d = fundo_data(at, &n);
+	check(at && is(d, n, "B"), "fundo_up climbs toward the past");
+	check(fundo_up(fundo_up(fundo_up(at))) == nullptr,
+	      "fundo_up stops above the root");
 
 	fundo_fini(&f);
 	check(f.root == nullptr && f.cur == nullptr, "fini zeroes");
@@ -135,7 +149,10 @@ test_edges (void)
 	      && fundo_undo(nullptr, &n) == nullptr
 	      && fundo_redo(nullptr, &n) == nullptr
 	      && !fundo_can_undo(nullptr) && !fundo_can_redo(nullptr)
-	      && fundo_branches(nullptr) == 0,
+	      && fundo_branches(nullptr) == 0
+	      && fundo_at(nullptr) == nullptr
+	      && fundo_up(nullptr) == nullptr
+	      && fundo_data(nullptr, &n) == nullptr && n == 0,
 	      "null tolerance");
 
 	p = fundo_create();

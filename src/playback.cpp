@@ -22,27 +22,33 @@ void PlaybackCtl::seekCue(int cue, bool forcePause)
 {
 	if (cue < 0 || cue >= m_view.cueCount())
 		return;
-	QString err;
 	double const t = m_view.cueStart(cue);
-	// Capture before the seek (which advances lastTime), record only
-	// after it succeeds: a refused seek must not leave a trail step.
-	double const before = m_link.lastTime();
-	if (!m_link.seek(t, forcePause, &err)) {
-		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
+	if (!jumpTo(t, forcePause))
 		return;
-	}
-	if (before >= 0.0) {
-		trail_step jump;
-		jump.k = trail_step::video_jump;
-		jump.timeBefore = before;
-		jump.timeAfter = t;
-		m_trail.act(jump);
-	}
-	m_view.setPlayTime(t);
+	trail_step jump;
+	jump.flags = trail_step::video;
+	jump.time = t;
+	m_trail.act(jump);
 	m_status.showMessage(QStringLiteral("#%1 \u2192 %2%3")
 		.arg(cue + 1).arg(fmtTime(t, true),
 		     forcePause ? QStringLiteral("  [paused]") : QString()),
 		2000);
+}
+
+bool PlaybackCtl::jumpTo(double t, bool forcePause)
+{
+	QString err;
+	// Capture before the seek (which advances lastTime): where the
+	// user actually was is what undoing the jump must return to.
+	double const before = m_link.lastTime();
+	if (!m_link.seek(t, forcePause, &err)) {
+		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
+		return false;
+	}
+	if (before >= 0.0)
+		m_trail.driftTo(before);
+	m_view.setPlayTime(t);
+	return true;
 }
 
 void PlaybackCtl::setPause(bool on)
@@ -68,10 +74,10 @@ void PlaybackCtl::seekRel(double dt)
 		return;
 	}
 	if (before >= 0.0) {
+		m_trail.driftTo(before);
 		trail_step seek;
-		seek.k = trail_step::side_seek;
-		seek.timeBefore = before;
-		seek.timeAfter = before + dt;
+		seek.flags = trail_step::video;
+		seek.time = before + dt;
 		m_trail.act(seek);
 	}
 }
@@ -87,6 +93,7 @@ bool PlaybackCtl::applyTime(double t)
 	// mpv_link_base::seek) and the highlight should not wait a
 	// round-trip anyway.
 	m_view.setPlayTime(t);
+	m_trail.noteVideo(t);
 	return true;
 }
 

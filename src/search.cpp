@@ -1,5 +1,6 @@
 #include "search.hpp"
 
+#include "playback.hpp"
 #include "prefs.hpp"
 #include "searchbar.hpp"
 #include "srtedit.hpp"
@@ -8,6 +9,21 @@
 #include <QTextDocument>
 
 namespace {
+
+// The current hit must pop against three same-hue washes (cursor
+// line, play cue, other hits): rotate the theme highlight to its
+// complement and raise the opacity instead of stacking a fourth
+// alpha of the same color.
+QColor currentHitColor(QPalette const &pal)
+{
+	QColor c = pal.color(QPalette::Highlight);
+	int h = 0, s = 0, v = 0;
+	c.getHsv(&h, &s, &v);
+	if (h >= 0)                          // achromatic themes keep hue
+		c.setHsv((h + 180) % 360, s, v);
+	c.setAlpha(170);
+	return c;
+}
 
 // All matches of re in doc: selections for display, start offsets for
 // the position counter.
@@ -38,9 +54,10 @@ void collectMatches(QTextDocument *doc, QRegularExpression const &re,
 } // namespace
 
 SearchCtl::SearchCtl(search_bar_base &bar, srt_view_base &view,
-                     QStatusBar &status, Prefs &prefs, Trail &trail)
+                     QStatusBar &status, Prefs &prefs, Trail &trail,
+                     PlaybackCtl &playback)
 	: m_bar(bar), m_view(view), m_status(status), m_prefs(prefs),
-	  m_trail(trail)
+	  m_trail(trail), m_playback(playback)
 {
 	m_nextAct.setText(QStringLiteral("Find &next"));
 	m_nextAct.setShortcut(QKeySequence(Qt::Key_F3));
@@ -50,6 +67,14 @@ SearchCtl::SearchCtl(search_bar_base &bar, srt_view_base &view,
 	m_prevAct.setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
 	QObject::connect(&m_prevAct, &QAction::triggered, &m_prevAct,
 	                 [this] { findAgain(true); });
+	m_nextTextAct.setText(QStringLiteral("Find next (&text only)"));
+	m_nextTextAct.setShortcut(QKeySequence(Qt::Key_F4));
+	QObject::connect(&m_nextTextAct, &QAction::triggered,
+	                 &m_nextTextAct, [this] { findAgain(false, false); });
+	m_prevTextAct.setText(QStringLiteral("Find previous (te&xt only)"));
+	m_prevTextAct.setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F4));
+	QObject::connect(&m_prevTextAct, &QAction::triggered,
+	                 &m_prevTextAct, [this] { findAgain(true, false); });
 }
 
 void SearchCtl::showSearch()
@@ -67,20 +92,23 @@ void SearchCtl::showSearch()
 
 // Dismissing does not revert anything -- the highlights, pattern
 // and cursor all stay -- so leaving the bar is an effective use of
-// the pattern and gets recorded like a commit.
+// the pattern and gets recorded like a commit; but unlike Enter it
+// does not touch the video.
 void SearchCtl::hideSearch()
 {
-	recordUse();
+	recordUse(false);
 	m_bar.dismiss();
 	m_view.setFocus();
 }
 
 // Enter in the search field: the incremental jump has already landed
-// on the match, so accept and get out of the way -- the next
-// keystroke (t, Space, ...) belongs to the view.
+// on the match, so this hit is the destination -- sync the video
+// like F3 would, accept, and get out of the way.
 void SearchCtl::commitSearch()
 {
-	hideSearch();
+	recordUse(true);
+	m_bar.dismiss();
+	m_view.setFocus();
 }
 
 // Pattern edited: refresh highlights and jump to the first match at
@@ -107,32 +135,41 @@ void SearchCtl::searchChanged()
 	}
 }
 
-void SearchCtl::findAgain(bool backward)
+void SearchCtl::findAgain(bool backward, bool syncVideo)
 {
 	QRegularExpression const re = pattern();
 	if (!re.isValid() || re.pattern().isEmpty())
 		return;
-	recordUse();
+	recordUse(false);
 	int const posBefore = m_view.textCursor().position();
 	QTextDocument::FindFlags fl;
 	if (backward)
 		fl |= QTextDocument::FindBackward;
-	if (!m_view.find(re, fl)) {
+	bool hit = m_view.find(re, fl);
+	if (!hit) {
 		m_view.moveCursor(backward ? QTextCursor::End
 		                           : QTextCursor::Start);
-		m_status.showMessage(m_view.find(re, fl)
+		hit = m_view.find(re, fl);
+		m_status.showMessage(hit
 			? QStringLiteral("search wrapped")
 			: QStringLiteral("no match"), 1500);
 	}
-	int const posAfter = m_view.textCursor().position();
-	if (posAfter != posBefore) {
-		trail_step jump;
-		jump.k = trail_step::search_jump;
-		jump.curBefore = posBefore;
-		jump.curAfter = posAfter;
+	trail_step jump;
+	jump.cur = m_view.textCursor().position();
+	jump.flags = trail_step::cursor;
+	if (hit && syncVideo && syncCue(jump.time))
+		jump.flags |= trail_step::video;
+	if (jump.cur != posBefore || (jump.flags & trail_step::video))
 		m_trail.act(jump);
-	}
 	updateCounter(m_view.textCursor());
+}
+
+bool SearchCtl::syncCue(double &t)
+{
+	if (m_view.cueCount() <= 0)
+		return false;
+	t = m_view.cueStart(m_view.currentCue());
+	return m_playback.jumpTo(t, false);
 }
 
 void SearchCtl::layoutOverlay()
@@ -152,21 +189,26 @@ void SearchCtl::setRegexEnabled(bool on)
 	m_bar.setRegexEnabled(on);
 }
 
-void SearchCtl::recordUse()
+void SearchCtl::recordUse(bool syncVideo)
 {
 	QString const p = m_bar.pattern();
-	if (p == m_recorded)
+	bool const changed = p != m_recorded;
+	bool const sync = syncVideo && !p.isEmpty()
+	               && !m_matchStarts.empty();
+	if (!changed && !sync)
 		return;
-	trail_step text;
-	text.k = trail_step::search_text;
-	text.textBefore = m_recorded;
-	text.textAfter = p;
-	m_trail.act(text);
-	trail_step jump;
-	jump.k = trail_step::search_jump;
-	jump.curBefore = m_anchor.isNull() ? 0 : m_anchor.position();
-	jump.curAfter = m_view.textCursor().position();
-	m_trail.act(jump);
+	trail_step s;
+	s.cur = m_view.textCursor().position();
+	s.flags = trail_step::cursor;
+	if (changed) {
+		s.flags |= trail_step::text;
+		s.pattern = p;
+	}
+	if (sync && syncCue(s.time))
+		s.flags |= trail_step::video;
+	m_trail.act(s);
+	if (!changed)
+		return;
 	m_recorded = p;
 	m_prefs.addSearch(p);
 }
@@ -218,6 +260,7 @@ void SearchCtl::highlightAll()
 	m_matchStarts.clear();
 	QRegularExpression const re = pattern();
 	bool const empty = re.pattern().isEmpty();
+	m_view.setCurrentMatchSelection({}); // updateCounter re-marks
 	if (!re.isValid() && !empty) {
 		m_bar.setCount(0, -1);           // invalid-pattern feedback
 		m_view.setMatchSelections({});
@@ -247,6 +290,14 @@ void SearchCtl::updateCounter(QTextCursor const &cur)
 		break;
 	}
 	m_bar.setCount(idx, int(m_matchStarts.size()));
+	QList<QTextEdit::ExtraSelection> sel;
+	if (idx > 0 && cur.hasSelection()) {
+		QTextEdit::ExtraSelection s;
+		s.cursor = cur;
+		s.format.setBackground(currentHitColor(m_view.palette()));
+		sel << s;
+	}
+	m_view.setCurrentMatchSelection(sel);
 }
 
 QPoint SearchCtl::target() const

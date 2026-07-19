@@ -27,6 +27,12 @@ public:
 	void onMpvTime(double t);
 	void onMpvState(bool responsive);
 
+	// User-initiated jump: seeks and drops the pre-jump drift
+	// breadcrumb, but leaves recording the jump itself to the caller
+	// (which may fold it into a combined step).  False when mpv
+	// refused the seek and playback did not move.
+	bool jumpTo(double t, bool forcePause);
+
 	// Undo applier: return to a recorded position, pause untouched.
 	// False when mpv refused the seek and playback did not move.
 	bool applyTime(double t);

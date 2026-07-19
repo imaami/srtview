@@ -32,7 +32,7 @@ Tests mirror the layering: `tests/parse_test.cpp` links `srt.cpp` with no Qt at 
 **Component/controller split in the Qt layer:**
 - `concepts.hpp` defines host contracts (`playback_host`, `search_host`, `mpv_observer`). Components (`srtedit`, `searchbar`, `mpvlink`) are thin header-only templates constrained by these concepts and never name a concrete host; each has a non-template base (`srt_view_base`, `search_bar_base`, `mpv_link_base`) compiled once in the .cpp, which is what controllers hold.
 - Controllers/mediators: `PlaybackCtl` (`playback.cpp`) executes transport verbs against mpv; `SearchCtl` (`search.cpp`) owns pattern semantics and match navigation.
-- `Trail` (`trail.cpp/hpp`) is the C++ facade over the fundo C core: undo/redo breadcrumbs of search/jump/seek steps, each carrying before- and after-state, encoded deterministically so identical transitions trigger branch adoption. Its "applying" latch suppresses recording while a step is replayed.
+- `Trail` (`trail.cpp/hpp`) is the C++ facade over the fundo C core: undo/redo breadcrumbs of search/jump/seek steps. Each node stores a *state*: a bitmask of the facets the step touched (search text, text cursor, video position) plus each touched facet's after-value — one step can combine facets ("jumped in text and video"). Undo resolves departed facets to their nearest recorded ancestor values; encoding is deterministic so identical steps trigger branch adoption. Its "applying" latch suppresses recording while a step is replayed.
 - `MainWin` (`mainwin.cpp`) is the composition root — owns components and controllers, wires everything; nothing depends on it except `main` and `selftest`.
 - `Prefs` (QSettings-backed) persists last directory, recent files, search history.
 

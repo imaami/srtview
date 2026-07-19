@@ -21,7 +21,8 @@ MainWin::MainWin()
 	, m_bar(&m_search, &m_view)
 	, m_link(&m_playback)
 	, m_playback(m_link, m_view, *statusBar(), m_trail)
-	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail)
+	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
+	           m_playback)
 {
 	setCentralWidget(&m_view);
 	setAcceptDrops(true);
@@ -73,6 +74,9 @@ MainWin::MainWin()
 	                  this, [this] { m_search.showSearch(); });
 	search->addAction(&m_search.nextAction());
 	search->addAction(&m_search.prevAction());
+	search->addSeparator();
+	search->addAction(&m_search.nextTextAction());
+	search->addAction(&m_search.prevTextAction());
 
 	// --- status bar ---
 	statusBar()->addPermanentWidget(&m_state);
@@ -124,11 +128,12 @@ bool MainWin::openPath(QString const &path)
 	return true;
 }
 
-// Fundo: walk the undo tree.  Undo climbs down toward the past
-// applying each step's before-state; redo climbs back up the branch
-// last grown or adopted, applying after-states.  Side branches
-// persist; retracing an identical action adopts its old branch.
-// Application runs with recording suppressed.
+// Fundo: walk the undo tree.  Both directions receive the state to
+// arrive at -- undo resolves each departed facet to its nearest
+// recorded ancestor value, redo gets the node ascended into -- and
+// apply exactly the facets the step touched.  Side branches persist;
+// retracing an identical action adopts its old branch.  Application
+// runs with recording suppressed.
 void MainWin::undoStep()
 {
 	std::optional<trail_step> const s = m_trail.undo();
@@ -138,25 +143,7 @@ void MainWin::undoStep()
 		return;
 	}
 	m_trail.setApplying(true);
-	switch (s->k) {
-	case trail_step::search_text:
-		m_search.applyPattern(s->textBefore);
-		statusBar()->showMessage(QStringLiteral("undo \u2192 search "
-			"\"%1\"").arg(s->textBefore), 2000);
-		break;
-	case trail_step::search_jump:
-		m_search.applyCursor(s->curBefore);
-		break;
-	case trail_step::video_jump:
-	case trail_step::side_seek:
-		if (!m_playback.applyTime(s->timeBefore)) {
-			m_trail.redo();  // playback never moved: stay put
-			break;
-		}
-		statusBar()->showMessage(QStringLiteral("undo \u2192 %1")
-			.arg(fmtTime(s->timeBefore, true)), 2000);
-		break;
-	}
+	applyStep(*s, true);
 	m_trail.setApplying(false);
 }
 
@@ -169,26 +156,38 @@ void MainWin::redoStep()
 		return;
 	}
 	m_trail.setApplying(true);
-	switch (s->k) {
-	case trail_step::search_text:
-		m_search.applyPattern(s->textAfter);
-		statusBar()->showMessage(QStringLiteral("redo \u2192 search "
-			"\"%1\"").arg(s->textAfter), 2000);
-		break;
-	case trail_step::search_jump:
-		m_search.applyCursor(s->curAfter);
-		break;
-	case trail_step::video_jump:
-	case trail_step::side_seek:
-		if (!m_playback.applyTime(s->timeAfter)) {
-			m_trail.undo();  // playback never moved: stay put
-			break;
-		}
-		statusBar()->showMessage(QStringLiteral("redo \u2192 %1")
-			.arg(fmtTime(s->timeAfter, true)), 2000);
-		break;
-	}
+	applyStep(*s, false);
 	m_trail.setApplying(false);
+}
+
+// Video first: it is the one applier that can fail (mpv refuses),
+// and a refused step must bail before any facet has been touched.
+void MainWin::applyStep(trail_step const &s, bool undo)
+{
+	QStringList parts;
+	if (s.flags & trail_step::video) {
+		if (!m_playback.applyTime(s.time)) {
+			// Playback never moved: put the tree back by taking
+			// the opposite step of the one being applied.
+			if (undo)
+				m_trail.redo();
+			else
+				m_trail.undo();
+			return;
+		}
+		parts << fmtTime(s.time, true);
+	}
+	if (s.flags & trail_step::text) {
+		m_search.applyPattern(s.pattern);
+		parts << QStringLiteral("search \"%1\"").arg(s.pattern);
+	}
+	if (s.flags & trail_step::cursor)
+		m_search.applyCursor(s.cur);
+	if (parts.isEmpty())                 // cursor-only: stay quiet
+		return;
+	statusBar()->showMessage(QStringLiteral("%1 \u2192 %2")
+		.arg(undo ? QStringLiteral("undo") : QStringLiteral("redo"),
+		     parts.join(QStringLiteral(" \u00b7 "))), 2000);
 }
 
 void MainWin::dragEnterEvent(QDragEnterEvent *ev)

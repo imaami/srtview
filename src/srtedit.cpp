@@ -146,6 +146,12 @@ void srt_view_base::setMatchSelections(QList<ExtraSelection> const &sel)
 	applySelections();
 }
 
+void srt_view_base::setCurrentMatchSelection(QList<ExtraSelection> const &sel)
+{
+	m_curSel = sel;
+	applySelections();
+}
+
 
 
 void srt_view_base::resizeEvent(QResizeEvent *ev)
@@ -253,5 +259,5 @@ void srt_view_base::updateCurrentCueHighlight()
 
 void srt_view_base::applySelections()
 {
-	setExtraSelections(m_lineSel + m_playSel + m_matchSel);
+	setExtraSelections(m_lineSel + m_playSel + m_matchSel + m_curSel);
 }

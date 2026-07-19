@@ -41,6 +41,7 @@ protected:
 
 private:
 	static bool droppable(QMimeData const *md);
+	void applyStep(trail_step const &s, bool undo);
 	void openDialog(QString const &startDir);
 	void rebuildRecentMenu();
 	void closeFile();

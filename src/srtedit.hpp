@@ -46,6 +46,7 @@ public:
 	int playCue() const { return m_playCue; }
 
 	void setMatchSelections(QList<ExtraSelection> const &sel);
+	void setCurrentMatchSelection(QList<ExtraSelection> const &sel);
 
 	// Playback following: the cue containing t gets a light
 	// full-width background tint; when following is on, the view
@@ -84,7 +85,7 @@ private:
 	int                     m_playCue = -1;
 	bool                    m_follow = true;
 	std::vector<srt::cue>   m_cues;
-	QList<ExtraSelection>   m_lineSel, m_playSel, m_matchSel;
+	QList<ExtraSelection>   m_lineSel, m_playSel, m_matchSel, m_curSel;
 };
 
 // Input adapter: keys, double-click and gutter clicks become direct

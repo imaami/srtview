@@ -3,7 +3,9 @@
  *
  * Actions grow the tree upward (up = future); undo climbs down toward
  * the past, redo climbs back up the branch it last grew out of or
- * descended into.  Branches abandoned by undoing are never deleted:
+ * descended into.  Both return the payload of the node they arrive
+ * at, so payloads read naturally as recorded states rather than
+ * transitions.  Branches abandoned by undoing are never deleted:
  * taking a different action after undoing splits a new branch, while
  * taking an action byte-identical to an existing child at that point
  * adopts that branch instead -- as if redo had been pressed -- and
@@ -102,10 +104,10 @@ fundo_act (struct fundo *f,
  *
  * @param f    The tree to step in.
  * @param size Receives the payload size if non-null.
- * @return     The payload of the action being undone (the node
- *             departed from), or nullptr at the root. On success
- *             the pointer is never nullptr, even for an empty
- *             payload.
+ * @return     The payload of the node arrived at (the parent of the
+ *             action being undone), or nullptr when already at the
+ *             root. On success the pointer is never nullptr, even
+ *             for an empty payload.
  */
 extern void const *
 fundo_undo (struct fundo *f,
@@ -147,6 +149,40 @@ fundo_can_redo (struct fundo const *f);
  */
 extern STD(size_t)
 fundo_branches (struct fundo const *f);
+
+/** @brief The current node of the tree.
+ *
+ * Together with fundo_up() and fundo_data() this allows read-only
+ * inspection of the path back to the root without moving the tree's
+ * position -- e.g. resolving the previous value of one facet of a
+ * state payload before undoing.
+ *
+ * @param f The tree to inspect.
+ * @return  The current node, or nullptr if @a f is nullptr or
+ *          uninitialized.
+ */
+extern struct fundo_node const *
+fundo_at (struct fundo const *f);
+
+/** @brief The parent of a node, one step toward the past.
+ *
+ * @param n The node whose parent to get.
+ * @return  The parent, or nullptr for the root or a nullptr @a n.
+ */
+extern struct fundo_node const *
+fundo_up (struct fundo_node const *n);
+
+/** @brief A node's payload.
+ *
+ * @param n    The node to read.
+ * @param size Receives the payload size if non-null.
+ * @return     The payload bytes, or nullptr if @a n is nullptr. For
+ *             a valid node the pointer is never nullptr, even for an
+ *             empty payload.
+ */
+extern void const *
+fundo_data (struct fundo_node const *n,
+            STD(size_t)             *size);
 
 #ifdef __cplusplus
 } /* extern "C" */

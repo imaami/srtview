@@ -89,13 +89,13 @@ void runSelftest(MainWin *w, QString const &video)
 	QTimer::singleShot(9700, w, [w] { w->undoStep(); });   // video jump
 	QTimer::singleShot(10100, w, [w, log] {
 		log(QStringLiteral("undo1 playcue=%1").arg(w->view().playCue()));
-		w->undoStep();                                     // find jump
+		w->undoStep();                             // find jump (text+video)
 		log(QStringLiteral("undo2 cue=%1").arg(w->view().currentCue()));
 	});
 	QTimer::singleShot(10400, w, [w, log] {
-		w->undoStep();                                     // anchor jump
+		w->undoStep();                             // drift breadcrumb
 		log(QStringLiteral("undo3 cue=%1").arg(w->view().currentCue()));
-		w->undoStep();                                     // text step
+		w->undoStep();                             // pattern step
 		log(QStringLiteral("undo4 pattern=%1").arg(w->bar().pattern()));
 	});
 	QTimer::singleShot(10800, w, [w, log] {

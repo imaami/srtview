@@ -163,11 +163,10 @@ fundo_undo (struct fundo *f,
 	if (!f || !f->cur || !f->cur->parent)
 		return nullptr;
 
-	struct fundo_node *departed = f->cur;
-	f->cur = departed->parent;
+	f->cur = f->cur->parent;
 	if (size)
-		*size = departed->size;
-	return departed->data;
+		*size = f->cur->size;
+	return f->cur->data;
 }
 
 void const *
@@ -199,4 +198,25 @@ size_t
 fundo_branches (struct fundo const *f)
 {
 	return f && f->cur ? f->cur->count : 0;
+}
+
+struct fundo_node const *
+fundo_at (struct fundo const *f)
+{
+	return f ? f->cur : nullptr;
+}
+
+struct fundo_node const *
+fundo_up (struct fundo_node const *n)
+{
+	return n ? n->parent : nullptr;
+}
+
+void const *
+fundo_data (struct fundo_node const *n,
+            size_t                  *size)
+{
+	if (size)
+		*size = n ? n->size : 0;
+	return n ? n->data : nullptr;
 }
