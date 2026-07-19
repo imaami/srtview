@@ -19,7 +19,6 @@
 #ifndef SRTVIEW_SRC_FUNDO_H_
 #define SRTVIEW_SRC_FUNDO_H_
 
-#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -118,18 +117,18 @@ fundo_redo (struct fundo *f,
 /** @brief Whether undo is possible (not at the root).
  *
  * @param f The tree to inspect.
- * @return  @a true if the current node has a parent.
+ * @return  1 if the current node has a parent, otherwise 0.
  */
-extern bool
+extern int
 fundo_can_undo (struct fundo const *f);
 
 /** @brief Whether redo is possible (a branch was grown or adopted
  *         above the current node).
  *
  * @param f The tree to inspect.
- * @return  @a true if the current node has a redo direction.
+ * @return  1 if the current node has a redo direction, otherwise 0.
  */
-extern bool
+extern int
 fundo_can_redo (struct fundo const *f);
 
 /** @brief The number of branches growing out of the current node.

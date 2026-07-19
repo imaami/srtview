@@ -132,13 +132,13 @@ fundo_redo (struct fundo *f,
 	return f->cur->data;
 }
 
-bool
+int
 fundo_can_undo (struct fundo const *f)
 {
 	return f && f->cur && f->cur->parent;
 }
 
-bool
+int
 fundo_can_redo (struct fundo const *f)
 {
 	return f && f->cur && f->cur->last;
