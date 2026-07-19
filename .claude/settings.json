@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash .claude/skills/coderabbit/cr.sh *)",
+      "Bash(cmake --build *)",
+      "Bash(ctest *)",
+      "Bash(git status*)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git add *)",
+      "Bash(git commit -m *)",
+      "Bash(git push)"
+    ],
+    "deny": [
+      "Bash(git push -f*)",
+      "Bash(git push --force*)"
+    ]
+  }
+}
