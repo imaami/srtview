@@ -4,6 +4,8 @@
 #include <QDataStream>
 #include <QIODevice>
 
+#include <cstdio>
+
 namespace {
 
 // Deterministic wire form: equal transitions must be byte-equal so
@@ -65,7 +67,11 @@ void Trail::act(trail_step const &s)
 	if (m_applying)
 		return;
 	QByteArray const b = encode(s);
-	fundo_act(&m_f, b.constData(), std::size_t(b.size()));
+	int const rc = fundo_act(&m_f, b.constData(), std::size_t(b.size()));
+	if (rc)  // breadcrumb lost (OOM): playback state is unaffected,
+	         // but silent loss would make the trail lie later
+		std::fprintf(stderr, "srtview: undo step not recorded: %d\n",
+		             rc);
 }
 
 std::optional<trail_step> Trail::undo()

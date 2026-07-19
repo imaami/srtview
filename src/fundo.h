@@ -100,7 +100,9 @@ fundo_act (struct fundo *f,
  * @param f    The tree to step in.
  * @param size Receives the payload size if non-null.
  * @return     The payload of the action being undone (the node
- *             departed from), or nullptr at the root.
+ *             departed from), or nullptr at the root. On success
+ *             the pointer is never nullptr, even for an empty
+ *             payload.
  */
 extern void const *
 fundo_undo (struct fundo *f,
@@ -111,7 +113,8 @@ fundo_undo (struct fundo *f,
  * @param f    The tree to step in.
  * @param size Receives the payload size if non-null.
  * @return     The payload of the action being redone, or nullptr
- *             when there is nothing to redo.
+ *             when there is nothing to redo. On success the pointer
+ *             is never nullptr, even for an empty payload.
  */
 extern void const *
 fundo_redo (struct fundo *f,
