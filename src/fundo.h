@@ -63,7 +63,10 @@ fundo_fini (struct fundo *dest);
 
 /** @brief Allocates and initializes a new undo tree.
  *
- * @return A pointer to the created tree.
+ * @return A pointer to the created tree, or nullptr if allocating
+ *         the tree itself failed. A non-null tree may still have
+ *         failed root allocation: check .error before use, as with
+ *         fundo().
  */
 extern struct fundo *
 fundo_create (void);
