@@ -12,6 +12,10 @@
 QString sockForVideo(QString const &video, QString *err);
 bool socketAlive(QString const &sock);
 
+// Stable per-video identity: sha256(realpath)[:16], the same bytes
+// that name the player socket.  Empty when the path cannot resolve.
+QString idForVideo(QString const &video);
+
 // VIDEO.EXT.srt first, VIDEO.srt second.
 QString srtForVideo(QString const &video, QString *err);
 

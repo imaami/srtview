@@ -34,6 +34,7 @@ struct trail_step {
 	};
 
 	QString  pattern;
+	QString  vid;    // which video (discovery id); with the video flag
 	double   time = 0.0;
 	int      cur   = 0;
 	unsigned flags = 0;
@@ -59,6 +60,14 @@ public:
 	// A video position was applied outside act() (undo/redo): keep
 	// the drift baseline in sync.
 	void noteVideo(double t) { m_lastVideo = t; }
+
+	// The video facet carries which video, not just where in it:
+	// steps recorded from now on are stamped with this identity, and
+	// appliers switch videos when a step's id differs.  A change
+	// resets the drift baseline -- positions in different videos do
+	// not compare.
+	void setVideo(QString const &id);
+	QString const &videoId() const { return m_vid; }
 
 	// Search-hit cycle: the anchoring act (a full text+cursor+video
 	// state with a reproducible cue-start time) begins an episode;
@@ -89,9 +98,11 @@ public:
 	void setApplying(bool on) { m_applying = on; }
 
 private:
+	trail_step stamp(trail_step const &s) const;
 	int travelSlack() const;
 
 	struct fundo             m_f;
+	QString                  m_vid;       // current video identity
 	std::optional<double>    m_lastVideo; // last recorded/applied position
 	struct fundo_node const *m_cycle  = nullptr; // active episode anchor
 	struct fundo_node const *m_ringAt = nullptr; // pending growth splice

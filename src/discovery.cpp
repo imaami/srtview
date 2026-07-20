@@ -19,17 +19,24 @@ QString runDir()
 
 } // namespace
 
-QString sockForVideo(QString const &video, QString *err)
+QString idForVideo(QString const &video)
 {
 	QString const rp = QFileInfo(video).canonicalFilePath();
-	if (rp.isEmpty()) {
+	if (rp.isEmpty())
+		return {};
+	QByteArray const h = QCryptographicHash::hash(rp.toUtf8(),
+	                     QCryptographicHash::Sha256).toHex().left(16);
+	return QString::fromLatin1(h);
+}
+
+QString sockForVideo(QString const &video, QString *err)
+{
+	QString const id = idForVideo(video);
+	if (id.isEmpty()) {
 		*err = QStringLiteral("cannot resolve path: %1").arg(video);
 		return {};
 	}
-	QByteArray const h = QCryptographicHash::hash(rp.toUtf8(),
-	                     QCryptographicHash::Sha256).toHex().left(16);
-	return runDir() + QLatin1Char('/') + QString::fromLatin1(h)
-	                + QStringLiteral(".sock");
+	return runDir() + QLatin1Char('/') + id + QStringLiteral(".sock");
 }
 
 bool socketAlive(QString const &sock)

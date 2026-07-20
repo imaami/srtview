@@ -30,7 +30,7 @@ QByteArray encode(trail_step const &s)
 	if (s.flags & trail_step::cursor)
 		w << qint32(s.cur);
 	if (s.flags & trail_step::video)
-		w << s.time;
+		w << s.vid << s.time;
 	return out;
 }
 
@@ -54,7 +54,7 @@ trail_step decode(void const *data, std::size_t size)
 		s.cur = c;
 	}
 	if (fl & trail_step::video)
-		r >> s.time;
+		r >> s.vid >> s.time;
 	return s;
 }
 
@@ -71,13 +71,29 @@ bool sameState(struct fundo_node const *n, QByteArray const &b)
 
 } // namespace
 
+void Trail::setVideo(QString const &id)
+{
+	if (id == m_vid)
+		return;
+	m_vid = id;
+	m_lastVideo.reset();
+}
+
+trail_step Trail::stamp(trail_step const &s) const
+{
+	trail_step t = s;
+	if ((t.flags & trail_step::video) && t.vid.isEmpty())
+		t.vid = m_vid;
+	return t;
+}
+
 void Trail::act(trail_step const &s)
 {
 	if (m_applying || !s.flags)
 		return;
 	if (s.flags & trail_step::video)
 		m_lastVideo = s.time;
-	QByteArray const b = encode(s);
+	QByteArray const b = encode(stamp(s));
 	int const rc = fundo_act(&m_f, b.constData(), std::size_t(b.size()));
 	if (rc)  // breadcrumb lost (OOM): playback state is unaffected,
 	         // but silent loss would make the trail lie later
@@ -104,7 +120,7 @@ void Trail::anchorCycle()
 Trail::hop Trail::probeHop(trail_step const &s, int dir)
 {
 	m_ringAt = nullptr;
-	QByteArray const b = encode(s);
+	QByteArray const b = encode(stamp(s));
 	struct fundo_node const *at = fundo_at(&m_f);
 	if (sameState(at, b))
 		return hop::stay;

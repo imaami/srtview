@@ -4,6 +4,7 @@
 #include "palettefix.hpp"
 #include "srt.hpp"
 
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -37,6 +38,8 @@ MainWin::MainWin()
 	m_recentMenu->installEventFilter(this);
 	connect(m_recentMenu, &QMenu::aboutToShow,
 	        this, [this] { rebuildRecentMenu(); });
+	file->addAction(QStringLiteral("Open p&laylist…"),
+	                this, [this] { openPlaylistDialog(); });
 	file->addAction(QStringLiteral("&Close"), QKeySequence::Close,
 	                this, [this] { closeFile(); });
 	file->addSeparator();
@@ -69,6 +72,10 @@ MainWin::MainWin()
 	pb->addSeparator();
 	pb->addAction(&m_playback.followAction());
 
+	m_videosMenu = menuBar()->addMenu(QStringLiteral("&Videos"));
+	connect(m_videosMenu, &QMenu::aboutToShow,
+	        this, [this] { rebuildVideosMenu(); });
+
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
 	                  this, [this] { m_search.showSearch(); });
@@ -85,15 +92,15 @@ MainWin::MainWin()
 	repairMenuPalette(menuBar());
 }
 
-bool MainWin::openPath(QString const &path)
+bool MainWin::openPath(QString const &path, QString const &srtOverride)
 {
-	QString err, video = path, srt;
+	QString err, video = path, srt = srtOverride;
 	if (path.endsWith(QStringLiteral(".srt"), Qt::CaseInsensitive)) {
 		srt   = path;
 		video = videoForSrt(path, &err);
 		if (video.isEmpty())
 			return fail(err);
-	} else {
+	} else if (srt.isEmpty()) {
 		srt = srtForVideo(video, &err);
 		if (srt.isEmpty())
 			return fail(err);
@@ -112,6 +119,14 @@ bool MainWin::openPath(QString const &path)
 	if (!m_link.openFor(video, srt, &err))
 		return fail(err);
 
+	// Register under the discovery identity: the trail stamps video
+	// steps with it, and cross-video undo/redo looks the path up.
+	QString const id = idForVideo(video);
+	if (!id.isEmpty()) {
+		m_videosById.insert(id, {video, srt, id});
+		m_trail.setVideo(id);
+	}
+
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
 
@@ -126,6 +141,78 @@ bool MainWin::openPath(QString const &path)
 	                               : QStringLiteral("reused")));
 	m_view.setFocus();
 	return true;
+}
+
+// A topic file: the corpus source of videos and composable regexes
+// (grammar in topics.hpp).  Loading replaces the playlist; relative
+// paths resolve against the file's own directory.
+bool MainWin::loadPlaylist(QString const &path)
+{
+	QFile f(path);
+	if (!f.open(QIODevice::ReadOnly))
+		return fail(QStringLiteral("%1: %2").arg(path,
+		                                         f.errorString()));
+	QByteArray const raw = f.readAll();
+	std::string const text = srt::to_utf8(
+		{raw.constData(), size_t(raw.size())});
+	topics::result r = topics::parse(text);
+	if (!r.error.empty())
+		return fail(QStringLiteral("%1:%2: %3")
+			.arg(path).arg(r.line)
+			.arg(QString::fromStdString(r.error)));
+
+	m_corpus = std::move(r.value);
+	m_playlist.clear();
+	QDir const dir = QFileInfo(path).absoluteDir();
+	auto const resolve = [&dir](std::string const &p) {
+		QString const q = QString::fromStdString(p);
+		return q.isEmpty() || !QFileInfo(q).isRelative()
+		       ? q : dir.absoluteFilePath(q);
+	};
+	for (topics::video const &v : m_corpus.videos) {
+		PlayItem it{resolve(v.path), resolve(v.srt), {}};
+		it.id = idForVideo(it.video);
+		if (!it.id.isEmpty())
+			m_videosById.insert(it.id, it);
+		m_playlist << it;
+	}
+	statusBar()->showMessage(QStringLiteral(
+		"playlist: %1 videos, %2 topics")
+		.arg(m_playlist.size()).arg(m_corpus.topics.size()), 3000);
+	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
+		openPath(m_playlist.first().video, m_playlist.first().srt);
+	return true;
+}
+
+void MainWin::openPlaylistDialog()
+{
+	QString const p = QFileDialog::getOpenFileName(this,
+		QStringLiteral("Open playlist"), m_prefs.lastDir(),
+		QStringLiteral("Topic files (*.svt *.txt);;All files (*)"));
+	if (p.isEmpty())
+		return;
+	m_prefs.setLastDir(QFileInfo(p).absolutePath());
+	loadPlaylist(p);
+}
+
+void MainWin::rebuildVideosMenu()
+{
+	m_videosMenu->clear();
+	if (m_playlist.isEmpty()) {
+		m_videosMenu->addAction(QStringLiteral("(no playlist)"))
+			->setEnabled(false);
+		return;
+	}
+	for (PlayItem const &it : m_playlist) {
+		QAction *a = m_videosMenu->addAction(
+			QFileInfo(it.video).fileName());
+		a->setCheckable(true);
+		a->setChecked(!it.id.isEmpty()
+		              && it.id == m_trail.videoId());
+		QString const v = it.video, s = it.srt;
+		connect(a, &QAction::triggered,
+		        this, [this, v, s] { openPath(v, s); });
+	}
 }
 
 // Fundo: walk the undo tree.  Both directions receive the state to
@@ -166,7 +253,7 @@ void MainWin::applyStep(trail_step const &s, bool undo)
 {
 	QStringList parts;
 	if (s.flags & trail_step::video) {
-		if (!m_playback.applyTime(s.time)) {
+		if (!applyVideoStep(s)) {
 			// Playback never moved: put the tree back by taking
 			// the opposite step of the one being applied.
 			if (undo)
@@ -188,6 +275,25 @@ void MainWin::applyStep(trail_step const &s, bool undo)
 	statusBar()->showMessage(QStringLiteral("%1 \u2192 %2")
 		.arg(undo ? QStringLiteral("undo") : QStringLiteral("redo"),
 		     parts.join(QStringLiteral(" \u00b7 "))), 2000);
+}
+
+// The trail spans the corpus: a step recorded in another video first
+// switches to it (registry: playlist entries plus every video opened
+// this session), then seeks.
+bool MainWin::applyVideoStep(trail_step const &s)
+{
+	if (s.vid != m_trail.videoId()) {
+		auto const it = m_videosById.constFind(s.vid);
+		if (it == m_videosById.constEnd()) {
+			statusBar()->showMessage(QStringLiteral(
+				"this step's video is not in the playlist"),
+				3000);
+			return false;
+		}
+		if (!openPath(it->video, it->srt))
+			return false;
+	}
+	return m_playback.applyTime(s.time);
 }
 
 void MainWin::dragEnterEvent(QDragEnterEvent *ev)
