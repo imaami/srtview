@@ -223,35 +223,22 @@ fundo_data (struct fundo_node const *n,
 	return n ? n->data : nullptr;
 }
 
-/* Bump a node's travel pair for a pass in direction dir.  A pass
- * against the direction of earlier surplus passes cancels one of
- * them, otherwise it counts a new pass; either way the counter of
- * the latest direction claims index 0.  The stated invariants (one
- * value >= 0, the other <= -1, only one carrying magnitude) follow:
- * p grows only while n == -1, n shrinks only while p == 0, and
- * cancellation stops at the anchors.
+/* Bump a node's travel pair for a pass in direction dir.  The pair
+ * is one signed counter wearing its heading: net travel is
+ * t[0] + t[1] + 1, split into a value >= 0 and a value <= -1 with
+ * the latest direction owning index 0.  A pass is net +/- 1,
+ * re-encoded -- the cancel-or-count rules are this arithmetic's
+ * shadow.
  */
 static void
 fundo_bump_ (int32_t *t, int dir)
 {
-	int32_t p = t[t[0] < 0];
-	int32_t n = t[t[0] >= 0];
+	int32_t const net = t[0] + t[1] + 1 + (dir > 0 ? 1 : -1);
+	int32_t const pos = net >= 0 ? net : 0;
+	int32_t const neg = net >= 0 ? -1 : net - 1;
 
-	if (dir > 0) {
-		if (n < -1)
-			++n;
-		else
-			++p;
-		t[0] = p;
-		t[1] = n;
-		return;
-	}
-	if (p > 0)
-		--p;
-	else
-		--n;
-	t[0] = n;
-	t[1] = p;
+	t[dir <= 0] = pos;
+	t[dir > 0] = neg;
 }
 
 int

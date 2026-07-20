@@ -268,34 +268,50 @@ void expand_into(doc const &d, topic const &t, std::string &out)
 }
 
 // --- export-plan analysis -------------------------------------------
-// Pattern structure is only read where PCRE would: backslash escapes
-// consume the next byte and [...] classes hide everything inside.
+
+// Cursor over a pattern's structural bytes: escapes consume their
+// follower and [...] classes swallow their content, so parens and
+// pipes are reported only where PCRE sees them, with the depth
+// after the byte.
+struct rx_cursor {
+	std::string_view s;
+	std::size_t      i = 0;
+	int              depth = 0;
+	bool             cls = false;
+
+	bool next(char &c)
+	{
+		while (i < s.size()) {
+			c = s[i++];
+			if (c == '\\') {
+				++i;
+				continue;
+			}
+			if (cls) {
+				cls = c != ']';
+				continue;
+			}
+			if (c == '[') {
+				cls = true;
+				continue;
+			}
+			depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+			return true;
+		}
+		return false;
+	}
+};
 
 std::vector<std::string_view> branches(std::string_view body)
 {
 	std::vector<std::string_view> out;
 	std::size_t start = 0;
-	int depth = 0;
-	bool cls = false;
-	for (std::size_t i = 0; i < body.size(); ++i) {
-		char const c = body[i];
-		if (c == '\\') {
-			++i;
+	char c;
+	for (rx_cursor cur{body}; cur.next(c);) {
+		if (c != '|' || cur.depth != 0)
 			continue;
-		}
-		if (cls) {
-			cls = c != ']';
-			continue;
-		}
-		if (c == '[' || c == '(' || c == ')') {
-			cls = c == '[';
-			depth += c == '(' ? 1 : c == ')' ? -1 : 0;
-			continue;
-		}
-		if (c == '|' && depth == 0) {
-			out.push_back(body.substr(start, i - start));
-			start = i + 1;
-		}
+		out.push_back(body.substr(start, cur.i - 1 - start));
+		start = cur.i;
 	}
 	out.push_back(body.substr(start));
 	return out;
@@ -307,25 +323,10 @@ bool whole_group(std::string_view b)
 {
 	if (b.size() < 2 || b[0] != '(' || b[1] == '?')
 		return false;
-	int depth = 0;
-	bool cls = false;
-	for (std::size_t i = 0; i < b.size(); ++i) {
-		char const c = b[i];
-		if (c == '\\') {
-			++i;
-			continue;
-		}
-		if (cls) {
-			cls = c != ']';
-			continue;
-		}
-		if (c == '[')
-			cls = true;
-		else if (c == '(')
-			++depth;
-		else if (c == ')' && --depth == 0)
-			return i == b.size() - 1;
-	}
+	char c;
+	for (rx_cursor cur{b}; cur.next(c);)
+		if (c == ')' && cur.depth == 0)
+			return cur.i == b.size();
 	return false;
 }
 

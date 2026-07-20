@@ -70,7 +70,6 @@ void Grabber::setVideoImpl(QString const &path, QString const &id)
 		return;
 	m_path = path;
 	m_id = id;
-	QDir().mkpath(dir(id));
 	loadKnown(id);
 }
 
@@ -93,7 +92,6 @@ void Grabber::enqueueImpl(QString const &path, QString const &id,
 {
 	if (path.isEmpty() || id.isEmpty() || t < 0.0)
 		return;
-	QDir().mkpath(dir(id));
 	loadKnown(id);
 	qint64 const ms = qint64(t * 1000.0 + 0.5);
 	{
@@ -298,6 +296,7 @@ void Grabber::loadKnown(QString const &id)
 	QMutexLocker const lock(&m_lock);
 	if (m_known.contains(id))
 		return;
+	QDir().mkpath(dir(id));              // first touch owns the dir
 	QSet<qint64> &set = m_known[id];
 	QFile f(dir(id) + QStringLiteral("/picks.txt"));
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text))

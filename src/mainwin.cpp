@@ -159,7 +159,11 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 
 qsizetype MainWin::playlistIndex(QString const &video) const
 {
-	QString const id = idForVideo(video);
+	return indexOfId(idForVideo(video));
+}
+
+qsizetype MainWin::indexOfId(QString const &id) const
+{
 	if (id.isEmpty())
 		return -1;
 	for (qsizetype i = 0; i < m_playlist.size(); ++i)
@@ -410,14 +414,7 @@ QString MainWin::exportDir() const
 bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 {
 	qsizetype const n = m_playlist.size();
-	qsizetype at = -1;
-	for (qsizetype i = 0; i < n; ++i) {
-		if (m_playlist[i].id.isEmpty()
-		    || m_playlist[i].id != m_trail.videoId())
-			continue;
-		at = i;
-		break;
-	}
+	qsizetype const at = indexOfId(m_trail.videoId());
 	dbgHop(QStringLiteral("hopVideo: at=%1 n=%2 backward=%3 re=%4")
 	       .arg(at).arg(n).arg(int(backward))
 	       .arg(re.pattern().left(48)));
@@ -494,14 +491,7 @@ void MainWin::stepVideo(int dir)
 		return;
 	}
 	qsizetype const n = m_playlist.size();
-	qsizetype at = -1;
-	for (qsizetype i = 0; i < n; ++i) {
-		if (m_playlist[i].id.isEmpty()
-		    || m_playlist[i].id != m_trail.videoId())
-			continue;
-		at = i;
-		break;
-	}
+	qsizetype const at = indexOfId(m_trail.videoId());
 	qsizetype const to = at < 0 ? (dir > 0 ? 0 : n - 1)
 	                            : (at + dir + n) % n;
 	openPath(m_playlist[to].video, m_playlist[to].srt);

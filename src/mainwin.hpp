@@ -61,6 +61,7 @@ private:
 	void mpvSwitched(int index) override;
 	bool showDoc(QString const &video, QString const &srt);
 	qsizetype playlistIndex(QString const &video) const;
+	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries() const;
 	void grabsIdle() override;
 	void grabProgress() override;
