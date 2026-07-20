@@ -113,6 +113,7 @@ private:
 	void onRestart();
 	void deliver(QImage const &full);
 	void advance(QImage const &tn, qint64 ms);
+	bool reuseSegment(Job &j);
 	void bisectBack(Job &j);
 	void bisectFwd(Job &j);
 	void finish(Job &j);

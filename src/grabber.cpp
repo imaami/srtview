@@ -293,6 +293,8 @@ void Grabber::advance(QImage const &tn, qint64 ms)
 	switch (j.phase) {
 	case Job::anchor:
 		j.ref = tn;
+		if (reuseSegment(j))
+			return;
 		j.lo = std::max<qint64>(0, j.hit - kWinMs);
 		j.phase = Job::back0;
 		want(j.lo);
@@ -326,6 +328,36 @@ void Grabber::advance(QImage const &tn, qint64 ms)
 		bisectFwd(j);
 		return;
 	}
+}
+
+// A hit inside an already-bisected segment shares its boundaries:
+// a cluster of matching cues on one slide costs one new frame per
+// hit (the hit itself) instead of a bisection each -- and produces
+// no content-duplicate boundary frames.  Same content as the other
+// hit's frame plus a position inside its boundary window is the
+// same segment.
+bool Grabber::reuseSegment(Job &j)
+{
+	PickMap picks;
+	{
+		QMutexLocker const lock(&m_lock);
+		picks = m_picks.value(j.id);
+	}
+	for (auto it = picks.cbegin(); it != picks.cend(); ++it) {
+		auto const [prev, next] = it.value();
+		if (prev < 0 || next < 0
+		    || j.hit <= prev || j.hit >= next)
+			continue;
+		QImage other;
+		if (!other.load(framePath(j.id, it.key()))
+		    || !same(j.ref, thumb(other)))
+			continue;
+		j.prevMs = prev;
+		j.nextMs = next;
+		finish(j);
+		return true;
+	}
+	return false;
 }
 
 void Grabber::bisectBack(Job &j)

@@ -1,18 +1,20 @@
 // exporter.cpp -- see exporter.hpp.
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QHash>
+#include <QRegularExpression>
+#include <QSet>
+#include <QTextDocumentFragment>
+
+#include <vector>
+
 #include "exporter.hpp"
 
 #include "discovery.hpp"
 #include "grabber.hpp"
 #include "srt.hpp"
 #include "timefmt.hpp"
-
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QRegularExpression>
-#include <QTextDocumentFragment>
-
-#include <vector>
 
 namespace exporter {
 
@@ -53,55 +55,168 @@ std::vector<srt::cue> loadCues(QString const &path)
 	                                size_t(raw.size())}));
 }
 
-// Copy one pick into the topic's frames/ dir, return its image link.
-QString frameLink(Grabber &grab, source const &v, qint64 ms,
-                  QString const &tdir)
+void writeMd(QString const &path, QString const &md)
 {
-	QString const name = safeStem(v.video) + QLatin1Char('-')
-	                   + QString::number(ms)
-	                   + QStringLiteral(".png");
-	QString const dst = tdir + QStringLiteral("/frames/") + name;
+	QFile f(path);
+	if (f.open(QIODevice::WriteOnly | QIODevice::Truncate
+	           | QIODevice::Text))
+		f.write(md.toUtf8());
+}
+
+QString frameName(source const &v, qint64 ms)
+{
+	return safeStem(v.video) + QLatin1Char('-')
+	     + QString::number(ms) + QStringLiteral(".png");
+}
+
+// The timestamp heading and matched-cue blockquote of one hit.
+QString snippet(std::vector<srt::cue> const &cues, std::size_t i)
+{
+	QString s = QStringLiteral("\n### ") + fmtTime(cues[i].start, true)
+	          + QStringLiteral("\n\n");
+	if (i > 0)
+		s += QStringLiteral("> ") + oneLine(cues[i - 1].text)
+		   + QStringLiteral("\n");
+	s += QStringLiteral("> **") + oneLine(cues[i].text)
+	   + QStringLiteral("**\n");
+	if (i + 1 < cues.size())
+		s += QStringLiteral("> ") + oneLine(cues[i + 1].text)
+		   + QStringLiteral("\n");
+	return s;
+}
+
+// Everything one grouping's pass writes into: its own digest plus
+// the digests of its acknowledged components, which persist across
+// groupings (a component may be acknowledged by several).
+struct sink {
+	topics::doc const         &corpus;
+	topics::export_item const &item;
+	Grabber                   &grab;
+	stats                     &st;
+	QHash<QString, QString>   &partMd;
+	QSet<QString>             &partHead; // "<part>\n<video>" emitted
+	QString const             &outDir;
+	QString                    tdir;     // the grouping's directory
+	QString                    md;       // the grouping's digest
+};
+
+// Grouping frames are real copies out of the grab cache.
+QString frameLink(sink &k, source const &v, qint64 ms)
+{
+	QString const name = frameName(v, ms);
+	QString const dst = k.tdir + QStringLiteral("/frames/") + name;
 	if (!QFile::exists(dst))
-		QFile::copy(grab.framePath(v.id, ms), dst);
+		QFile::copy(k.grab.framePath(v.id, ms), dst);
 	return QStringLiteral("![](frames/") + name
 	     + QStringLiteral(") ");
 }
 
-void exportHit(QString &md, stats &st,
-               std::vector<srt::cue> const &cues, std::size_t i,
-               source const &v, Grabber &grab, QString const &tdir)
+// Component frames are relative symlinks into the grouping's copies:
+// one PNG on disk, however many digests reference it.
+QString partLink(sink &k, QString const &part, source const &v,
+                 qint64 ms)
 {
-	srt::cue const &c = cues[i];
-	++st.hits;
-	md += QStringLiteral("\n### ") + fmtTime(c.start, true)
-	    + QStringLiteral("\n\n");
-	if (i > 0)
-		md += QStringLiteral("> ") + oneLine(cues[i - 1].text)
-		    + QStringLiteral("\n");
-	md += QStringLiteral("> **") + oneLine(c.text)
-	    + QStringLiteral("**\n");
-	if (i + 1 < cues.size())
-		md += QStringLiteral("> ") + oneLine(cues[i + 1].text)
-		    + QStringLiteral("\n");
+	QString const name = frameName(v, ms);
+	QString const dir = k.outDir + QLatin1Char('/') + part
+	                  + QStringLiteral("/frames");
+	QDir().mkpath(dir);
+	QString const lnk = dir + QLatin1Char('/') + name;
+	if (!QFileInfo(lnk).isSymLink() && !QFile::exists(lnk))
+		QFile::link(QStringLiteral("../../")
+		            + QString::fromStdString(k.item.name)
+		            + QStringLiteral("/frames/") + name, lnk);
+	return QStringLiteral("![](frames/") + name
+	     + QStringLiteral(") ");
+}
 
-	qint64 const ms = qint64(c.start * 1000.0 + 0.5);
+void partHit(sink &k, QString const &part,
+             std::vector<srt::cue> const &cues, std::size_t i,
+             source const &v)
+{
+	QString &md = k.partMd[part];
+	if (md.isEmpty()) {
+		topics::topic const *t =
+			topics::find(k.corpus, part.toStdString());
+		md = QStringLiteral("# ") + part
+		   + QStringLiteral("\n\nComponent; frames link into `")
+		   + QString::fromStdString(k.item.name)
+		   + QStringLiteral("`.\n\nPattern: `")
+		   + QString::fromStdString(topics::expand(k.corpus, *t))
+		   + QStringLiteral("`\n");
+	}
+	QString const headKey = part + QLatin1Char('\n') + v.video;
+	if (!k.partHead.contains(headKey)) {
+		k.partHead.insert(headKey);
+		md += QStringLiteral("\n## ")
+		    + QFileInfo(v.video).fileName()
+		    + QStringLiteral("\n");
+	}
+	md += snippet(cues, i);
+	qint64 const ms = qint64(cues[i].start * 1000.0 + 0.5);
 	qint64 prev = -1, next = -1;
-	if (!grab.picksFor(v.id, ms, prev, next)) {
-		grab.enqueue(v.video, v.id, c.start);
-		++st.queued;
+	if (!k.grab.picksFor(v.id, ms, prev, next)) {
 		md += QStringLiteral("\n*(frames pending)*\n");
-		return;
+		return;                      // queued by the grouping pass
 	}
 	md += QStringLiteral("\n");
 	for (qint64 const f : {prev, ms, next})
 		if (f >= 0)
-			md += frameLink(grab, v, f, tdir);
+			md += partLink(k, part, v, f);
 	md += QStringLiteral("\n");
-	++st.framed;
 }
 
-void exportVideo(QString &md, stats &st, QRegularExpression const &re,
-                 source const &v, Grabber &grab, QString const &tdir)
+void exportHit(sink &k, std::vector<srt::cue> const &cues,
+               std::size_t i, source const &v)
+{
+	++k.st.hits;
+	k.md += snippet(cues, i);
+	qint64 const ms = qint64(cues[i].start * 1000.0 + 0.5);
+	qint64 prev = -1, next = -1;
+	if (!k.grab.picksFor(v.id, ms, prev, next)) {
+		k.grab.enqueue(v.video, v.id, cues[i].start);
+		++k.st.queued;
+		k.md += QStringLiteral("\n*(frames pending)*\n");
+		return;
+	}
+	k.md += QStringLiteral("\n");
+	for (qint64 const f : {prev, ms, next})
+		if (f >= 0)
+			k.md += frameLink(k, v, f);
+	k.md += QStringLiteral("\n");
+	++k.st.framed;
+}
+
+// Which acknowledged components fired anywhere in the cue?  One
+// match reports only the alternation branch that won at its own
+// position, so participation is the union over every match in the
+// line.
+void attribute(sink &k, QRegularExpressionMatchIterator it,
+               std::vector<srt::cue> const &cues, std::size_t i,
+               source const &v)
+{
+	QSet<qsizetype> fired;
+	while (it.hasNext()) {
+		QRegularExpressionMatch const m = it.next();
+		for (std::size_t g = 0; g < k.item.parts.size(); ++g)
+			if (m.capturedStart(QStringLiteral("g")
+			                    + QString::number(g)) >= 0)
+				fired.insert(qsizetype(g));
+	}
+	QSet<QString> seen;
+	for (std::size_t g = 0; g < k.item.parts.size(); ++g) {
+		if (!fired.contains(qsizetype(g)))
+			continue;
+		QString const part =
+			QString::fromStdString(k.item.parts[g]);
+		if (seen.contains(part))
+			continue;
+		seen.insert(part);
+		partHit(k, part, cues, i, v);
+	}
+}
+
+void exportVideo(sink &k, QRegularExpression const &re,
+                 source const &v)
 {
 	QString err, srtPath = v.srt;
 	if (srtPath.isEmpty())
@@ -109,15 +224,18 @@ void exportVideo(QString &md, stats &st, QRegularExpression const &re,
 	std::vector<srt::cue> const cues = loadCues(srtPath);
 	bool head = false;
 	for (std::size_t i = 0; i < cues.size(); ++i) {
-		if (!re.match(oneLine(cues[i].text)).hasMatch())
+		QRegularExpressionMatchIterator const it =
+			re.globalMatch(oneLine(cues[i].text));
+		if (!it.hasNext())
 			continue;
 		if (!head) {
-			md += QStringLiteral("\n## ")
-			    + QFileInfo(v.video).fileName()
-			    + QStringLiteral("\n");
+			k.md += QStringLiteral("\n## ")
+			      + QFileInfo(v.video).fileName()
+			      + QStringLiteral("\n");
 			head = true;
 		}
-		exportHit(md, st, cues, i, v, grab, tdir);
+		exportHit(k, cues, i, v);
+		attribute(k, it, cues, i, v);
 	}
 }
 
@@ -127,31 +245,35 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
           Grabber &grab, QString const &outDir)
 {
 	stats st;
-	for (topics::topic const &t : corpus.topics) {
-		QString const name = QString::fromStdString(t.name);
+	QHash<QString, QString> partMd;
+	QSet<QString> partHead;
+	for (topics::export_item const &e : topics::export_plan(corpus)) {
+		QString const name = QString::fromStdString(e.name);
 		QRegularExpression const re(
-			QString::fromStdString(topics::expand(corpus, t)),
+			QString::fromStdString(e.pattern),
 			QRegularExpression::CaseInsensitiveOption);
-		QString const tdir = outDir + QLatin1Char('/') + name;
-		QDir().mkpath(tdir + QStringLiteral("/frames"));
-		QString md = QStringLiteral("# ") + name
-		           + QStringLiteral("\n\nPattern: `") + re.pattern()
-		           + QStringLiteral("`\n");
+		sink k{corpus, e, grab, st, partMd, partHead, outDir,
+		       outDir + QLatin1Char('/') + name, {}};
+		QDir().mkpath(k.tdir + QStringLiteral("/frames"));
+		k.md = QStringLiteral("# ") + name
+		     + QStringLiteral("\n\nPattern: `") + re.pattern()
+		     + QStringLiteral("`\n");
 		if (!re.isValid())
-			md += QStringLiteral("\n(invalid pattern: ")
-			    + re.errorString() + QStringLiteral(")\n");
-		// Scoping restricts only when present: a video without
-		// topic references takes part in every topic, matching the
-		// corpus-wide behavior of the interactive search.
+			k.md += QStringLiteral("\n(invalid pattern: ")
+			      + re.errorString() + QStringLiteral(")\n");
 		for (source const &v : videos)
 			if (re.isValid() && (v.topics.isEmpty()
 			                     || v.topics.contains(name)))
-				exportVideo(md, st, re, v, grab, tdir);
-		QFile f(tdir + QLatin1Char('/') + name
-		        + QStringLiteral(".md"));
-		if (f.open(QIODevice::WriteOnly | QIODevice::Truncate
-		           | QIODevice::Text))
-			f.write(md.toUtf8());
+				exportVideo(k, re, v);
+		writeMd(k.tdir + QLatin1Char('/') + name
+		        + QStringLiteral(".md"), k.md);
+		++st.topics;
+	}
+	for (auto it = partMd.cbegin(); it != partMd.cend(); ++it) {
+		QString const dir = outDir + QLatin1Char('/') + it.key();
+		QDir().mkpath(dir);
+		writeMd(dir + QLatin1Char('/') + it.key()
+		        + QStringLiteral(".md"), it.value());
 		++st.topics;
 	}
 	return st;

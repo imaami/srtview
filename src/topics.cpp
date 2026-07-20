@@ -267,6 +267,108 @@ void expand_into(doc const &d, topic const &t, std::string &out)
 		expand_frag(d, f, out);
 }
 
+// --- export-plan analysis -------------------------------------------
+// Pattern structure is only read where PCRE would: backslash escapes
+// consume the next byte and [...] classes hide everything inside.
+
+std::vector<std::string_view> branches(std::string_view body)
+{
+	std::vector<std::string_view> out;
+	std::size_t start = 0;
+	int depth = 0;
+	bool cls = false;
+	for (std::size_t i = 0; i < body.size(); ++i) {
+		char const c = body[i];
+		if (c == '\\') {
+			++i;
+			continue;
+		}
+		if (cls) {
+			cls = c != ']';
+			continue;
+		}
+		if (c == '[' || c == '(' || c == ')') {
+			cls = c == '[';
+			depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+			continue;
+		}
+		if (c == '|' && depth == 0) {
+			out.push_back(body.substr(start, i - start));
+			start = i + 1;
+		}
+	}
+	out.push_back(body.substr(start));
+	return out;
+}
+
+// The branch is exactly one capturing group: "(...)" spanning all of
+// it, and not a "(?..." construct.
+bool whole_group(std::string_view b)
+{
+	if (b.size() < 2 || b[0] != '(' || b[1] == '?')
+		return false;
+	int depth = 0;
+	bool cls = false;
+	for (std::size_t i = 0; i < b.size(); ++i) {
+		char const c = b[i];
+		if (c == '\\') {
+			++i;
+			continue;
+		}
+		if (cls) {
+			cls = c != ']';
+			continue;
+		}
+		if (c == '[')
+			cls = true;
+		else if (c == '(')
+			++depth;
+		else if (c == ')' && --depth == 0)
+			return i == b.size() - 1;
+	}
+	return false;
+}
+
+// Exactly one reference inside: the acknowledged component.
+std::string_view sole_ref(std::string_view inner)
+{
+	ref r;
+	if (!next_ref(inner, 0, r))
+		return {};
+	ref more;
+	if (next_ref(inner, r.pos + r.len, more))
+		return {};
+	return r.name;
+}
+
+export_item plan_one(doc const &d, topic const &t)
+{
+	std::string body;
+	for (std::string const &f : t.fragments)
+		body += f;
+	export_item it;
+	it.name = t.name;
+	bool first = true;
+	for (std::string_view const b : branches(body)) {
+		if (!first)
+			it.pattern += '|';
+		first = false;
+		std::string_view const name = whole_group(b)
+			? sole_ref(b.substr(1, b.size() - 2))
+			: std::string_view{};
+		if (name.empty()) {
+			expand_frag(d, b, it.pattern);
+			continue;
+		}
+		it.pattern += "(?<g" + std::to_string(it.parts.size())
+		            + ">";
+		expand_frag(d, b.substr(1, b.size() - 2), it.pattern);
+		it.pattern += ')';
+		it.parts.emplace_back(name);
+	}
+	return it;
+}
+
 } // namespace
 
 result parse(std::string_view text)
@@ -297,6 +399,25 @@ std::string expand(doc const &d, topic const &t)
 	std::string out;
 	expand_into(d, t, out);
 	return out;
+}
+
+std::vector<export_item> export_plan(doc const &d)
+{
+	// A referenced topic is a component, not a grouping of its own.
+	std::vector<char> component(d.topics.size(), 0);
+	for (topic const &t : d.topics) {
+		for (std::string const &f : t.fragments) {
+			std::size_t at = 0;
+			for (ref r; next_ref(f, at, r); at = r.pos + r.len)
+				component[std::size_t(find(d, r.name)
+				          - d.topics.data())] = 1;
+		}
+	}
+	std::vector<export_item> plan;
+	for (std::size_t i = 0; i < d.topics.size(); ++i)
+		if (!component[i])
+			plan.push_back(plan_one(d, d.topics[i]));
+	return plan;
 }
 
 std::string write(doc const &d)

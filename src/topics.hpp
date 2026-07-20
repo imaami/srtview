@@ -35,6 +35,21 @@
 // for literally matching the reference syntax.  References may point
 // forward; unknown names and cycles are parse errors.
 //
+// Capture parens carry *export* semantics (export_plan()).  A topic
+// referenced by another is a component: it forms no export grouping
+// of its own, and the reference syntax always neutralises its
+// capturedness -- \{A:} behaves as if A's body were non-capturing,
+// whatever parens A's own definition uses.  A component earns a
+// grouping back through acknowledgment parens in a topic that nobody
+// references (a top-level topic): split such a topic's body at
+// top-level |, and every branch that is exactly one capturing group
+// "(...)" -- not "(?..." -- containing exactly one reference
+// (arbitrary other regex allowed) acknowledges that component.  So
+// "(\{A:})|(\{B:} and stuff)" acknowledges A and B, while
+// "(\{A:}|\{B:})" and "\{A:}|x" acknowledge nothing.  Acknowledged
+// components become named groups in the grouping's pattern, so a
+// match attributes its hits to the components that fired.
+//
 // Every line is stripped of edge whitespace (CR included), so a
 // deliberate leading or trailing space in a pattern must be written
 // [ ] or \x20.  Paths are kept verbatim (no percent decoding);
@@ -88,6 +103,22 @@ topic const *find(doc const &d, std::string_view name);
 // The fully expanded pattern of a topic: fragments concatenated,
 // references replaced.  Requires a doc that came through parse().
 std::string expand(doc const &d, topic const &t);
+
+// One export grouping: a top-level topic plus its acknowledged
+// components (see the format notes above).  parts[i] is captured in
+// pattern as the named group "g<i>"; a hit belongs to a component
+// when its group participated in the match.
+struct export_item {
+	std::string              name;
+	std::string              pattern;
+	std::vector<std::string> parts;
+
+	bool operator==(export_item const &) const = default;
+};
+
+// The export groupings of a document, in topic order.  Requires a
+// doc that came through parse().
+std::vector<export_item> export_plan(doc const &d);
 
 // Canonical text form; parses back to an equal document.
 std::string write(doc const &d);

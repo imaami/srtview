@@ -141,6 +141,43 @@ void testErrors()
 	check(!r.error.empty() && r.line == 1, "empty item");
 }
 
+void testExportPlan()
+{
+	auto const r = topics::parse(
+		"- A\n  - alpha\n"
+		"- B\n  - beta\n"
+		"- C\n  - (\\{A:})|(\\{B:} and stuff)\n"
+		"- D\n  - (\\{A:}|\\{B:})\n"
+		"- lone\n  - solo\n");
+	check(r.error.empty(), "plan corpus parses");
+	auto const plan = topics::export_plan(r.value);
+	check(plan.size() == 3, "components form no groupings");
+	check(plan[0].name == "C" && plan[0].parts.size() == 2
+	      && plan[0].parts[0] == "A" && plan[0].parts[1] == "B",
+	      "whole-branch capture parens acknowledge components");
+	check(plan[0].pattern
+	      == "(?<g0>(?:alpha))|(?<g1>(?:beta) and stuff)",
+	      "acknowledged parens become named groups");
+	check(plan[1].name == "D" && plan[1].parts.empty()
+	      && plan[1].pattern == "((?:alpha)|(?:beta))",
+	      "a shared group acknowledges nothing");
+	check(plan[2].name == "lone" && plan[2].parts.empty()
+	      && plan[2].pattern == "solo",
+	      "independent topics stay plain groupings");
+
+	auto const edge = topics::parse(
+		"- A\n  - a+\n"
+		"- C\n  - \\{A:}|x\n"
+		"- E\n  - ([\\|(]\\{A:})|(\\(\\{A:})\n");
+	check(edge.error.empty(), "edge corpus parses");
+	auto const ep = topics::export_plan(edge.value);
+	check(ep.size() == 2, "referenced A is pruned");
+	check(ep[0].parts.empty() && ep[0].pattern == "(?:a+)|x",
+	      "bare references acknowledge nothing");
+	check(ep[1].parts.size() == 2,
+	      "classes and escapes do not hide real groups");
+}
+
 void testLexical()
 {
 	auto const r = topics::parse("\xEF\xBB\xBF"
@@ -167,6 +204,7 @@ int main()
 	testStructure();
 	testExpansion();
 	testForwardAndNesting();
+	testExportPlan();
 	testErrors();
 	testLexical();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
