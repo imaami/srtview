@@ -20,19 +20,26 @@
 // playback-restart, a screenshot when its file parses as an image.
 // One serial queue; a corporate WSL2 box must never see two decoders
 // competing.
+// The grabber lives on its own worker thread (decode, screenshot
+// I/O, thumbnail scaling and picks bookkeeping never touch the UI
+// thread): mutating entry points marshal onto the worker, queries
+// read the shared maps under a lock, and listener notifications are
+// delivered queued into the listener's own thread.
 #ifndef SRTVIEW_SRC_GRABBER_HPP_
 #define SRTVIEW_SRC_GRABBER_HPP_
-
-#include "mpvclient.hpp"
 
 #include <QHash>
 #include <QImage>
 #include <QList>
+#include <QMutex>
 #include <QSet>
 #include <QString>
+#include <QThread>
 #include <QTimer>
 
 #include <utility>
+
+#include "mpvclient.hpp"
 
 // Told about grab completion; implemented by the composition root
 // (which may be folding finished frames into an export).  grabsIdle
@@ -51,10 +58,11 @@ public:
 	Grabber();
 	~Grabber() override;
 
-	// Event sink for the shared dispatcher.
+	// Event sink for the shared dispatcher (worker thread).
 	void onEvent(QJsonObject const &ev);
 
-	void setListener(grab_listener *l) { m_listener = l; }
+	// The listener is invoked queued in ctx's thread.
+	void setListener(QObject *ctx, grab_listener *l);
 
 	// The video whose jumps are being followed (set on every open).
 	void setVideo(QString const &path, QString const &id);
@@ -93,6 +101,10 @@ private:
 
 	enum class Stage : int { idle, spawn, load, seekWait, shoot };
 
+	void setVideoImpl(QString const &path, QString const &id);
+	void enqueueImpl(QString const &path, QString const &id,
+	                 double t);
+	void shutdownImpl();
 	void startJob();
 	void want(qint64 ms);
 	void pump();
@@ -114,17 +126,20 @@ private:
 
 	using PickMap = QHash<qint64, std::pair<qint64, qint64>>;
 
+	QThread                      m_thread;    // not a child: stays put
 	QTimer                       m_poll;
 	QElapsedTimer                m_deadline;
+	QMutex                       m_lock;      // m_known + m_picks
 	QHash<QString, QSet<qint64>> m_known;   // grabbed or queued hits
 	QHash<QString, PickMap>      m_picks;   // finished hits only
 	QList<Job>                   m_jobs;
 	QString                      m_path, m_id; // the followed video
 	QString                      m_loadedId;   // in the shadow player
+	QObject                     *m_ctx = nullptr;
 	grab_listener               *m_listener = nullptr;
 	qint64                       m_wantMs = -1;
 	qint64                       m_deadlineMs = 0;
-	int                          m_strikes = 0;
+	unsigned                     m_strikes = 0;
 	Stage                        m_stage = Stage::idle;
 };
 

@@ -1,14 +1,14 @@
 // grabber.cpp -- see grabber.hpp for the design.
-#include "grabber.hpp"
-
-#include "discovery.hpp"
-
 #include <QDir>
 #include <QFile>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+
+#include "grabber.hpp"
+
+#include "discovery.hpp"
 
 namespace {
 
@@ -57,19 +57,39 @@ bool same(QImage const &a, QImage const &b)
 
 Grabber::Grabber()
 {
+	// The worker owns all activity: member QObjects are children so
+	// moveToThread() takes them along (the base parents its own).
+	m_poll.setParent(this);
 	connect(&sock(), &QLocalSocket::readyRead,
 	        this, [this] { dispatch(); });
 	connect(&sock(), &QLocalSocket::connected,
 	        this, [this] { onConnected(); });
 	connect(&m_poll, &QTimer::timeout, this, [this] { tick(); });
+	moveToThread(&m_thread);
+	m_thread.start();
 }
 
 Grabber::~Grabber()
 {
 	shutdown();
+	m_thread.quit();
+	m_thread.wait();
+}
+
+void Grabber::setListener(QObject *ctx, grab_listener *l)
+{
+	m_ctx = ctx;
+	m_listener = l;
 }
 
 void Grabber::setVideo(QString const &path, QString const &id)
+{
+	QMetaObject::invokeMethod(this, [this, path, id] {
+		setVideoImpl(path, id);
+	}, Qt::QueuedConnection);
+}
+
+void Grabber::setVideoImpl(QString const &path, QString const &id)
 {
 	if (path.isEmpty() || id.isEmpty())
 		return;
@@ -81,20 +101,33 @@ void Grabber::setVideo(QString const &path, QString const &id)
 
 void Grabber::enqueue(double t)
 {
-	enqueue(m_path, m_id, t);
+	QMetaObject::invokeMethod(this, [this, t] {
+		enqueueImpl(m_path, m_id, t);
+	}, Qt::QueuedConnection);
 }
 
 void Grabber::enqueue(QString const &path, QString const &id, double t)
+{
+	QMetaObject::invokeMethod(this, [this, path, id, t] {
+		enqueueImpl(path, id, t);
+	}, Qt::QueuedConnection);
+}
+
+void Grabber::enqueueImpl(QString const &path, QString const &id,
+                          double t)
 {
 	if (path.isEmpty() || id.isEmpty() || t < 0.0)
 		return;
 	QDir().mkpath(dir(id));
 	loadKnown(id);
 	qint64 const ms = qint64(t * 1000.0 + 0.5);
-	QSet<qint64> &known = m_known[id];
-	if (known.contains(ms))
-		return;
-	known.insert(ms);
+	{
+		QMutexLocker const lock(&m_lock);
+		QSet<qint64> &known = m_known[id];
+		if (known.contains(ms))
+			return;
+		known.insert(ms);
+	}
 	Job j;
 	j.path = path;
 	j.id = id;
@@ -108,6 +141,7 @@ bool Grabber::picksFor(QString const &id, qint64 hitMs,
                        qint64 &prev, qint64 &next)
 {
 	loadKnown(id);
+	QMutexLocker const lock(&m_lock);
 	auto const video = m_picks.constFind(id);
 	if (video == m_picks.constEnd())
 		return false;
@@ -126,6 +160,18 @@ QString Grabber::framePath(QString const &id, qint64 ms) const
 }
 
 void Grabber::shutdown()
+{
+	if (QThread::currentThread() == thread()) {
+		shutdownImpl();
+		return;
+	}
+	if (!m_thread.isRunning())
+		return;
+	QMetaObject::invokeMethod(this, [this] { shutdownImpl(); },
+	                          Qt::BlockingQueuedConnection);
+}
+
+void Grabber::shutdownImpl()
 {
 	m_jobs.clear();
 	m_wantMs = -1;
@@ -315,11 +361,16 @@ void Grabber::finish(Job &j)
 		f.write(QByteArray::number(j.hit) + ' '
 		        + QByteArray::number(j.prevMs) + ' '
 		        + QByteArray::number(j.nextMs) + '\n');
-	m_picks[j.id].insert(j.hit, {j.prevMs, j.nextMs});
+	{
+		QMutexLocker const lock(&m_lock);
+		m_picks[j.id].insert(j.hit, {j.prevMs, j.nextMs});
+	}
 	m_strikes = 0;
 	m_jobs.removeFirst();
-	if (m_listener && !m_jobs.isEmpty())
-		m_listener->grabProgress();
+	if (m_listener && m_ctx && !m_jobs.isEmpty())
+		QMetaObject::invokeMethod(m_ctx, [l = m_listener] {
+			l->grabProgress();
+		}, Qt::QueuedConnection);
 	startJob();
 	drained();
 }
@@ -329,7 +380,10 @@ void Grabber::abortJob()
 	if (m_jobs.isEmpty())
 		return;
 	Job const j = m_jobs.takeFirst();
-	m_known[j.id].remove(j.hit);         // retryable later
+	{
+		QMutexLocker const lock(&m_lock);
+		m_known[j.id].remove(j.hit); // retryable later
+	}
 	std::fprintf(stderr, "srtview: frame grab aborted at %lld ms\n",
 	             static_cast<long long>(j.hit));
 	m_wantMs = -1;
@@ -349,8 +403,11 @@ void Grabber::abortJob()
 
 void Grabber::drained()
 {
-	if (m_listener && m_jobs.isEmpty())
-		m_listener->grabsIdle();
+	if (!m_listener || !m_ctx || !m_jobs.isEmpty())
+		return;
+	QMetaObject::invokeMethod(m_ctx, [l = m_listener] {
+		l->grabsIdle();
+	}, Qt::QueuedConnection);
 }
 
 void Grabber::ensureProc()
@@ -385,6 +442,7 @@ void Grabber::armDeadline(qint64 ms)
 
 void Grabber::loadKnown(QString const &id)
 {
+	QMutexLocker const lock(&m_lock);
 	if (m_known.contains(id))
 		return;
 	QSet<qint64> &set = m_known[id];

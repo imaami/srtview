@@ -1,11 +1,10 @@
 // mpvlink.cpp -- see mpvlink.hpp.
-#include "mpvlink.hpp"
-
-#include <QCoreApplication>
 #include <QFile>
+#include <QProcess>
 
-#include <chrono>
-#include <thread>
+#include <utility>
+
+#include "mpvlink.hpp"
 
 namespace {
 
@@ -40,6 +39,15 @@ QString focusFlag()
 
 } // namespace
 
+mpv_link_base::mpv_link_base()
+{
+	connect(&sock(), &QLocalSocket::connected,
+	        this, [this] { onConnected(); });
+	m_retry.setParent(this);
+	m_retry.setInterval(100);
+	connect(&m_retry, &QTimer::timeout, this, [this] { retryTick(); });
+}
+
 bool mpv_link_base::setPlaylist(QList<play_entry> const &list,
                                 QString const &sock, int index,
                                 QString *err)
@@ -48,26 +56,36 @@ bool mpv_link_base::setPlaylist(QList<play_entry> const &list,
 		*err = QStringLiteral("bad playlist");
 		return false;
 	}
-	if (sock == m_sockPath && connectedNow()) {
-		if (list == m_list)
-			return index == m_index ? true
-			                        : playIndex(index, err);
+	if (sock == m_sockPath && (ready() || m_starting)) {
+		if (list == m_list) {
+			if (index == m_index || !ready()) {
+				m_index = index; // bring-up resyncs to this
+				return true;
+			}
+			return playIndex(index, err);
+		}
 		m_list = list;               // corpus edited: same window,
 		m_index = index;             // rebuilt playlist
-		resync(false);
+		if (ready())
+			resync(false);
 		return true;
 	}
 	// New target: drop only a player this instance spawned; reused
 	// ones belong to everyone and are left running.
+	m_retry.stop();
 	teardown(m_spawned);
 	m_spawned = false;
+	m_starting = false;
+	m_ready = false;
 	m_adopting = false;
+	m_txq.clear();
 	m_list = list;
 	m_index = index;
 	m_sockPath = sock;
 	m_lastTime = -1.0;
 	m_pendingSeek = -1.0;
 	m_lastPause = true;
+	m_unpause = false;
 	return ensureAlive(err);
 }
 
@@ -85,27 +103,93 @@ bool mpv_link_base::playIndex(int index, QString *err)
 
 bool mpv_link_base::ensureAlive(QString *err)
 {
-	if (connectedNow())
+	if (connectedNow() || m_starting)
 		return true;
 	if (m_sockPath.isEmpty() || m_list.isEmpty()) {
 		*err = QStringLiteral("no video associated");
 		return false;
 	}
-	if (connectSock(200)) {
-		// A running instance: adopt it.  The resync is deferred to
-		// the observation's initial path event, so an instance
-		// already inside the list keeps its position (session
-		// resume) and is resynced around the playing entry.
-		observe();
-		m_adopting = true;
-		return true;
-	}
-	return spawnPlayer(err);
+	bringUp();
+	return true;
 }
 
-bool mpv_link_base::spawnPlayer(QString *err)
+// Non-blocking bring-up: a short grace of pure connect attempts
+// adopts a running instance, after which we spawn one ourselves --
+// all driven by the retry timer; the UI thread never waits on a
+// socket.
+void mpv_link_base::bringUp()
 {
-	QFile::remove(m_sockPath);
+	m_starting = true;
+	m_ready = false;
+	m_attempts = 0;
+	connectSock(0);
+	if (!connectedNow() && m_starting)
+		m_retry.start();
+}
+
+void mpv_link_base::retryTick()
+{
+	if (connectedNow() || !m_starting) {
+		m_retry.stop();
+		return;
+	}
+	++m_attempts;
+	if (m_attempts == 3 && proc().state() == QProcess::NotRunning) {
+		QFile::remove(m_sockPath);
+		startProcess(spawnArgs());
+		m_spawned = true;
+	}
+	if (m_attempts > 3 && m_spawned
+	    && proc().state() == QProcess::NotRunning) {
+		giveUp(QStringLiteral("mpv exited before its socket came "
+		                      "up"));
+		return;
+	}
+	if (m_attempts > 100) {              // ten seconds of nothing
+		giveUp(QStringLiteral("mpv IPC socket never came up: %1")
+		       .arg(m_sockPath));
+		return;
+	}
+	connectSock(0);
+}
+
+void mpv_link_base::onConnected()
+{
+	m_retry.stop();
+	m_starting = false;
+	dbg(QStringLiteral("connected to %1").arg(m_sockPath));
+	observe();
+	if (m_spawned)
+		resync(false);
+	else
+		m_adopting = true;           // resync deferred to first path
+	m_ready = true;
+	if (m_unpause) {
+		QString e;
+		setPause(false, &e);
+		m_unpause = false;
+	}
+	for (QString const &line : std::as_const(m_txq))
+		writeLine(line);
+	m_txq.clear();
+	if (m_recovering) {
+		note(QStringLiteral("respawn complete"));
+		m_recovering = false;
+	}
+}
+
+void mpv_link_base::giveUp(QString const &why)
+{
+	m_retry.stop();
+	m_starting = false;
+	m_ready = false;
+	m_recovering = false;
+	m_txq.clear();
+	note(why);
+}
+
+QStringList mpv_link_base::spawnArgs() const
+{
 	QStringList args{QStringLiteral("--no-terminal"),
 	                 QStringLiteral("--idle=yes"),
 	                 QStringLiteral("--force-window=yes"),
@@ -129,30 +213,7 @@ bool mpv_link_base::spawnPlayer(QString *err)
 	}
 	args += QProcess::splitCommand(
 		qEnvironmentVariable("SRTVIEW_MPV_ARGS"));
-	startProcess(args);
-	if (!proc().waitForStarted(3000)) {
-		*err = QStringLiteral("cannot start mpv: %1")
-		       .arg(proc().errorString());
-		return false;
-	}
-	m_spawned = true;
-	for (int i = 0; i < 50; ++i) {       // wait for the socket
-		if (connectSock(200)) {
-			observe();
-			resync(false);
-			return true;
-		}
-		if (proc().state() != QProcess::Running) {
-			*err = QStringLiteral("mpv exited before its socket "
-			                      "came up");
-			return false;
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
-		QCoreApplication::processEvents();
-	}
-	*err = QStringLiteral("mpv IPC socket never came up: %1")
-	       .arg(m_sockPath);
-	return false;
+	return args;
 }
 
 // Mirror m_list into the player.  The current entry loads first (or,
@@ -161,19 +222,18 @@ bool mpv_link_base::spawnPlayer(QString *err)
 // current entry into place -- exactly one file load at most.
 void mpv_link_base::resync(bool keepCurrent)
 {
-	QString err;
 	if (keepCurrent)
-		send(QStringLiteral("playlist-clear"), &err);
+		writeLine(QStringLiteral("playlist-clear"));
 	else
-		send(QStringLiteral("loadfile %1 replace")
-		     .arg(mpvQuote(m_list[m_index].video)), &err);
+		writeLine(QStringLiteral("loadfile %1 replace")
+		          .arg(mpvQuote(m_list[m_index].video)));
 	for (qsizetype i = 0; i < m_list.size(); ++i)
 		if (int(i) != m_index)
-			send(QStringLiteral("loadfile %1 append")
-			     .arg(mpvQuote(m_list[i].video)), &err);
+			writeLine(QStringLiteral("loadfile %1 append")
+			          .arg(mpvQuote(m_list[i].video)));
 	if (m_index > 0)
-		send(QStringLiteral("playlist-move 0 %1").arg(m_index + 1),
-		     &err);
+		writeLine(QStringLiteral("playlist-move 0 %1")
+		          .arg(m_index + 1));
 }
 
 void mpv_link_base::onEvent(QJsonObject const &ev)
@@ -266,6 +326,10 @@ bool mpv_link_base::send(QString const &line, QString *err)
 {
 	if (!ensureAlive(err))
 		return false;
+	if (!ready()) {
+		m_txq << line;               // flushed once setup is out
+		return true;
+	}
 	return writeLine(line);
 }
 
@@ -303,14 +367,20 @@ bool mpv_link_base::cyclePause(QString *err)
 
 void mpv_link_base::shutdown()
 {
+	m_retry.stop();
 	teardown(m_spawned);
 	m_spawned = false;
+	m_starting = false;
+	m_ready = false;
 	m_adopting = false;
+	m_unpause = false;
 	m_list.clear();
 	m_times.clear();
+	m_txq.clear();
 	m_sockPath.clear();
 	m_index = 0;
 	m_newIndex = -1;
+	m_attempts = 0;
 	m_lastTime = -1.0;
 	m_pendingSeek = -1.0;
 }
@@ -327,28 +397,23 @@ bool mpv_link_base::recoverWedged()
 	m_lastRespawn = clock().elapsed();
 	m_recovering = true;
 	double const t = m_lastTime;
-	bool const paused = m_lastPause;
+	m_unpause = !m_lastPause;
 	note(QStringLiteral("killing wedged mpv, respawning at %1s "
 	                    "(%2)")
 	     .arg(t < 0.0 ? 0.0 : t, 0, 'f', 3)
-	     .arg(paused ? QStringLiteral("paused")
-	                 : QStringLiteral("playing")));
+	     .arg(m_unpause ? QStringLiteral("playing")
+	                    : QStringLiteral("paused")));
 	proc().kill();
 	proc().waitForFinished(2000);
 	teardown(false);
 	m_spawned = false;
+	m_ready = false;
 	m_pendingSeek = t < 0.0 ? -1.0 : t;  // applied on file-loaded
 	QString err;
-	bool const ok = ensureAlive(&err);
-	if (!ok) {
+	if (!ensureAlive(&err)) {
 		note(QStringLiteral("respawn failed: ") + err);
 		m_recovering = false;
-		return true;
 	}
-	if (!paused)
-		setPause(false, &err);
-	note(QStringLiteral("respawn complete"));
-	m_recovering = false;
 	return true;
 }
 

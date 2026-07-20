@@ -13,6 +13,10 @@
 // videos), resyncing the playlist around the playing entry without
 // reloading it.
 //
+// Bring-up never blocks the UI thread: connecting and spawning run
+// off a retry timer, and commands sent meanwhile queue until the
+// on-connect setup (observation, playlist resync) has gone out.
+//
 // Split for deduplication: mpv_link_base compiled once in
 // mpvlink.cpp on top of the shared mpv_client machinery; MpvLink<Obs>
 // is a header-only adapter adding event delivery to a
@@ -23,12 +27,13 @@
 #ifndef SRTVIEW_SRC_MPVLINK_HPP_
 #define SRTVIEW_SRC_MPVLINK_HPP_
 
-#include "concepts.hpp"
-#include "mpvclient.hpp"
-
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
+
+#include "concepts.hpp"
+#include "mpvclient.hpp"
 
 struct play_entry {
 	QString video, srt;                  // resolved paths
@@ -72,7 +77,7 @@ public:
 	void onEvent(QJsonObject const &ev);
 
 protected:
-	mpv_link_base() = default;
+	mpv_link_base();
 
 	// Buffered observations for the adapter's pump.
 	bool takeTime(double &t);
@@ -85,7 +90,14 @@ protected:
 	bool recovering() const { return m_recovering; }
 
 private:
-	bool spawnPlayer(QString *err);
+	// Ready for commands: connected AND past the on-connect setup
+	// (observe + resync); until then commands queue.
+	bool ready() const { return connectedNow() && m_ready; }
+	void bringUp();
+	void retryTick();
+	void onConnected();
+	void giveUp(QString const &why);
+	QStringList spawnArgs() const;
 	void observe();
 	void resync(bool keepCurrent);
 	void onLoaded();
@@ -93,15 +105,21 @@ private:
 
 	QList<play_entry> m_list;
 	QList<double>     m_times;
+	QStringList       m_txq;             // queued during bring-up
+	QTimer            m_retry;
 	double            m_lastTime = -1.0;
 	double            m_pendingSeek = -1.0;
 	qint64            m_lastRespawn = -60000;
 	int               m_index = 0;
 	int               m_newIndex = -1;   // pending observer delivery
+	unsigned          m_attempts = 0;
 	bool              m_lastPause = true;
 	bool              m_spawned = false;
 	bool              m_recovering = false;
 	bool              m_adopting = false; // resync awaits first path
+	bool              m_starting = false; // bring-up in progress
+	bool              m_ready = false;
+	bool              m_unpause = false;  // restore after respawn
 };
 
 template <mpv_observer Obs>

@@ -24,6 +24,10 @@ QString mpvQuote(QString s)
 
 mpv_client_base::mpv_client_base()
 {
+	// Children, so a derived client moved to a worker thread takes
+	// its process and socket along.
+	m_proc.setParent(this);
+	m_conn.setParent(this);
 	m_clock.start();
 }
 

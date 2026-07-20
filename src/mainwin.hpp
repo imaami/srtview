@@ -54,8 +54,8 @@ private:
 
 	static bool droppable(QMimeData const *md);
 	static bool avPath(QString const &p);
-	static bool videoMatches(PlayItem const &it,
-	                         QRegularExpression const &re);
+	bool videoMatches(PlayItem const &it,
+	                  QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
 	void mpvSwitched(int index) override;
@@ -84,6 +84,7 @@ private:
 	QString                         m_corpusPath;
 	QList<PlayItem>                 m_playlist;
 	QHash<QString, PlayItem>        m_videosById;
+	QHash<QString, QStringList>     m_cueCache;  // srt path → lines
 	QMenu                          *m_recentMenu = nullptr;
 	QMenu                          *m_videosMenu = nullptr;
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;

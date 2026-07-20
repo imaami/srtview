@@ -28,7 +28,7 @@ MainWin::MainWin()
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
 	           m_playback, this)
 {
-	m_grab.setListener(this);
+	m_grab.setListener(this, this);
 	m_exportTick.start();
 	setCentralWidget(&m_view);
 	// For < and > (video stepping): as printable characters they
@@ -415,6 +415,9 @@ bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 	return false;
 }
 
+// Transcripts are parsed once per session and matched from memory:
+// a boundary crossing costs one regex pass over cached lines, not
+// file I/O plus a parse per candidate.
 bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 {
 	QString err, srt = it.srt;
@@ -422,17 +425,24 @@ bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 		srt = srtForVideo(it.video, &err);
 	if (srt.isEmpty())
 		return false;
-	QFile f(srt);
-	if (!f.open(QIODevice::ReadOnly))
-		return false;
-	QByteArray const raw = f.readAll();
-	for (srt::cue const &c : srt::parse(srt::to_utf8(
-			{raw.constData(), size_t(raw.size())}))) {
-		QString const text = QString::fromUtf8(
-			c.text.data(), qsizetype(c.text.size()));
+	auto at = m_cueCache.constFind(srt);
+	if (at == m_cueCache.constEnd()) {
+		QStringList lines;
+		QFile f(srt);
+		if (f.open(QIODevice::ReadOnly)) {
+			QByteArray const raw = f.readAll();
+			for (srt::cue const &c : srt::parse(srt::to_utf8(
+					{raw.constData(),
+					 size_t(raw.size())})))
+				lines << QString::fromUtf8(
+					c.text.data(),
+					qsizetype(c.text.size()));
+		}
+		at = m_cueCache.insert(srt, lines);
+	}
+	for (QString const &text : *at)
 		if (re.match(text).hasMatch())
 			return true;
-	}
 	return false;
 }
 
