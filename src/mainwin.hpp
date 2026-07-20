@@ -5,6 +5,7 @@
 #ifndef SRTVIEW_SRC_MAINWIN_HPP_
 #define SRTVIEW_SRC_MAINWIN_HPP_
 
+#include "exporter.hpp"
 #include "grabber.hpp"
 #include "mpvlink.hpp"
 #include "playback.hpp"
@@ -54,6 +55,7 @@ private:
 
 	static bool droppable(QMimeData const *md);
 	static bool avPath(QString const &p);
+	static QString srtOf(PlayItem const &it);
 	bool videoMatches(PlayItem const &it,
 	                  QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
@@ -85,7 +87,7 @@ private:
 	QString                         m_corpusPath;
 	QList<PlayItem>                 m_playlist;
 	QHash<QString, PlayItem>        m_videosById;
-	QHash<QString, QStringList>     m_cueCache;  // srt path → lines
+	exporter::transcripts           m_transcripts;
 	QMenu                          *m_recentMenu = nullptr;
 	QMenu                          *m_videosMenu = nullptr;
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;

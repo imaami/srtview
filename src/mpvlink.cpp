@@ -1,5 +1,7 @@
 // mpvlink.cpp -- see mpvlink.hpp.
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonValue>
 #include <QProcess>
 
 #include <utility>
@@ -234,6 +236,15 @@ void mpv_link_base::resync(bool keepCurrent)
 	if (m_index > 0)
 		writeLine(QStringLiteral("playlist-move 0 %1")
 		          .arg(m_index + 1));
+}
+
+void mpv_link_base::dispatch()
+{
+	for (QByteArray l = nextLine(); !l.isNull(); l = nextLine()) {
+		QJsonDocument const d = QJsonDocument::fromJson(l);
+		if (d.isObject())
+			onEvent(d.object());
+	}
 }
 
 void mpv_link_base::onEvent(QJsonObject const &ev)

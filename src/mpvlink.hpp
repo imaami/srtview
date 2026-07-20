@@ -27,6 +27,7 @@
 #ifndef SRTVIEW_SRC_MPVLINK_HPP_
 #define SRTVIEW_SRC_MPVLINK_HPP_
 
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -41,7 +42,7 @@ struct play_entry {
 	bool operator==(play_entry const &) const = default;
 };
 
-class mpv_link_base : public mpv_client<mpv_link_base>
+class mpv_link_base : public mpv_client_base
 {
 public:
 	// (Re)target the player: ensure an instance on sock, mirror
@@ -73,11 +74,11 @@ public:
 	// Last observed playback-time, or negative before any event.
 	double lastTime() const { return m_lastTime; }
 
-	// Event sink for the shared dispatcher.
-	void onEvent(QJsonObject const &ev);
-
 protected:
 	mpv_link_base();
+
+	// Pump buffered JSON event lines through onEvent().
+	void dispatch();
 
 	// Buffered observations for the adapter's pump.
 	bool takeTime(double &t);
@@ -93,6 +94,7 @@ private:
 	// Ready for commands: connected AND past the on-connect setup
 	// (observe + resync); until then commands queue.
 	bool ready() const { return connectedNow() && m_ready; }
+	void onEvent(QJsonObject const &ev);
 	void bringUp();
 	void retryTick();
 	void onConnected();

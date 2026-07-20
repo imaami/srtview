@@ -1,24 +1,17 @@
-// mpvclient.hpp -- mpv IPC client machinery.
+// mpvclient.hpp -- mpv IPC client machinery under the viewing link.
 //
 // An mpv process is driven over a local socket with commands going
 // out as single raw input.conf lines (one user action per line, an
 // explicit flush per send), while mpv's JSON event lines come back
 // for observation and sequencing.  mpv_client_base carries the
 // process, socket, receive buffer and clocks, compiled once in
-// mpvclient.cpp; mpv_client<Derived> is the header-only CRTP layer
-// that pumps buffered event lines into the derived class's
-// onEvent(QJsonObject).  The viewing link (mpvlink) builds on it;
-// the frame grabber used to as well, until it moved to in-process
-// libav decoding (decoder.hpp).
+// mpvclient.cpp.  (The frame grabber built on this too, until it
+// moved to in-process libav decoding -- decoder.hpp.)
 #ifndef SRTVIEW_SRC_MPVCLIENT_HPP_
 #define SRTVIEW_SRC_MPVCLIENT_HPP_
 
-#include "crtp.hpp"
-
 #include <QByteArray>
 #include <QElapsedTimer>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QLocalSocket>
 #include <QObject>
 #include <QProcess>
@@ -74,22 +67,6 @@ private:
 	QByteArray    m_inbuf;
 	QElapsedTimer m_clock;
 	qint64        m_lastRx = 0;
-};
-
-template <typename Derived>
-class mpv_client : public mpv_client_base,
-                   public crtp<Derived, mpv_client>
-{
-protected:
-	// Pump buffered JSON event lines into the derived handler.
-	void dispatch()
-	{
-		for (QByteArray l = nextLine(); !l.isNull(); l = nextLine()) {
-			QJsonDocument const d = QJsonDocument::fromJson(l);
-			if (d.isObject())
-				this->impl().onEvent(d.object());
-		}
-	}
 };
 
 #endif // SRTVIEW_SRC_MPVCLIENT_HPP_

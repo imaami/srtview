@@ -46,27 +46,6 @@ QString safeStem(QString const &path)
 	return s;
 }
 
-// A parsed srt with its cue texts already rendered: matching, the
-// snippets and every grouping share one copy per run.
-struct transcript {
-	std::vector<srt::cue> cues;
-	QStringList           lines;
-};
-
-transcript loadTranscript(QString const &path)
-{
-	transcript t;
-	QFile f(path);
-	if (!f.open(QIODevice::ReadOnly))
-		return t;
-	QByteArray const raw = f.readAll();
-	t.cues = srt::parse(srt::to_utf8({raw.constData(),
-	                                  size_t(raw.size())}));
-	for (srt::cue const &c : t.cues)
-		t.lines << oneLine(c.text);
-	return t;
-}
-
 void writeMd(QString const &path, QString const &md)
 {
 	QFile f(path);
@@ -81,6 +60,12 @@ QString frameName(source const &v, qint64 ms)
 	     + QString::number(ms) + QStringLiteral(".png");
 }
 
+QString mdImg(QString const &name)
+{
+	return QStringLiteral("![](frames/") + name
+	     + QStringLiteral(") ");
+}
+
 // The timestamp heading and matched-cue blockquote of one hit.
 QString snippet(transcript const &tx, std::size_t i)
 {
@@ -90,12 +75,12 @@ QString snippet(transcript const &tx, std::size_t i)
 	          + QStringLiteral("\n\n");
 	if (i > 0)
 		s += QStringLiteral("> ") + tx.lines[at - 1]
-		   + QStringLiteral("\n");
+		   + QLatin1Char('\n');
 	s += QStringLiteral("> **") + tx.lines[at]
 	   + QStringLiteral("**\n");
 	if (i + 1 < tx.cues.size())
 		s += QStringLiteral("> ") + tx.lines[at + 1]
-		   + QStringLiteral("\n");
+		   + QLatin1Char('\n');
 	return s;
 }
 
@@ -107,7 +92,7 @@ struct sink {
 	topics::export_item const &item;
 	Grabber                   &grab;
 	stats                     &st;
-	QHash<QString, transcript> &texts;   // per srt path, per run
+	transcripts               &texts;
 	QHash<QString, QString>   &partMd;
 	QSet<QString>             &partHead; // "<part>\n<video>" emitted
 	QString const             &outDir;
@@ -144,8 +129,7 @@ QString frameLink(sink &k, source const &v, qint64 ms)
 	QString const dst = k.tdir + QStringLiteral("/frames/") + name;
 	if (!QFile::exists(dst))
 		QFile::copy(src, dst);
-	return QStringLiteral("![](frames/") + name
-	     + QStringLiteral(") ");
+	return mdImg(name);
 }
 
 // Component frames are relative symlinks into the grouping's copies:
@@ -165,8 +149,7 @@ QString partLink(sink &k, QString const &part, source const &v,
 		QFile::link(QStringLiteral("../../")
 		            + QString::fromStdString(k.item.name)
 		            + QStringLiteral("/frames/") + name, lnk);
-	return QStringLiteral("![](frames/") + name
-	     + QStringLiteral(") ");
+	return mdImg(name);
 }
 
 void partHit(sink &k, QString const &part, transcript const &tx,
@@ -188,7 +171,7 @@ void partHit(sink &k, QString const &part, transcript const &tx,
 		k.partHead.insert(headKey);
 		md += QStringLiteral("\n## ")
 		    + QFileInfo(v.video).fileName()
-		    + QStringLiteral("\n");
+		    + QLatin1Char('\n');
 	}
 	md += snippet(tx, i);
 	qint64 const ms = qint64(tx.cues[i].start * 1000.0 + 0.5);
@@ -197,11 +180,11 @@ void partHit(sink &k, QString const &part, transcript const &tx,
 		md += QStringLiteral("\n*(frames pending)*\n");
 		return;                      // queued by the grouping pass
 	}
-	md += QStringLiteral("\n");
+	md += QLatin1Char('\n');
 	for (qint64 const f : {prev, ms, next})
 		if (f >= 0)
 			md += partLink(k, part, v, f);
-	md += QStringLiteral("\n");
+	md += QLatin1Char('\n');
 }
 
 void exportHit(sink &k, transcript const &tx, std::size_t i,
@@ -217,11 +200,11 @@ void exportHit(sink &k, transcript const &tx, std::size_t i,
 		k.md += QStringLiteral("\n*(frames pending)*\n");
 		return;
 	}
-	k.md += QStringLiteral("\n");
+	k.md += QLatin1Char('\n');
 	for (qint64 const f : {prev, ms, next})
 		if (f >= 0)
 			k.md += frameLink(k, v, f);
-	k.md += QStringLiteral("\n");
+	k.md += QLatin1Char('\n');
 	++k.st.framed;
 }
 
@@ -259,10 +242,7 @@ void exportVideo(sink &k, QRegularExpression const &re,
 	QString err, srtPath = v.srt;
 	if (srtPath.isEmpty())
 		srtPath = srtForVideo(v.video, &err);
-	auto at = k.texts.constFind(srtPath);
-	if (at == k.texts.constEnd())
-		at = k.texts.insert(srtPath, loadTranscript(srtPath));
-	transcript const &tx = *at;
+	transcript const &tx = load(k.texts, srtPath);
 	bool head = false;
 	for (std::size_t i = 0; i < tx.cues.size(); ++i) {
 		QRegularExpressionMatchIterator const it =
@@ -272,7 +252,7 @@ void exportVideo(sink &k, QRegularExpression const &re,
 		if (!head) {
 			k.md += QStringLiteral("\n## ")
 			      + QFileInfo(v.video).fileName()
-			      + QStringLiteral("\n");
+			      + QLatin1Char('\n');
 			head = true;
 		}
 		exportHit(k, tx, i, v);
@@ -282,11 +262,27 @@ void exportVideo(sink &k, QRegularExpression const &re,
 
 } // namespace
 
+transcript const &load(transcripts &cache, QString const &srtPath)
+{
+	auto at = cache.constFind(srtPath);
+	if (at != cache.constEnd())
+		return *at;
+	transcript t;
+	QFile f(srtPath);
+	if (f.open(QIODevice::ReadOnly)) {
+		QByteArray const raw = f.readAll();
+		t.cues = srt::parse(srt::to_utf8({raw.constData(),
+		                                  size_t(raw.size())}));
+		for (srt::cue const &c : t.cues)
+			t.lines << oneLine(c.text);
+	}
+	return *cache.insert(srtPath, std::move(t));
+}
+
 stats run(topics::doc const &corpus, QList<source> const &videos,
-          Grabber &grab, QString const &outDir)
+          Grabber &grab, QString const &outDir, transcripts &cache)
 {
 	stats st;
-	QHash<QString, transcript> texts;
 	QHash<QString, QString> partMd;
 	QSet<QString> partHead;
 	for (topics::export_item const &e : topics::export_plan(corpus)) {
@@ -294,7 +290,7 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 		QRegularExpression const re(
 			QString::fromStdString(e.pattern),
 			QRegularExpression::CaseInsensitiveOption);
-		sink k{corpus, e, grab, st, texts, partMd, partHead,
+		sink k{corpus, e, grab, st, cache, partMd, partHead,
 		       outDir, outDir + QLatin1Char('/') + name, {}};
 		QDir().mkpath(k.tdir + QStringLiteral("/frames"));
 		k.md = QStringLiteral("# ") + name

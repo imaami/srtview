@@ -172,17 +172,22 @@ qsizetype MainWin::indexOfId(QString const &id) const
 	return -1;
 }
 
+// A playlist entry's subtitle file, derived when not explicit.
+QString MainWin::srtOf(PlayItem const &it)
+{
+	if (!it.srt.isEmpty())
+		return it.srt;
+	QString err;
+	return srtForVideo(it.video, &err);
+}
+
 // The player's playlist mirror needs a concrete srt per entry, so
 // subtitles attach even for entries reached with mpv's own keys.
 QList<play_entry> MainWin::corpusEntries() const
 {
 	QList<play_entry> l;
-	for (PlayItem const &it : m_playlist) {
-		QString err, srt = it.srt;
-		if (srt.isEmpty())
-			srt = srtForVideo(it.video, &err);
-		l << play_entry{it.video, srt};
-	}
+	for (PlayItem const &it : m_playlist)
+		l << play_entry{it.video, srtOf(it)};
 	return l;
 }
 
@@ -195,10 +200,7 @@ void MainWin::mpvSwitched(int index)
 	PlayItem const &it = m_playlist[qsizetype(index)];
 	if (!it.id.isEmpty() && it.id == m_trail.videoId())
 		return;                      // our own navigation echoed
-	QString err, srt = it.srt;
-	if (srt.isEmpty())
-		srt = srtForVideo(it.video, &err);
-	if (!srt.isEmpty())
+	if (QString const srt = srtOf(it); !srt.isEmpty())
 		showDoc(it.video, srt);
 }
 
@@ -262,6 +264,7 @@ bool MainWin::loadPlaylist(QString const &path)
 	m_corpus = std::move(r.value);
 	m_corpusPath = path;
 	m_playlist.clear();
+	m_transcripts.clear();               // natural refresh point
 	QDir const dir = QFileInfo(path).absoluteDir();
 	auto const resolve = [&dir](std::string const &p) {
 		QString const q = QString::fromStdString(p);
@@ -376,7 +379,7 @@ void MainWin::runExport(bool drained)
 	}
 	QString const out = exportDir();
 	exporter::stats const st =
-		exporter::run(m_corpus, vids, m_grab, out);
+		exporter::run(m_corpus, vids, m_grab, out, m_transcripts);
 	m_exportTick.restart();
 	if (st.queued == 0) {
 		m_exportPending = false;
@@ -439,43 +442,21 @@ bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 	return false;
 }
 
-// Transcripts are parsed once per session and matched from memory:
-// a boundary crossing costs one regex pass over cached lines, not
-// file I/O plus a parse per candidate.  The cached lines are the
-// *rendered* cue text (tags consumed, newlines as line separators),
-// so the offline verdict is exactly what the in-document search will
-// see -- raw srt bytes would reject patterns that visibly match
-// (anchors, spans touching speaker/format markup).
+// One regex pass over the session's rendered transcript (shared
+// with the exporter): the offline verdict is exactly what the
+// in-document search will see -- raw srt bytes would reject
+// patterns that visibly match (anchors, spans touching
+// speaker/format markup).
 bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 {
-	QString err, srt = it.srt;
-	if (srt.isEmpty())
-		srt = srtForVideo(it.video, &err);
+	QString const srt = srtOf(it);
 	if (srt.isEmpty()) {
-		dbgHop(QStringLiteral("videoMatches: no srt for %1: %2")
-		       .arg(it.video, err));
+		dbgHop(QStringLiteral("videoMatches: no srt for %1")
+		       .arg(it.video));
 		return false;
 	}
-	auto at = m_cueCache.constFind(srt);
-	if (at == m_cueCache.constEnd()) {
-		QStringList lines;
-		QFile f(srt);
-		if (f.open(QIODevice::ReadOnly)) {
-			QByteArray const raw = f.readAll();
-			for (srt::cue const &c : srt::parse(srt::to_utf8(
-					{raw.constData(),
-					 size_t(raw.size())}))) {
-				std::string const html = srt::cue_html(c.text);
-				lines << QTextDocumentFragment::fromHtml(
-					QString::fromUtf8(html.data(),
-					qsizetype(html.size()))).toPlainText();
-			}
-		}
-		dbgHop(QStringLiteral("videoMatches: cached %1 cues "
-		                      "from %2").arg(lines.size()).arg(srt));
-		at = m_cueCache.insert(srt, lines);
-	}
-	for (QString const &text : *at)
+	for (QString const &text
+	     : exporter::load(m_transcripts, srt).lines)
 		if (re.match(text).hasMatch())
 			return true;
 	return false;
