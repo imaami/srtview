@@ -5,6 +5,7 @@
 #ifndef SRTVIEW_SRC_MAINWIN_HPP_
 #define SRTVIEW_SRC_MAINWIN_HPP_
 
+#include "grabber.hpp"
 #include "mpvlink.hpp"
 #include "playback.hpp"
 #include "prefs.hpp"
@@ -77,6 +78,7 @@ private:
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;
 	SearchBar<SearchCtl>            m_bar;
 	MpvLink<PlaybackCtl>            m_link;
+	Grabber                         m_grab;
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;

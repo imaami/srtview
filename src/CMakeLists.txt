@@ -6,6 +6,7 @@ add_executable(srtview
 	playback.cpp
 	prefs.cpp
 	trail.cpp
+	grabber.cpp
 	fundo.c
 	list.c
 	search.cpp

@@ -16,6 +16,10 @@ bool socketAlive(QString const &sock);
 // that name the player socket.  Empty when the path cannot resolve.
 QString idForVideo(QString const &video);
 
+// Socket for this instance's private frame-grab player: per-process,
+// never shared, unlike the per-video viewing sockets above.
+QString grabSock();
+
 // VIDEO.EXT.srt first, VIDEO.srt second.
 QString srtForVideo(QString const &video, QString *err);
 

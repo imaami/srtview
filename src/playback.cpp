@@ -1,5 +1,6 @@
 #include "playback.hpp"
 
+#include "grabber.hpp"
 #include "mpvlink.hpp"
 #include "srtedit.hpp"
 #include "timefmt.hpp"
@@ -8,8 +9,10 @@
 #include <QStatusBar>
 
 PlaybackCtl::PlaybackCtl(mpv_link_base &link, srt_view_base &view,
-                         QStatusBar &status, Trail &trail)
-	: m_link(link), m_view(view), m_status(status), m_trail(trail)
+                         QStatusBar &status, Trail &trail,
+                         Grabber &grab)
+	: m_link(link), m_view(view), m_status(status), m_trail(trail),
+	  m_grab(grab)
 {
 	m_followAct.setText(QStringLiteral("&Follow playback\t(f)"));
 	m_followAct.setCheckable(true);
@@ -48,6 +51,7 @@ bool PlaybackCtl::jumpTo(double t, bool forcePause)
 	if (before >= 0.0)
 		m_trail.driftTo(before);
 	m_view.setPlayTime(t);
+	m_grab.enqueue(t);
 	return true;
 }
 
@@ -94,6 +98,7 @@ bool PlaybackCtl::applyTime(double t)
 	// round-trip anyway.
 	m_view.setPlayTime(t);
 	m_trail.noteVideo(t);
+	m_grab.enqueue(t);
 	return true;
 }
 

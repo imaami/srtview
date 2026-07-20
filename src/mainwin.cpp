@@ -22,7 +22,7 @@ MainWin::MainWin()
 	: m_view(&m_playback, &m_search, this)
 	, m_bar(&m_search, &m_view)
 	, m_link(&m_playback)
-	, m_playback(m_link, m_view, *statusBar(), m_trail)
+	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
 	           m_playback, this)
 {
@@ -130,6 +130,7 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
+		m_grab.setVideo(video, id);
 	}
 
 	m_prefs.addRecentFile(video);
@@ -411,6 +412,7 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
+	m_grab.shutdown();
 	m_link.shutdown();
 	ev->accept();
 }

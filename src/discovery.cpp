@@ -1,5 +1,6 @@
 #include "discovery.hpp"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
@@ -18,6 +19,12 @@ QString runDir()
 }
 
 } // namespace
+
+QString grabSock()
+{
+	return runDir() + QStringLiteral("/grab-%1.sock")
+	                  .arg(QCoreApplication::applicationPid());
+}
 
 QString idForVideo(QString const &video)
 {
