@@ -92,7 +92,8 @@ private:
 			fwdBisect,  // localize the boundary ahead
 		};
 
-		QImage  ref;         // hit-frame thumb, the segment identity
+		QImage         ref;  // hit-frame thumb, the segment identity
+		QList<qint64>  probed; // every frame this job touched
 		QString path, id;
 		qint64  hit = 0, lo = 0, hi = 0;
 		qint64  prevMs = -1, nextMs = -1;
@@ -130,9 +131,10 @@ private:
 	QThread                      m_thread;    // not a child: stays put
 	QTimer                       m_poll;
 	QElapsedTimer                m_deadline;
-	QMutex                       m_lock;      // m_known + m_picks
+	QMutex                       m_lock;    // the three maps below
 	QHash<QString, QSet<qint64>> m_known;   // grabbed or queued hits
 	QHash<QString, PickMap>      m_picks;   // finished hits only
+	QHash<QString, QSet<qint64>> m_referenced; // frames picks cite
 	QList<Job>                   m_jobs;
 	QString                      m_path, m_id; // the followed video
 	QString                      m_loadedId;   // in the shadow player

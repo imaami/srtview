@@ -281,6 +281,7 @@ void Grabber::deliver(QImage const &full)
 {
 	qint64 const ms = m_wantMs;
 	m_wantMs = -1;
+	m_jobs.first().probed << ms;
 	advance(thumb(full), ms);
 }
 
@@ -393,10 +394,25 @@ void Grabber::finish(Job &j)
 		f.write(QByteArray::number(j.hit) + ' '
 		        + QByteArray::number(j.prevMs) + ' '
 		        + QByteArray::number(j.nextMs) + '\n');
+	// The bisection's scaffolding frames served their purpose: the
+	// cache keeps only what picks cite (a probe can be another
+	// hit's shared boundary, so the referenced set decides).
+	QList<qint64> doomed;
 	{
 		QMutexLocker const lock(&m_lock);
 		m_picks[j.id].insert(j.hit, {j.prevMs, j.nextMs});
+		QSet<qint64> &ref = m_referenced[j.id];
+		ref.insert(j.hit);
+		if (j.prevMs >= 0)
+			ref.insert(j.prevMs);
+		if (j.nextMs >= 0)
+			ref.insert(j.nextMs);
+		for (qint64 const ms : std::as_const(j.probed))
+			if (!ref.contains(ms))
+				doomed << ms;
 	}
+	for (qint64 const ms : std::as_const(doomed))
+		QFile::remove(framePath(j.id, ms));
 	m_strikes = 0;
 	m_jobs.removeFirst();
 	if (m_listener && m_ctx && !m_jobs.isEmpty())
@@ -455,6 +471,9 @@ void Grabber::ensureProc()
 	m_sockPath = grabSock();
 	QFile::remove(m_sockPath);
 	m_loadedId.clear();
+	// Compression 2, not the default 7: measured 1.7x the grab rate
+	// for +34% file size, still lossless -- mpv's PNG encode is the
+	// bulk of a grab cycle.
 	startProcess({QStringLiteral("--no-terminal"),
 	              QStringLiteral("--idle=yes"),
 	              QStringLiteral("--pause"),
@@ -462,6 +481,7 @@ void Grabber::ensureProc()
 	              QStringLiteral("--vo=null"),
 	              QStringLiteral("--no-audio"),
 	              QStringLiteral("--sid=no"),
+	              QStringLiteral("--screenshot-png-compression=2"),
 	              QStringLiteral("--input-ipc-server=")
 	              + m_sockPath});
 }
@@ -482,15 +502,22 @@ void Grabber::loadKnown(QString const &id)
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
 		return;
 	PickMap &picks = m_picks[id];
+	QSet<qint64> &ref = m_referenced[id];
 	while (!f.atEnd()) {
 		QList<QByteArray> const col =
 			f.readLine().simplified().split(' ');
 		if (col.size() != 3)
 			continue;
 		qint64 const hit = col[0].toLongLong();
+		qint64 const prev = col[1].toLongLong();
+		qint64 const next = col[2].toLongLong();
 		set.insert(hit);
-		picks.insert(hit, {col[1].toLongLong(),
-		                   col[2].toLongLong()});
+		picks.insert(hit, {prev, next});
+		ref.insert(hit);
+		if (prev >= 0)
+			ref.insert(prev);
+		if (next >= 0)
+			ref.insert(next);
 	}
 }
 

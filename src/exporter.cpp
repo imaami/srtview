@@ -1,4 +1,5 @@
 // exporter.cpp -- see exporter.hpp.
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -98,15 +99,37 @@ struct sink {
 	QString const             &outDir;
 	QString                    tdir;     // the grouping's directory
 	QString                    md;       // the grouping's digest
+	QHash<QByteArray, QString> byHash{}; // content → canonical name
+	QHash<QString, QString>    canon{};  // requested → canonical
+	QHash<QString, QByteArray> hashOf{}; // cache path → content hash
 };
 
-// Grouping frames are real copies out of the grab cache.
+// Grouping frames are real copies out of the grab cache -- collapsed
+// by content, so accidentally identical frames (a static screen
+// straddling several picks) become one file every digest references.
 QString frameLink(sink &k, source const &v, qint64 ms)
 {
-	QString const name = frameName(v, ms);
+	QString name = frameName(v, ms);
+	QString const src = k.grab.framePath(v.id, ms);
+	QByteArray hash = k.hashOf.value(src);
+	if (hash.isEmpty()) {
+		QFile f(src);
+		if (f.open(QIODevice::ReadOnly))
+			hash = QCryptographicHash::hash(f.readAll(),
+				QCryptographicHash::Blake2b_256);
+		k.hashOf.insert(src, hash);
+	}
+	if (!hash.isEmpty()) {
+		QString const seen = k.byHash.value(hash);
+		if (seen.isEmpty())
+			k.byHash.insert(hash, name);
+		else
+			name = seen;
+	}
+	k.canon.insert(frameName(v, ms), name);
 	QString const dst = k.tdir + QStringLiteral("/frames/") + name;
 	if (!QFile::exists(dst))
-		QFile::copy(k.grab.framePath(v.id, ms), dst);
+		QFile::copy(src, dst);
 	return QStringLiteral("![](frames/") + name
 	     + QStringLiteral(") ");
 }
@@ -116,7 +139,10 @@ QString frameLink(sink &k, source const &v, qint64 ms)
 QString partLink(sink &k, QString const &part, source const &v,
                  qint64 ms)
 {
-	QString const name = frameName(v, ms);
+	// Resolve through the grouping's content collapse: the copy the
+	// grouping actually holds is the one worth linking.
+	QString const name = k.canon.value(frameName(v, ms),
+	                                   frameName(v, ms));
 	QString const dir = k.outDir + QLatin1Char('/') + part
 	                  + QStringLiteral("/frames");
 	QDir().mkpath(dir);
