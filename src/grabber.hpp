@@ -1,30 +1,25 @@
-// grabber.hpp -- background frame grabs via a private headless mpv.
+// grabber.hpp -- background frame grabs via an in-process libav
+// decoder.
 //
-// A shadow player (--vo=null, paused, per-process socket -- never the
-// shared viewing instance) follows the study session: every video
-// jump enqueues its timestamp, and the grabber extracts frames into a
-// persistent cache, $XDG_CACHE_HOME/srtview/frames/<video id>/<ms>.png.
-// For each hit it keeps three picks -- the frame at the hit and one
-// from the different-looking content on either side -- by bisecting
-// for the nearest content-change boundaries (downscaled grayscale
-// mean difference; slides and screenshares are near-constant inside a
-// segment, so changes localize in a handful of probes).  On footage
-// where everything moves the bisection degenerates to nearby offsets
-// by itself, so three relevant frames always exist.  Picks append to
-// picks.txt beside the frames, one "<hit> <prev> <next>" ms line each
-// (-1 for an absent side); the same file is the dedupe record, so
-// revisits (ring travel, undo) cost nothing across sessions.
+// The grabber shadows the study session from its own worker thread:
+// every video jump enqueues its timestamp, and three picks per hit
+// -- the hit frame plus one from the different-looking content on
+// either side, found by bisecting for content-change boundaries --
+// land in $XDG_CACHE_HOME/srtview/frames/<video id>/<ms>.png, with
+// picks.txt as both manifest and cross-session dedupe record.
 //
-// IPC rides the shared mpv_client machinery: raw command lines out,
-// mpv's JSON event lines back for sequencing -- a seek is done at
-// playback-restart, a screenshot when its file parses as an image.
-// One serial queue; a corporate WSL2 box must never see two decoders
-// competing.
-// The grabber lives on its own worker thread (decode, screenshot
-// I/O, thumbnail scaling and picks bookkeeping never touch the UI
-// thread): mutating entry points marshal onto the worker, queries
-// read the shared maps under a lock, and listener notifications are
-// delivered queued into the listener's own thread.
+// The decode context persists per video (decoder.hpp); bisection
+// probes are decoded straight into 64x36 grayscale compare thumbs
+// and never touch a PNG encoder or the disk -- only picks are
+// encoded.  A hit inside an already-bisected segment reuses that
+// segment's boundaries (content-compared), so a cluster of hits on
+// one slide costs one encoded frame each.  On footage where
+// everything moves the bisection degenerates to nearby offsets by
+// itself, so three relevant frames always exist.
+//
+// Mutating entry points marshal onto the worker, queries read the
+// shared maps under a lock, and listener notifications are queued
+// into the listener's thread.
 #ifndef SRTVIEW_SRC_GRABBER_HPP_
 #define SRTVIEW_SRC_GRABBER_HPP_
 
@@ -32,14 +27,14 @@
 #include <QImage>
 #include <QList>
 #include <QMutex>
+#include <QObject>
 #include <QSet>
 #include <QString>
 #include <QThread>
-#include <QTimer>
 
 #include <utility>
 
-#include "mpvclient.hpp"
+#include "decoderq.hpp"
 
 // Told about grab completion; implemented by the composition root
 // (which may be folding finished frames into an export).  grabsIdle
@@ -52,14 +47,11 @@ protected:
 	~grab_listener() = default;
 };
 
-class Grabber : public mpv_client<Grabber>
+class Grabber : public QObject
 {
 public:
 	Grabber();
 	~Grabber() override;
-
-	// Event sink for the shared dispatcher (worker thread).
-	void onEvent(QJsonObject const &ev);
 
 	// The listener is invoked queued in ctx's thread.
 	void setListener(QObject *ctx, grab_listener *l);
@@ -84,66 +76,38 @@ public:
 
 private:
 	struct Job {
-		enum Phase : int {
-			anchor,     // grab the hit frame itself
-			back0,      // probe the far edge of the back window
-			backBisect, // localize the boundary behind
-			fwd0,       // probe the far edge ahead
-			fwdBisect,  // localize the boundary ahead
-		};
-
-		QImage         ref;  // hit-frame thumb, the segment identity
-		QList<qint64>  probed; // every frame this job touched
 		QString path, id;
-		qint64  hit = 0, lo = 0, hi = 0;
-		qint64  prevMs = -1, nextMs = -1;
-		Phase   phase = anchor;
+		qint64  hit = 0;
 	};
-
-	enum class Stage : int { idle, spawn, load, seekWait, shoot };
 
 	void setVideoImpl(QString const &path, QString const &id);
 	void enqueueImpl(QString const &path, QString const &id,
 	                 double t);
 	void shutdownImpl();
 	void startJob();
-	void want(qint64 ms);
-	void pump();
-	void tick();
-	void onConnected();
-	void onRestart();
-	void deliver(QImage const &full);
-	void advance(QImage const &tn, qint64 ms);
-	bool reuseSegment(Job &j);
-	void bisectBack(Job &j);
-	void bisectFwd(Job &j);
-	void finish(Job &j);
+	void runJob();
+	qint64 boundary(qint64 hit, media::thumb const &ref, int dir);
+	bool reuseSegment(Job const &j, media::thumb const &ref,
+	                  qint64 &prev, qint64 &next);
+	bool ensurePick(QString const &id, qint64 ms);
+	void finishJob(Job const &j, qint64 prev, qint64 next);
 	void abortJob();
 	void drained();
-	void ensureProc();
-	void armDeadline(qint64 ms);
 	void loadKnown(QString const &id);
 	QString dir(QString const &id) const;
-	QString frameFile(qint64 ms) const;
 
 	using PickMap = QHash<qint64, std::pair<qint64, qint64>>;
 
-	QThread                      m_thread;    // not a child: stays put
-	QTimer                       m_poll;
-	QElapsedTimer                m_deadline;
-	QMutex                       m_lock;    // the three maps below
+	QThread                      m_thread;  // not a child: stays put
+	DecoderQ                     m_dec;
+	QMutex                       m_lock;    // the two maps below
 	QHash<QString, QSet<qint64>> m_known;   // grabbed or queued hits
 	QHash<QString, PickMap>      m_picks;   // finished hits only
-	QHash<QString, QSet<qint64>> m_referenced; // frames picks cite
 	QList<Job>                   m_jobs;
 	QString                      m_path, m_id; // the followed video
-	QString                      m_loadedId;   // in the shadow player
 	QObject                     *m_ctx = nullptr;
 	grab_listener               *m_listener = nullptr;
-	qint64                       m_wantMs = -1;
-	qint64                       m_deadlineMs = 0;
 	unsigned                     m_strikes = 0;
-	Stage                        m_stage = Stage::idle;
 };
 
 #endif // SRTVIEW_SRC_GRABBER_HPP_

@@ -1,14 +1,13 @@
 // grabber.cpp -- see grabber.hpp for the design.
 #include <QDir>
 #include <QFile>
+#include <QTimer>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
 #include "grabber.hpp"
-
-#include "discovery.hpp"
 
 namespace {
 
@@ -19,10 +18,10 @@ constexpr qint64 kWinMs   = 30000;
 constexpr qint64 kStepMs  = 1000;
 constexpr int    kDiffMean = 8;
 
-constexpr qint64 kSpawnTimeout = 15000;
-constexpr qint64 kLoadTimeout  = 20000;
-constexpr qint64 kSeekTimeout  = 15000;
-constexpr qint64 kShotTimeout  = 10000;
+// Qt's PNG quality knob maps inversely onto zlib effort; this sits
+// near zlib level 2 -- measured ~1.7x the encode rate of the default
+// for a modest size increase, still lossless.
+constexpr int kPngQuality = 80;
 
 QString cacheRoot()
 {
@@ -32,39 +31,15 @@ QString cacheRoot()
 	return base + QStringLiteral("/srtview/frames");
 }
 
-QImage thumb(QImage const &img)
+bool same(media::thumb const &a, media::thumb const &b)
 {
-	return img.scaled(64, 36, Qt::IgnoreAspectRatio,
-	                  Qt::SmoothTransformation)
-	          .convertToFormat(QImage::Format_Grayscale8);
-}
-
-// Same content?  Mean absolute difference of the tiny grayscale
-// thumbs; downscaling has already averaged compression noise away.
-bool same(QImage const &a, QImage const &b)
-{
-	qint64 sum = 0;
-	for (int y = 0; y < a.height(); ++y) {
-		uchar const *pa = a.constScanLine(y);
-		uchar const *pb = b.constScanLine(y);
-		for (int x = 0; x < a.width(); ++x)
-			sum += std::abs(int(pa[x]) - int(pb[x]));
-	}
-	return sum < qint64(kDiffMean) * a.width() * a.height();
+	return media::same(a, b, kDiffMean);
 }
 
 } // namespace
 
 Grabber::Grabber()
 {
-	// The worker owns all activity: member QObjects are children so
-	// moveToThread() takes them along (the base parents its own).
-	m_poll.setParent(this);
-	connect(&sock(), &QLocalSocket::readyRead,
-	        this, [this] { dispatch(); });
-	connect(&sock(), &QLocalSocket::connected,
-	        this, [this] { onConnected(); });
-	connect(&m_poll, &QTimer::timeout, this, [this] { tick(); });
 	moveToThread(&m_thread);
 	m_thread.start();
 }
@@ -174,170 +149,67 @@ void Grabber::shutdown()
 void Grabber::shutdownImpl()
 {
 	m_jobs.clear();
-	m_wantMs = -1;
-	m_stage = Stage::idle;
-	m_poll.stop();
-	teardown(true);
-	m_loadedId.clear();
+	m_dec.close();
 }
 
 void Grabber::startJob()
 {
-	if (m_jobs.isEmpty()) {
-		m_poll.stop();
-		return;
-	}
-	if (!m_poll.isActive())
-		m_poll.start(100);
-	want(m_jobs.first().hit);
+	// One job per event-loop turn: marshalled calls (enqueue,
+	// shutdown) interleave between jobs.
+	QTimer::singleShot(0, this, [this] { runJob(); });
 }
 
-void Grabber::want(qint64 ms)
+void Grabber::runJob()
 {
-	m_wantMs = ms;
-	QTimer::singleShot(0, this, [this] { pump(); });
-}
-
-// One step of the pipeline toward the wanted frame; every completion
-// signal (cache hit, connect, restart event, file poll) funnels back
-// here.
-void Grabber::pump()
-{
-	if (m_stage != Stage::idle || m_wantMs < 0 || m_jobs.isEmpty())
+	if (m_jobs.isEmpty())
 		return;
-	QImage full;
-	if (full.load(frameFile(m_wantMs))) {
-		deliver(full);
-		return;
-	}
-	if (!connectedNow()) {
-		ensureProc();
-		return;
-	}
-	Job const &j = m_jobs.first();
-	if (m_loadedId != j.id) {
-		m_loadedId = j.id;
-		writeLine(QStringLiteral("loadfile %1 replace")
-		          .arg(mpvQuote(j.path)));
-		writeLine(QStringLiteral("set pause yes"));
-		m_stage = Stage::load;
-		armDeadline(kLoadTimeout);
-		return;
-	}
-	writeLine(QStringLiteral("seek %1 absolute+exact")
-	          .arg(double(m_wantMs) / 1000.0, 0, 'f', 3));
-	m_stage = Stage::seekWait;
-	armDeadline(kSeekTimeout);
-}
-
-void Grabber::tick()
-{
-	if (m_stage == Stage::spawn && !connectedNow())
-		connectSock(0);
-	if (m_stage == Stage::shoot) {
-		QImage full;
-		if (full.load(frameFile(m_wantMs))) {
-			m_stage = Stage::idle;
-			deliver(full);
-			return;
-		}
-	}
-	if (m_stage != Stage::idle
-	    && m_deadline.elapsed() > m_deadlineMs)
+	Job const j = m_jobs.first();
+	media::thumb ref;
+	if ((m_dec.path() != j.path && !m_dec.open(j.path))
+	    || !m_dec.thumbAt(j.hit, ref)) {
 		abortJob();
-}
-
-void Grabber::onEvent(QJsonObject const &ev)
-{
-	if (ev.value(QStringLiteral("event")).toString()
-	    == QStringLiteral("playback-restart"))
-		onRestart();
-}
-
-void Grabber::onConnected()
-{
-	if (m_stage != Stage::spawn)
-		return;
-	m_stage = Stage::idle;
-	pump();
-}
-
-void Grabber::onRestart()
-{
-	if (m_stage == Stage::load) {
-		m_stage = Stage::idle;
-		pump();                      // loaded: proceed to the seek
 		return;
 	}
-	if (m_stage != Stage::seekWait)
-		return;
-	m_stage = Stage::shoot;
-	armDeadline(kShotTimeout);
-	writeLine(QStringLiteral("screenshot-to-file %1 video")
-	          .arg(mpvQuote(frameFile(m_wantMs))));
-}
-
-void Grabber::deliver(QImage const &full)
-{
-	qint64 const ms = m_wantMs;
-	m_wantMs = -1;
-	m_jobs.first().probed << ms;
-	advance(thumb(full), ms);
-}
-
-// The bisection plan, one delivered frame at a time.  Invariants:
-// backward, lo differs from the hit segment and hi belongs to it;
-// forward the mirror image.
-void Grabber::advance(QImage const &tn, qint64 ms)
-{
-	Job &j = m_jobs.first();
-	switch (j.phase) {
-	case Job::anchor:
-		j.ref = tn;
-		if (reuseSegment(j))
-			return;
-		j.lo = std::max<qint64>(0, j.hit - kWinMs);
-		j.phase = Job::back0;
-		want(j.lo);
-		return;
-	case Job::back0:
-		if (same(tn, j.ref)) {       // one long segment all the way
-			j.prevMs = ms;
-			bisectFwd(j);        // degenerate: starts the probe
-			return;
-		}
-		j.hi = j.hit;
-		j.phase = Job::backBisect;
-		bisectBack(j);
-		return;
-	case Job::backBisect:
-		(same(tn, j.ref) ? j.hi : j.lo) = ms;
-		bisectBack(j);
-		return;
-	case Job::fwd0:
-		if (same(tn, j.ref)) {
-			j.nextMs = ms;
-			finish(j);
-			return;
-		}
-		j.hi = ms;
-		j.phase = Job::fwdBisect;
-		bisectFwd(j);
-		return;
-	case Job::fwdBisect:
-		(same(tn, j.ref) ? j.lo : j.hi) = ms;
-		bisectFwd(j);
+	qint64 prev = -1, next = -1;
+	if (!reuseSegment(j, ref, prev, next)) {
+		prev = boundary(j.hit, ref, -1);
+		next = boundary(j.hit, ref, +1);
+	}
+	if (!ensurePick(j.id, j.hit)
+	    || (prev >= 0 && !ensurePick(j.id, prev))
+	    || (next >= 0 && !ensurePick(j.id, next))) {
+		abortJob();
 		return;
 	}
+	finishJob(j, prev, next);
+}
+
+// Bisect toward the nearest content change in direction dir; the
+// pick is the frame just beyond the boundary (in the neighboring
+// segment), or the window edge when the segment runs past it.
+qint64 Grabber::boundary(qint64 hit, media::thumb const &ref, int dir)
+{
+	qint64 const edge = std::max<qint64>(0, hit + dir * kWinMs);
+	media::thumb probe;
+	if (!m_dec.thumbAt(edge, probe))
+		return -1;
+	if (same(probe, ref))
+		return edge;                 // one segment to the window
+	qint64 nearMs = hit, farMs = edge;
+	while (std::llabs(farMs - nearMs) > kStepMs) {
+		qint64 const mid = (nearMs + farMs) / 2;
+		if (!m_dec.thumbAt(mid, probe))
+			return -1;
+		(same(probe, ref) ? nearMs : farMs) = mid;
+	}
+	return farMs;
 }
 
 // A hit inside an already-bisected segment shares its boundaries:
-// a cluster of matching cues on one slide costs one new frame per
-// hit (the hit itself) instead of a bisection each -- and produces
-// no content-duplicate boundary frames.  Same content as the other
-// hit's frame plus a position inside its boundary window is the
-// same segment.
-bool Grabber::reuseSegment(Job &j)
+// same content as the other hit's frame plus a position inside its
+// boundary window is the same segment.
+bool Grabber::reuseSegment(Job const &j, media::thumb const &ref,
+                           qint64 &prev, qint64 &next)
 {
 	PickMap picks;
 	{
@@ -345,81 +217,51 @@ bool Grabber::reuseSegment(Job &j)
 		picks = m_picks.value(j.id);
 	}
 	for (auto it = picks.cbegin(); it != picks.cend(); ++it) {
-		auto const [prev, next] = it.value();
-		if (prev < 0 || next < 0
-		    || j.hit <= prev || j.hit >= next)
+		auto const [p, n] = it.value();
+		if (p < 0 || n < 0 || j.hit <= p || j.hit >= n)
 			continue;
 		QImage other;
 		if (!other.load(framePath(j.id, it.key()))
-		    || !same(j.ref, thumb(other)))
+		    || !same(ref, DecoderQ::toThumb(other)))
 			continue;
-		j.prevMs = prev;
-		j.nextMs = next;
-		finish(j);
+		prev = p;
+		next = n;
 		return true;
 	}
 	return false;
 }
 
-void Grabber::bisectBack(Job &j)
+// Encode a pick only if the cache does not hold it yet.
+bool Grabber::ensurePick(QString const &id, qint64 ms)
 {
-	if (j.hi - j.lo <= kStepMs) {
-		j.prevMs = j.lo;             // last known different behind
-		bisectFwd(j);                // starts the forward probe
-		return;
-	}
-	want((j.lo + j.hi) / 2);
+	QString const path = framePath(id, ms);
+	if (QFile::exists(path))
+		return true;
+	QImage full;
+	if (!m_dec.frameAt(ms, full))
+		return false;
+	return full.save(path, "png", kPngQuality);
 }
 
-void Grabber::bisectFwd(Job &j)
-{
-	if (j.phase != Job::fwdBisect) {     // entered from the back side
-		j.lo = j.hit;
-		j.phase = Job::fwd0;
-		want(j.hit + kWinMs);
-		return;
-	}
-	if (j.hi - j.lo <= kStepMs) {
-		j.nextMs = j.hi;             // first known different ahead
-		finish(j);
-		return;
-	}
-	want((j.lo + j.hi) / 2);
-}
-
-void Grabber::finish(Job &j)
+void Grabber::finishJob(Job const &j, qint64 prev, qint64 next)
 {
 	QFile f(dir(j.id) + QStringLiteral("/picks.txt"));
 	if (f.open(QIODevice::Append | QIODevice::Text))
 		f.write(QByteArray::number(j.hit) + ' '
-		        + QByteArray::number(j.prevMs) + ' '
-		        + QByteArray::number(j.nextMs) + '\n');
-	// The bisection's scaffolding frames served their purpose: the
-	// cache keeps only what picks cite (a probe can be another
-	// hit's shared boundary, so the referenced set decides).
-	QList<qint64> doomed;
+		        + QByteArray::number(prev) + ' '
+		        + QByteArray::number(next) + '\n');
 	{
 		QMutexLocker const lock(&m_lock);
-		m_picks[j.id].insert(j.hit, {j.prevMs, j.nextMs});
-		QSet<qint64> &ref = m_referenced[j.id];
-		ref.insert(j.hit);
-		if (j.prevMs >= 0)
-			ref.insert(j.prevMs);
-		if (j.nextMs >= 0)
-			ref.insert(j.nextMs);
-		for (qint64 const ms : std::as_const(j.probed))
-			if (!ref.contains(ms))
-				doomed << ms;
+		m_picks[j.id].insert(j.hit, {prev, next});
 	}
-	for (qint64 const ms : std::as_const(doomed))
-		QFile::remove(framePath(j.id, ms));
 	m_strikes = 0;
 	m_jobs.removeFirst();
 	if (m_listener && m_ctx && !m_jobs.isEmpty())
 		QMetaObject::invokeMethod(m_ctx, [l = m_listener] {
 			l->grabProgress();
 		}, Qt::QueuedConnection);
-	startJob();
+	if (!m_jobs.isEmpty())
+		startJob();
 	drained();
 }
 
@@ -434,18 +276,11 @@ void Grabber::abortJob()
 	}
 	std::fprintf(stderr, "srtview: frame grab aborted at %lld ms\n",
 	             static_cast<long long>(j.hit));
-	m_wantMs = -1;
-	m_stage = Stage::idle;
-	teardown(false);
-	if (proc().state() != QProcess::NotRunning)
-		proc().kill();               // wedged: fresh spawn next time
-	m_loadedId.clear();
-	if (++m_strikes >= 3) {              // mpv is not cooperating
+	m_dec.close();                       // suspect file: fresh open
+	if (++m_strikes >= 3)                // decoding is not working
 		m_jobs.clear();
-		m_poll.stop();
-	} else {
+	else if (!m_jobs.isEmpty())
 		startJob();
-	}
 	drained();
 }
 
@@ -458,40 +293,6 @@ void Grabber::drained()
 	}, Qt::QueuedConnection);
 }
 
-void Grabber::ensureProc()
-{
-	if (m_stage != Stage::idle)
-		return;
-	m_stage = Stage::spawn;
-	armDeadline(kSpawnTimeout);
-	if (proc().state() == QProcess::Running) {
-		connectSock(0);
-		return;
-	}
-	m_sockPath = grabSock();
-	QFile::remove(m_sockPath);
-	m_loadedId.clear();
-	// Compression 2, not the default 7: measured 1.7x the grab rate
-	// for +34% file size, still lossless -- mpv's PNG encode is the
-	// bulk of a grab cycle.
-	startProcess({QStringLiteral("--no-terminal"),
-	              QStringLiteral("--idle=yes"),
-	              QStringLiteral("--pause"),
-	              QStringLiteral("--keep-open=yes"),
-	              QStringLiteral("--vo=null"),
-	              QStringLiteral("--no-audio"),
-	              QStringLiteral("--sid=no"),
-	              QStringLiteral("--screenshot-png-compression=2"),
-	              QStringLiteral("--input-ipc-server=")
-	              + m_sockPath});
-}
-
-void Grabber::armDeadline(qint64 ms)
-{
-	m_deadline.restart();
-	m_deadlineMs = ms;
-}
-
 void Grabber::loadKnown(QString const &id)
 {
 	QMutexLocker const lock(&m_lock);
@@ -502,31 +303,19 @@ void Grabber::loadKnown(QString const &id)
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
 		return;
 	PickMap &picks = m_picks[id];
-	QSet<qint64> &ref = m_referenced[id];
 	while (!f.atEnd()) {
 		QList<QByteArray> const col =
 			f.readLine().simplified().split(' ');
 		if (col.size() != 3)
 			continue;
 		qint64 const hit = col[0].toLongLong();
-		qint64 const prev = col[1].toLongLong();
-		qint64 const next = col[2].toLongLong();
 		set.insert(hit);
-		picks.insert(hit, {prev, next});
-		ref.insert(hit);
-		if (prev >= 0)
-			ref.insert(prev);
-		if (next >= 0)
-			ref.insert(next);
+		picks.insert(hit, {col[1].toLongLong(),
+		                   col[2].toLongLong()});
 	}
 }
 
 QString Grabber::dir(QString const &id) const
 {
 	return cacheRoot() + QLatin1Char('/') + id;
-}
-
-QString Grabber::frameFile(qint64 ms) const
-{
-	return framePath(m_jobs.first().id, ms);
 }

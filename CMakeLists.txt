@@ -29,6 +29,9 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+	libavformat libavcodec libavutil libswscale)
 
 include(CTest)
 

@@ -7,6 +7,7 @@ add_executable(srtview
 	prefs.cpp
 	trail.cpp
 	grabber.cpp
+	decoder.cpp
 	exporter.cpp
 	fundo.c
 	list.c
@@ -20,7 +21,8 @@ add_executable(srtview
 	palettefix.cpp
 	selftest.cpp
 )
-target_link_libraries(srtview PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(srtview PRIVATE Qt6::Widgets Qt6::Network
+                      PkgConfig::FFMPEG)
 target_compile_options(srtview PRIVATE -Wall -Wextra)
 
 install(TARGETS srtview RUNTIME DESTINATION bin)
