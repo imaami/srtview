@@ -27,14 +27,14 @@ search_bar_base::search_bar_base(QWidget *parent)
 
 	m_regex.setText(QStringLiteral(".*"));
 	m_regex.setCheckable(true);
-	m_regex.setChecked(true);           // regexp on by default
+	m_regex.setChecked(true);       // regexp on by default
 	m_regex.setAutoRaise(true);
 	m_regex.setToolTip(QStringLiteral("Regular expression"));
 	frame->addWidget(&m_regex);
 
 	m_case.setText(QStringLiteral("Aa"));
 	m_case.setCheckable(true);
-	m_case.setChecked(true);            // case-sensitive
+	m_case.setChecked(false);       // case-insensitive by default
 	m_case.setAutoRaise(true);
 	m_case.setToolTip(QStringLiteral("Match case"));
 	frame->addWidget(&m_case);
