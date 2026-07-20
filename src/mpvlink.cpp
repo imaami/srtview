@@ -1,29 +1,19 @@
+// mpvlink.cpp -- see mpvlink.hpp.
 #include "mpvlink.hpp"
-
-#include "discovery.hpp"
 
 #include <QCoreApplication>
 #include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
 
 #include <chrono>
-#include <cstdio>
 #include <thread>
 
 namespace {
 
-bool debugEnabled()
-{
-	static bool const on = qEnvironmentVariableIsSet("SRTVIEW_DEBUG");
-	return on;
-}
-
-// Spawned players must not yank the keyboard away from the transcript
-// (video stepping spawns them mid-navigation).  mpv rejects unknown
-// options fatally and renamed this one incompatibly (--focus-on-open
-// was removed in favor of --focus-on=never in 0.38), so probe once
-// which spelling this mpv accepts.
+// Spawned players must not yank the keyboard away from the
+// transcript.  mpv rejects unknown options fatally and renamed this
+// one incompatibly (--focus-on-open was removed in favor of
+// --focus-on=never in 0.38), so probe once which spelling this mpv
+// accepts.
 QString focusFlag()
 {
 	auto const accepts = [](QString const &opt) {
@@ -50,42 +40,80 @@ QString focusFlag()
 
 } // namespace
 
-mpv_link_base::mpv_link_base()
+bool mpv_link_base::setPlaylist(QList<play_entry> const &list,
+                                QString const &sock, int index,
+                                QString *err)
 {
-	m_clock.start();
+	if (list.isEmpty() || index < 0 || index >= list.size()) {
+		*err = QStringLiteral("bad playlist");
+		return false;
+	}
+	if (sock == m_sockPath && connectedNow()) {
+		if (list == m_list)
+			return index == m_index ? true
+			                        : playIndex(index, err);
+		m_list = list;               // corpus edited: same window,
+		m_index = index;             // rebuilt playlist
+		resync(false);
+		return true;
+	}
+	// New target: drop only a player this instance spawned; reused
+	// ones belong to everyone and are left running.
+	teardown(m_spawned);
+	m_spawned = false;
+	m_adopting = false;
+	m_list = list;
+	m_index = index;
+	m_sockPath = sock;
+	m_lastTime = -1.0;
+	m_pendingSeek = -1.0;
+	m_lastPause = true;
+	return ensureAlive(err);
 }
 
-bool mpv_link_base::openFor(QString const &video, QString const &srt,
-                            QString *err)
+bool mpv_link_base::playIndex(int index, QString *err)
 {
-	shutdown();
-	m_video = video;
-	m_srt   = srt;
-	m_sock  = sockForVideo(video, err);
-	if (m_sock.isEmpty())
+	if (index < 0 || index >= int(m_list.size())) {
+		*err = QStringLiteral("no such playlist entry");
 		return false;
-	return ensureAlive(err);
+	}
+	m_index = index;                     // optimistic; the path echo
+	                                     // confirms without an event
+	return send(QStringLiteral("playlist-play-index %1").arg(index),
+	            err);
 }
 
 bool mpv_link_base::ensureAlive(QString *err)
 {
-	if (m_conn.state() == QLocalSocket::ConnectedState)
+	if (connectedNow())
 		return true;
-	if (tryConnect())
-		return true;                     // reuse a running instance
-	if (m_video.isEmpty()) {
+	if (m_sockPath.isEmpty() || m_list.isEmpty()) {
 		*err = QStringLiteral("no video associated");
 		return false;
 	}
-	QFile::remove(m_sock);               // stale leftover
+	if (connectSock(200)) {
+		// A running instance: adopt it.  The resync is deferred to
+		// the observation's initial path event, so an instance
+		// already inside the list keeps its position (session
+		// resume) and is resynced around the playing entry.
+		observe();
+		m_adopting = true;
+		return true;
+	}
+	return spawnPlayer(err);
+}
+
+bool mpv_link_base::spawnPlayer(QString *err)
+{
+	QFile::remove(m_sockPath);
 	QStringList args{QStringLiteral("--no-terminal"),
+	                 QStringLiteral("--idle=yes"),
+	                 QStringLiteral("--force-window=yes"),
 	                 QStringLiteral("--pause"),
 	                 QStringLiteral("--keep-open=yes"),
-	                 QStringLiteral("--input-ipc-server=") + m_sock,
-	                 QStringLiteral("--sub-file=") + m_srt,
+	                 QStringLiteral("--input-ipc-server=")
+	                 + m_sockPath,
 	                 QStringLiteral("--sub-auto=no")};
-	if (m_resumeTime >= 0.0)
-		args << QStringLiteral("--start=%1").arg(m_resumeTime, 0, 'f', 3);
 	if (QString const focus = focusFlag(); !focus.isEmpty())
 		args << focus;
 	// WSLg's PulseAudio bridge can drop stream acknowledgments,
@@ -99,49 +127,146 @@ bool mpv_link_base::ensureAlive(QString *err)
 		dbg(QStringLiteral("WSLg pulse bridge detected: adding "
 		                   "--audio-stream-silence=yes"));
 	}
-	args += QProcess::splitCommand(qEnvironmentVariable("SRTVIEW_MPV_ARGS"));
-	args << QStringLiteral("--") << m_video;
-	// Forward mpv's stdout/stderr to ours instead of the QProcess
-	// default of capture pipes.  A captured pipe that nobody drains
-	// holds 64 KiB; once graphics-stack warnings (chatty on WSLg)
-	// fill it, mpv's next write blocks forever and its core wedges.
-	// Forwarding removes the pipe entirely and makes mpv's own
-	// diagnostics visible when srtview runs from a terminal.
-	m_proc.setProcessChannelMode(QProcess::ForwardedChannels);
-	m_proc.setProgram(QStringLiteral("mpv"));
-	m_proc.setArguments(args);
-	dbg(QStringLiteral("spawning mpv, socket %1").arg(m_sock));
-	m_proc.start();
-	if (!m_proc.waitForStarted(3000)) {
+	args += QProcess::splitCommand(
+		qEnvironmentVariable("SRTVIEW_MPV_ARGS"));
+	startProcess(args);
+	if (!proc().waitForStarted(3000)) {
 		*err = QStringLiteral("cannot start mpv: %1")
-		       .arg(m_proc.errorString());
+		       .arg(proc().errorString());
 		return false;
 	}
 	m_spawned = true;
 	for (int i = 0; i < 50; ++i) {       // wait for the socket
-		if (tryConnect())
+		if (connectSock(200)) {
+			observe();
+			resync(false);
 			return true;
-		if (m_proc.state() != QProcess::Running) {
-			*err = QStringLiteral("mpv exited before its socket came up");
+		}
+		if (proc().state() != QProcess::Running) {
+			*err = QStringLiteral("mpv exited before its socket "
+			                      "came up");
 			return false;
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 		QCoreApplication::processEvents();
 	}
-	*err = QStringLiteral("mpv IPC socket never came up: %1").arg(m_sock);
+	*err = QStringLiteral("mpv IPC socket never came up: %1")
+	       .arg(m_sockPath);
 	return false;
+}
+
+// Mirror m_list into the player.  The current entry loads first (or,
+// when it is already playing, stays untouched past playlist-clear),
+// the rest append in list order, and one playlist-move puts the
+// current entry into place -- exactly one file load at most.
+void mpv_link_base::resync(bool keepCurrent)
+{
+	QString err;
+	if (keepCurrent)
+		send(QStringLiteral("playlist-clear"), &err);
+	else
+		send(QStringLiteral("loadfile %1 replace")
+		     .arg(mpvQuote(m_list[m_index].video)), &err);
+	for (qsizetype i = 0; i < m_list.size(); ++i)
+		if (int(i) != m_index)
+			send(QStringLiteral("loadfile %1 append")
+			     .arg(mpvQuote(m_list[i].video)), &err);
+	if (m_index > 0)
+		send(QStringLiteral("playlist-move 0 %1").arg(m_index + 1),
+		     &err);
+}
+
+void mpv_link_base::onEvent(QJsonObject const &ev)
+{
+	QString const type =
+		ev.value(QStringLiteral("event")).toString();
+	if (type == QStringLiteral("file-loaded")) {
+		onLoaded();
+		return;
+	}
+	if (type != QStringLiteral("property-change"))
+		return;
+	QJsonValue const v = ev.value(QStringLiteral("data"));
+	QString const name = ev.value(QStringLiteral("name")).toString();
+	if (name == QStringLiteral("pause")) {
+		m_lastPause = v.toBool(m_lastPause);
+		return;
+	}
+	if (name == QStringLiteral("playback-time")) {
+		if (!v.isDouble())
+			return;
+		m_lastTime = v.toDouble();
+		m_times << m_lastTime;
+		return;
+	}
+	if (name == QStringLiteral("path"))
+		onPath(v);
+}
+
+// The observed path is the playlist authority: our own navigation
+// echoes back silently (the optimistic index already matches), a
+// switch made inside mpv surfaces as a pending index for the
+// observer, and the initial event resolves a deferred adoption.
+void mpv_link_base::onPath(QJsonValue const &v)
+{
+	bool const adopting = m_adopting;
+	m_adopting = false;
+	if (!v.isString()) {
+		if (adopting)                // adopted an idle instance
+			resync(false);
+		return;
+	}
+	QString const path = v.toString();
+	for (qsizetype i = 0; i < m_list.size(); ++i) {
+		if (m_list[i].video != path)
+			continue;
+		if (int(i) != m_index) {
+			m_index = int(i);
+			m_newIndex = m_index;
+		}
+		if (adopting)                // keep its position, fix the
+			resync(true);        // playlist around it
+		return;
+	}
+	if (adopting)                        // playing something foreign
+		resync(false);
+}
+
+void mpv_link_base::onLoaded()
+{
+	QString err;
+	if (m_index >= 0 && m_index < int(m_list.size())
+	    && !m_list[m_index].srt.isEmpty())
+		send(QStringLiteral("sub-add %1 select")
+		     .arg(mpvQuote(m_list[m_index].srt)), &err);
+	if (m_pendingSeek >= 0.0) {
+		seek(m_pendingSeek, false, &err);
+		m_pendingSeek = -1.0;
+	}
+}
+
+bool mpv_link_base::takeTime(double &t)
+{
+	if (m_times.isEmpty())
+		return false;
+	t = m_times.takeFirst();
+	return true;
+}
+
+bool mpv_link_base::takeIndex(int &i)
+{
+	if (m_newIndex < 0)
+		return false;
+	i = m_newIndex;
+	m_newIndex = -1;
+	return true;
 }
 
 bool mpv_link_base::send(QString const &line, QString *err)
 {
 	if (!ensureAlive(err))
 		return false;
-	dbg(QStringLiteral("tx: ") + line);
-	m_conn.write(line.toUtf8() + '\n');
-	m_conn.flush();
-	// flush() usually drains the whole buffer; only wait if the
-	// kernel pushed back.
-	return m_conn.bytesToWrite() == 0 || m_conn.waitForBytesWritten(500);
+	return writeLine(line);
 }
 
 bool mpv_link_base::seek(double t, bool forcePause, QString *err)
@@ -160,7 +285,8 @@ bool mpv_link_base::seek(double t, bool forcePause, QString *err)
 
 bool mpv_link_base::seekRel(double dt, QString *err)
 {
-	return send(QStringLiteral("no-osd seek %1").arg(dt, 0, 'f', 1), err);
+	return send(QStringLiteral("no-osd seek %1").arg(dt, 0, 'f', 1),
+	            err);
 }
 
 bool mpv_link_base::setPause(bool on, QString *err)
@@ -177,75 +303,16 @@ bool mpv_link_base::cyclePause(QString *err)
 
 void mpv_link_base::shutdown()
 {
-	if (m_spawned && m_proc.state() == QProcess::Running) {
-		QString e;
-		send(QStringLiteral("quit"), &e);
-		if (!m_proc.waitForFinished(1500))
-			m_proc.kill();
-		QFile::remove(m_sock);
-	}
-	m_conn.abort();
-	m_inbuf.clear();
+	teardown(m_spawned);
 	m_spawned = false;
-	m_video.clear();
-	m_srt.clear();
-	m_sock.clear();
-}
-
-void mpv_link_base::fill()
-{
-	QByteArray const chunk = m_conn.readAll();
-	if (chunk.isEmpty())
-		return;
-	m_inbuf += chunk;
-	m_lastRx = m_clock.elapsed();
-	dbg(QStringLiteral("rx %1 bytes: %2").arg(chunk.size())
-	    .arg(QString::fromUtf8(chunk.left(120)).trimmed()));
-}
-
-bool mpv_link_base::takeTime(double &t)
-{
-	while (true) {
-		qsizetype const nl = m_inbuf.indexOf('\n');
-		if (nl < 0)
-			return false;
-		QJsonDocument const doc =
-			QJsonDocument::fromJson(m_inbuf.left(nl));
-		m_inbuf.remove(0, nl + 1);
-		if (!doc.isObject())
-			continue;
-		QJsonObject const ev = doc.object();
-		if (ev.value(QStringLiteral("event"))
-		    != QStringLiteral("property-change"))
-			continue;
-		QJsonValue const v = ev.value(QStringLiteral("data"));
-		if (ev.value(QStringLiteral("name"))
-		    == QStringLiteral("pause")) {
-			m_lastPause = v.toBool(m_lastPause);
-			continue;
-		}
-		if (ev.value(QStringLiteral("name"))
-		    != QStringLiteral("playback-time") || !v.isDouble())
-			continue;
-		t = v.toDouble();
-		m_lastTime = t;
-		return true;
-	}
-}
-
-bool mpv_link_base::tryConnect()
-{
-	if (m_sock.isEmpty())
-		return false;
-	m_conn.abort();
-	m_inbuf.clear();
-	m_conn.connectToServer(m_sock);
-	if (!m_conn.waitForConnected(200))
-		return false;
-	m_lastRx = m_clock.elapsed();        // fresh connection, fresh clock
-	observe();
-	dbg(QStringLiteral("connected to %1").arg(m_sock));
-	return true;
+	m_adopting = false;
+	m_list.clear();
+	m_times.clear();
+	m_sockPath.clear();
+	m_index = 0;
+	m_newIndex = -1;
+	m_lastTime = -1.0;
+	m_pendingSeek = -1.0;
 }
 
 bool mpv_link_base::recoverWedged()
@@ -255,9 +322,9 @@ bool mpv_link_base::recoverWedged()
 		                    "srtview; not killing it"));
 		return false;
 	}
-	if (m_clock.elapsed() - m_lastRespawn < 30000)
+	if (clock().elapsed() - m_lastRespawn < 30000)
 		return false;
-	m_lastRespawn = m_clock.elapsed();
+	m_lastRespawn = clock().elapsed();
 	m_recovering = true;
 	double const t = m_lastTime;
 	bool const paused = m_lastPause;
@@ -266,15 +333,13 @@ bool mpv_link_base::recoverWedged()
 	     .arg(t < 0.0 ? 0.0 : t, 0, 'f', 3)
 	     .arg(paused ? QStringLiteral("paused")
 	                 : QStringLiteral("playing")));
-	m_proc.kill();
-	m_proc.waitForFinished(2000);
-	m_conn.abort();
-	m_inbuf.clear();
+	proc().kill();
+	proc().waitForFinished(2000);
+	teardown(false);
 	m_spawned = false;
-	m_resumeTime = t < 0.0 ? -1.0 : t;
+	m_pendingSeek = t < 0.0 ? -1.0 : t;  // applied on file-loaded
 	QString err;
 	bool const ok = ensureAlive(&err);
-	m_resumeTime = -1.0;
 	if (!ok) {
 		note(QStringLiteral("respawn failed: ") + err);
 		m_recovering = false;
@@ -289,39 +354,16 @@ bool mpv_link_base::recoverWedged()
 
 void mpv_link_base::sendPing()
 {
-	m_conn.write("{\"command\":[\"get_property\",\"pid\"],"
-	             "\"request_id\":900913}\n");
-	m_conn.flush();
-}
-
-bool mpv_link_base::connectedNow() const
-{
-	return m_conn.state() == QLocalSocket::ConnectedState;
-}
-
-qint64 mpv_link_base::msecsSinceRx() const
-{
-	return m_clock.elapsed() - m_lastRx;
-}
-
-void mpv_link_base::note(QString const &msg) const
-{
-	std::fprintf(stderr, "srtview[%9.3f]: %s\n",
-	             m_clock.elapsed() / 1000.0, qPrintable(msg));
-	std::fflush(stderr);
-}
-
-void mpv_link_base::dbg(QString const &msg) const
-{
-	if (debugEnabled())
-		note(msg);
+	writeRaw("{\"command\":[\"get_property\",\"pid\"],"
+	         "\"request_id\":900913}\n");
 }
 
 void mpv_link_base::observe()
 {
-	m_conn.write("{\"command\":[\"observe_property\",1,"
-	             "\"playback-time\"]}\n"
-	             "{\"command\":[\"observe_property\",2,"
-	             "\"pause\"]}\n");
-	m_conn.flush();
+	writeRaw("{\"command\":[\"observe_property\",1,"
+	         "\"playback-time\"]}\n"
+	         "{\"command\":[\"observe_property\",2,"
+	         "\"pause\"]}\n"
+	         "{\"command\":[\"observe_property\",3,"
+	         "\"path\"]}\n");
 }

@@ -23,7 +23,8 @@ MainWin::MainWin()
 	: m_view(&m_playback, &m_search, this)
 	, m_bar(&m_search, &m_view)
 	, m_link(&m_playback)
-	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab)
+	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
+	             this)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
 	           m_playback, this)
 {
@@ -115,6 +116,72 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 		if (srt.isEmpty())
 			return fail(err);
 	}
+	// Player routing: playlist members navigate inside the
+	// persistent corpus instance -- same window, no respawn, no
+	// focus theft; anything else gets a single-entry playlist on
+	// the per-video socket (the srtjump sharing scheme).
+	qsizetype const at = playlistIndex(video);
+	QString const sock = at >= 0 ? sockForVideo(m_corpusPath, &err)
+	                             : sockForVideo(video, &err);
+	if (sock.isEmpty())
+		return fail(err);
+	QList<play_entry> list;
+	int index = 0;
+	if (at >= 0) {
+		list = corpusEntries();
+		index = int(at);
+	} else {
+		list << play_entry{video, srt};
+	}
+	if (!m_link.setPlaylist(list, sock, index, &err))
+		return fail(err);
+	return showDoc(video, srt);
+}
+
+qsizetype MainWin::playlistIndex(QString const &video) const
+{
+	QString const id = idForVideo(video);
+	if (id.isEmpty())
+		return -1;
+	for (qsizetype i = 0; i < m_playlist.size(); ++i)
+		if (m_playlist[i].id == id)
+			return i;
+	return -1;
+}
+
+// The player's playlist mirror needs a concrete srt per entry, so
+// subtitles attach even for entries reached with mpv's own keys.
+QList<play_entry> MainWin::corpusEntries() const
+{
+	QList<play_entry> l;
+	for (PlayItem const &it : m_playlist) {
+		QString err, srt = it.srt;
+		if (srt.isEmpty())
+			srt = srtForVideo(it.video, &err);
+		l << play_entry{it.video, srt};
+	}
+	return l;
+}
+
+// video_sync: the player moved on its own playlist (its < > keys);
+// follow with the document, never commanding the player back.
+void MainWin::mpvSwitched(int index)
+{
+	if (index < 0 || index >= int(m_playlist.size()))
+		return;
+	PlayItem const &it = m_playlist[qsizetype(index)];
+	if (!it.id.isEmpty() && it.id == m_trail.videoId())
+		return;                      // our own navigation echoed
+	QString err, srt = it.srt;
+	if (srt.isEmpty())
+		srt = srtForVideo(it.video, &err);
+	if (!srt.isEmpty())
+		showDoc(it.video, srt);
+}
+
+// The document side of opening: transcript, identities, chrome.
+bool MainWin::showDoc(QString const &video, QString const &srt)
+{
 	QFile srtFile(srt);
 	if (!srtFile.open(QIODevice::ReadOnly))
 		return fail(QStringLiteral("%1: %2").arg(srt,
@@ -125,9 +192,6 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 	if (cues.empty())
 		return fail(QStringLiteral("%1: no cues found (not an SRT "
 		                           "file?)").arg(srt));
-
-	if (!m_link.openFor(video, srt, &err))
-		return fail(err);
 
 	// Register under the discovery identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.

@@ -14,11 +14,21 @@ class mpv_link_base;
 class srt_view_base;
 class QStatusBar;
 
+// The player switched playlist entries on its own (its playlist
+// keys); the composition root follows with the document.
+struct video_sync {
+	virtual void mpvSwitched(int index) = 0;
+
+protected:
+	~video_sync() = default;
+};
+
 class PlaybackCtl
 {
 public:
 	PlaybackCtl(mpv_link_base &link, srt_view_base &view,
-	            QStatusBar &status, Trail &trail, Grabber &grab);
+	            QStatusBar &status, Trail &trail, Grabber &grab,
+	            video_sync *sync);
 
 	void seekCue(int cue, bool forcePause);
 	void setPause(bool on);
@@ -27,6 +37,7 @@ public:
 	void toggleFollow();
 	void onMpvTime(double t);
 	void onMpvState(bool responsive);
+	void onMpvIndex(int index);
 
 	// User-initiated jump: seeks and drops the pre-jump drift
 	// breadcrumb, but leaves recording the jump itself to the caller
@@ -46,6 +57,7 @@ private:
 	QStatusBar     &m_status;
 	Trail          &m_trail;
 	Grabber        &m_grab;
+	video_sync     *m_sync;
 	QAction         m_followAct;
 };
 

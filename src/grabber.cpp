@@ -5,8 +5,6 @@
 
 #include <QDir>
 #include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
 
 #include <algorithm>
 #include <cstdio>
@@ -34,14 +32,6 @@ QString cacheRoot()
 	return base + QStringLiteral("/srtview/frames");
 }
 
-// Raw input.conf quoting for paths in commands.
-QString quoted(QString s)
-{
-	s.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-	s.replace(QLatin1Char('"'), QStringLiteral("\\\""));
-	return QLatin1Char('"') + s + QLatin1Char('"');
-}
-
 QImage thumb(QImage const &img)
 {
 	return img.scaled(64, 36, Qt::IgnoreAspectRatio,
@@ -67,9 +57,9 @@ bool same(QImage const &a, QImage const &b)
 
 Grabber::Grabber()
 {
-	connect(&m_conn, &QLocalSocket::readyRead,
-	        this, [this] { onRead(); });
-	connect(&m_conn, &QLocalSocket::connected,
+	connect(&sock(), &QLocalSocket::readyRead,
+	        this, [this] { dispatch(); });
+	connect(&sock(), &QLocalSocket::connected,
 	        this, [this] { onConnected(); });
 	connect(&m_poll, &QTimer::timeout, this, [this] { tick(); });
 }
@@ -141,15 +131,8 @@ void Grabber::shutdown()
 	m_wantMs = -1;
 	m_stage = Stage::idle;
 	m_poll.stop();
-	if (m_conn.state() == QLocalSocket::ConnectedState)
-		send(QStringLiteral("quit"));
-	m_conn.abort();
-	if (m_proc.state() != QProcess::NotRunning
-	    && !m_proc.waitForFinished(500))
-		m_proc.kill();
+	teardown(true);
 	m_loadedId.clear();
-	if (!m_sock.isEmpty())
-		QFile::remove(m_sock);
 }
 
 void Grabber::startJob()
@@ -181,31 +164,30 @@ void Grabber::pump()
 		deliver(full);
 		return;
 	}
-	if (m_conn.state() != QLocalSocket::ConnectedState) {
+	if (!connectedNow()) {
 		ensureProc();
 		return;
 	}
 	Job const &j = m_jobs.first();
 	if (m_loadedId != j.id) {
 		m_loadedId = j.id;
-		send(QStringLiteral("loadfile %1 replace")
-		     .arg(quoted(j.path)));
-		send(QStringLiteral("set pause yes"));
+		writeLine(QStringLiteral("loadfile %1 replace")
+		          .arg(mpvQuote(j.path)));
+		writeLine(QStringLiteral("set pause yes"));
 		m_stage = Stage::load;
 		armDeadline(kLoadTimeout);
 		return;
 	}
-	send(QStringLiteral("seek %1 absolute+exact")
-	     .arg(double(m_wantMs) / 1000.0, 0, 'f', 3));
+	writeLine(QStringLiteral("seek %1 absolute+exact")
+	          .arg(double(m_wantMs) / 1000.0, 0, 'f', 3));
 	m_stage = Stage::seekWait;
 	armDeadline(kSeekTimeout);
 }
 
 void Grabber::tick()
 {
-	if (m_stage == Stage::spawn
-	    && m_conn.state() == QLocalSocket::UnconnectedState)
-		m_conn.connectToServer(m_sock);
+	if (m_stage == Stage::spawn && !connectedNow())
+		connectSock(0);
 	if (m_stage == Stage::shoot) {
 		QImage full;
 		if (full.load(frameFile(m_wantMs))) {
@@ -219,17 +201,11 @@ void Grabber::tick()
 		abortJob();
 }
 
-void Grabber::onRead()
+void Grabber::onEvent(QJsonObject const &ev)
 {
-	m_buf += m_conn.readAll();
-	for (int nl; (nl = int(m_buf.indexOf('\n'))) >= 0;) {
-		QByteArray const line = m_buf.left(nl);
-		m_buf.remove(0, nl + 1);
-		QJsonObject const o = QJsonDocument::fromJson(line).object();
-		if (o.value(QStringLiteral("event")).toString()
-		    == QStringLiteral("playback-restart"))
-			onRestart();
-	}
+	if (ev.value(QStringLiteral("event")).toString()
+	    == QStringLiteral("playback-restart"))
+		onRestart();
 }
 
 void Grabber::onConnected()
@@ -251,8 +227,8 @@ void Grabber::onRestart()
 		return;
 	m_stage = Stage::shoot;
 	armDeadline(kShotTimeout);
-	send(QStringLiteral("screenshot-to-file %1 video")
-	     .arg(quoted(frameFile(m_wantMs))));
+	writeLine(QStringLiteral("screenshot-to-file %1 video")
+	          .arg(mpvQuote(frameFile(m_wantMs))));
 }
 
 void Grabber::deliver(QImage const &full)
@@ -358,9 +334,9 @@ void Grabber::abortJob()
 	             static_cast<long long>(j.hit));
 	m_wantMs = -1;
 	m_stage = Stage::idle;
-	m_conn.abort();
-	if (m_proc.state() != QProcess::NotRunning)
-		m_proc.kill();               // wedged: fresh spawn next time
+	teardown(false);
+	if (proc().state() != QProcess::NotRunning)
+		proc().kill();               // wedged: fresh spawn next time
 	m_loadedId.clear();
 	if (++m_strikes >= 3) {              // mpv is not cooperating
 		m_jobs.clear();
@@ -383,31 +359,22 @@ void Grabber::ensureProc()
 		return;
 	m_stage = Stage::spawn;
 	armDeadline(kSpawnTimeout);
-	if (m_proc.state() == QProcess::Running) {
-		m_conn.connectToServer(m_sock);
+	if (proc().state() == QProcess::Running) {
+		connectSock(0);
 		return;
 	}
-	m_sock = grabSock();
-	QFile::remove(m_sock);
+	m_sockPath = grabSock();
+	QFile::remove(m_sockPath);
 	m_loadedId.clear();
-	m_proc.setProcessChannelMode(QProcess::ForwardedChannels);
-	m_proc.setProgram(QStringLiteral("mpv"));
-	m_proc.setArguments({QStringLiteral("--no-terminal"),
-	                     QStringLiteral("--idle=yes"),
-	                     QStringLiteral("--pause"),
-	                     QStringLiteral("--keep-open=yes"),
-	                     QStringLiteral("--vo=null"),
-	                     QStringLiteral("--no-audio"),
-	                     QStringLiteral("--sid=no"),
-	                     QStringLiteral("--input-ipc-server=")
-	                     + m_sock});
-	m_proc.start();
-}
-
-void Grabber::send(QString const &line)
-{
-	m_conn.write(line.toUtf8() + '\n');
-	m_conn.flush();
+	startProcess({QStringLiteral("--no-terminal"),
+	              QStringLiteral("--idle=yes"),
+	              QStringLiteral("--pause"),
+	              QStringLiteral("--keep-open=yes"),
+	              QStringLiteral("--vo=null"),
+	              QStringLiteral("--no-audio"),
+	              QStringLiteral("--sid=no"),
+	              QStringLiteral("--input-ipc-server=")
+	              + m_sockPath});
 }
 
 void Grabber::armDeadline(qint64 ms)

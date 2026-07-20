@@ -15,22 +15,19 @@
 // (-1 for an absent side); the same file is the dedupe record, so
 // revisits (ring travel, undo) cost nothing across sessions.
 //
-// IPC is the same raw-line style as mpvlink, reading mpv's default
-// JSON event lines back for sequencing: a seek is done at
+// IPC rides the shared mpv_client machinery: raw command lines out,
+// mpv's JSON event lines back for sequencing -- a seek is done at
 // playback-restart, a screenshot when its file parses as an image.
 // One serial queue; a corporate WSL2 box must never see two decoders
 // competing.
 #ifndef SRTVIEW_SRC_GRABBER_HPP_
 #define SRTVIEW_SRC_GRABBER_HPP_
 
-#include <QByteArray>
-#include <QElapsedTimer>
+#include "mpvclient.hpp"
+
 #include <QHash>
 #include <QImage>
 #include <QList>
-#include <QLocalSocket>
-#include <QObject>
-#include <QProcess>
 #include <QSet>
 #include <QString>
 #include <QTimer>
@@ -48,11 +45,14 @@ protected:
 	~grab_listener() = default;
 };
 
-class Grabber : public QObject
+class Grabber : public mpv_client<Grabber>
 {
 public:
 	Grabber();
 	~Grabber() override;
+
+	// Event sink for the shared dispatcher.
+	void onEvent(QJsonObject const &ev);
 
 	void setListener(grab_listener *l) { m_listener = l; }
 
@@ -97,7 +97,6 @@ private:
 	void want(qint64 ms);
 	void pump();
 	void tick();
-	void onRead();
 	void onConnected();
 	void onRestart();
 	void deliver(QImage const &full);
@@ -108,7 +107,6 @@ private:
 	void abortJob();
 	void drained();
 	void ensureProc();
-	void send(QString const &line);
 	void armDeadline(qint64 ms);
 	void loadKnown(QString const &id);
 	QString dir(QString const &id) const;
@@ -116,17 +114,13 @@ private:
 
 	using PickMap = QHash<qint64, std::pair<qint64, qint64>>;
 
-	QProcess                     m_proc;
-	QLocalSocket                 m_conn;
 	QTimer                       m_poll;
 	QElapsedTimer                m_deadline;
 	QHash<QString, QSet<qint64>> m_known;   // grabbed or queued hits
 	QHash<QString, PickMap>      m_picks;   // finished hits only
 	QList<Job>                   m_jobs;
-	QByteArray                   m_buf;
 	QString                      m_path, m_id; // the followed video
 	QString                      m_loadedId;   // in the shadow player
-	QString                      m_sock;
 	grab_listener               *m_listener = nullptr;
 	qint64                       m_wantMs = -1;
 	qint64                       m_deadlineMs = 0;

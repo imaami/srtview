@@ -20,7 +20,7 @@
 #include <QMainWindow>
 
 class MainWin : public QMainWindow, private search_nav,
-                private grab_listener
+                private grab_listener, private video_sync
 {
 public:
 	MainWin();
@@ -58,6 +58,10 @@ private:
 	                         QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
+	void mpvSwitched(int index) override;
+	bool showDoc(QString const &video, QString const &srt);
+	qsizetype playlistIndex(QString const &video) const;
+	QList<play_entry> corpusEntries() const;
 	void grabsIdle() override;
 	void grabProgress() override;
 	void startExport();

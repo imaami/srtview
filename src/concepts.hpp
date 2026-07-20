@@ -25,9 +25,10 @@ concept search_host = requires(T &h, bool b) {
 };
 
 template <typename T>
-concept mpv_observer = requires(T &h, double t, bool b) {
+concept mpv_observer = requires(T &h, double t, bool b, int i) {
 	h.onMpvTime(t);
 	h.onMpvState(b);
+	h.onMpvIndex(i);
 };
 
 #endif // SRTVIEW_SRC_CONCEPTS_HPP_

@@ -1,33 +1,54 @@
-// mpvlink.hpp -- mpv process ownership and IPC.
+// mpvlink.hpp -- the viewing player: one persistent mpv whose
+// internal playlist mirrors the app's.
 //
-// Commands go out as single raw input.conf lines: mpv parses non-JSON
-// lines as command lists, and one line per action sidesteps mpv
-// dropping buffered lines when a client disconnects.  QLocalSocket
-// buffers writes internally, so every send() flushes explicitly;
-// without it each command reaches mpv one write late.
+// Switching videos is playlist navigation inside the same window --
+// never a respawn, which would tear the window down and throw focus
+// (brutal on WSLg).  The mirror is byte-for-byte in set and order,
+// so mpv's own playlist keys agree with the app's: the observed path
+// property routes mpv-side switches back to the observer, file-loaded
+// attaches the entry's subtitles and fires deferred seeks, and
+// playback-time / pause feed the transcript as before.  Adopting an
+// already-running instance keeps its position when it is playing a
+// list member (session resume; the srtjump sharing scheme for single
+// videos), resyncing the playlist around the playing entry without
+// reloading it.
 //
-// Split for deduplication: mpv_link_base carries the whole process /
-// socket / JSON machinery, compiled once in mpvlink.cpp; MpvLink<Obs>
-// is a header-only adapter adding only event delivery to a
-// concept-constrained observer.  Controllers hold mpv_link_base& and
-// never see the template.
+// Split for deduplication: mpv_link_base compiled once in
+// mpvlink.cpp on top of the shared mpv_client machinery; MpvLink<Obs>
+// is a header-only adapter adding event delivery to a
+// concept-constrained observer and the health watchdog (a wedged core
+// keeps the socket connected but answers nothing -- kill and respawn
+// at the last observed position and pause state; throttled, and a
+// reused player is never killed).
 #ifndef SRTVIEW_SRC_MPVLINK_HPP_
 #define SRTVIEW_SRC_MPVLINK_HPP_
 
 #include "concepts.hpp"
+#include "mpvclient.hpp"
 
-#include <QByteArray>
-#include <QElapsedTimer>
-#include <QLocalSocket>
-#include <QObject>
-#include <QProcess>
+#include <QList>
 #include <QString>
 #include <QTimer>
 
-class mpv_link_base : public QObject
+struct play_entry {
+	QString video, srt;                  // resolved paths
+
+	bool operator==(play_entry const &) const = default;
+};
+
+class mpv_link_base : public mpv_client<mpv_link_base>
 {
 public:
-	bool openFor(QString const &video, QString const &srt, QString *err);
+	// (Re)target the player: ensure an instance on sock, mirror
+	// list into its internal playlist, and play entry index.  With
+	// the same list live on the same socket this is at most
+	// playlist navigation.
+	bool setPlaylist(QList<play_entry> const &list,
+	                 QString const &sock, int index, QString *err);
+
+	// Playlist navigation within the current list.
+	bool playIndex(int index, QString *err);
+	int currentIndex() const { return m_index; }
 
 	// True if a player is (or can be brought) alive on our socket.
 	bool ensureAlive(QString *err);
@@ -47,56 +68,40 @@ public:
 	// Last observed playback-time, or negative before any event.
 	double lastTime() const { return m_lastTime; }
 
+	// Event sink for the shared dispatcher.
+	void onEvent(QJsonObject const &ev);
+
 protected:
-	mpv_link_base();
+	mpv_link_base() = default;
 
-	// Drain the socket into the line buffer.
-	void fill();
-
-	// Next observed playback-time value, if a complete event line is
-	// buffered.  Property observation is per-client and re-registered
-	// on every connect.
+	// Buffered observations for the adapter's pump.
 	bool takeTime(double &t);
-
-	QLocalSocket &conn() { return m_conn; }
+	bool takeIndex(int &i);
 
 	// Liveness: any bytes from mpv stamp the receive clock; a cheap
 	// get_property ping forces traffic even when nothing is playing.
-	// A wedged mpv core keeps the socket connected but answers
-	// nothing -- exactly the failure mode seen in the field.
 	void sendPing();
-	bool connectedNow() const;
-	qint64 msecsSinceRx() const;
+	bool recoverWedged();
 	bool recovering() const { return m_recovering; }
 
-	// Wedge escalation: if this instance spawned the player, kill it
-	// (a wedged core cannot process a graceful quit) and respawn at
-	// the last observed position and pause state.  Throttled; a
-	// reused player is never killed.  Returns true if a respawn was
-	// attempted.
-	bool recoverWedged();
-
-	// Unconditional for state flips; verbose traffic only with
-	// SRTVIEW_DEBUG set.
-	void note(QString const &msg) const;
-	void dbg(QString const &msg) const;
-
 private:
-	bool tryConnect();
+	bool spawnPlayer(QString *err);
 	void observe();
+	void resync(bool keepCurrent);
+	void onLoaded();
+	void onPath(QJsonValue const &v);
 
-	QProcess      m_proc;
-	QLocalSocket  m_conn;
-	QByteArray    m_inbuf;
-	QElapsedTimer m_clock;
-	qint64        m_lastRx = 0;
-	qint64        m_lastRespawn = -60000;
-	double        m_lastTime = -1.0;     // last observed playback-time
-	double        m_resumeTime = -1.0;   // --start for the next spawn
-	QString       m_video, m_srt, m_sock;
-	bool          m_lastPause = true;    // last observed pause state
-	bool          m_spawned = false;
-	bool          m_recovering = false;
+	QList<play_entry> m_list;
+	QList<double>     m_times;
+	double            m_lastTime = -1.0;
+	double            m_pendingSeek = -1.0;
+	qint64            m_lastRespawn = -60000;
+	int               m_index = 0;
+	int               m_newIndex = -1;   // pending observer delivery
+	bool              m_lastPause = true;
+	bool              m_spawned = false;
+	bool              m_recovering = false;
+	bool              m_adopting = false; // resync awaits first path
 };
 
 template <mpv_observer Obs>
@@ -106,7 +111,7 @@ public:
 	explicit MpvLink(Obs *observer)
 		: m_obs(observer)
 	{
-		connect(&conn(), &QLocalSocket::readyRead,
+		connect(&sock(), &QLocalSocket::readyRead,
 		        this, [this] { pump(); });
 		m_health.setInterval(2000);
 		connect(&m_health, &QTimer::timeout, this, [this] { tick(); });
@@ -116,9 +121,11 @@ public:
 private:
 	void pump()
 	{
-		fill();
+		dispatch();
 		for (double t; takeTime(t);)
 			m_obs->onMpvTime(t);
+		for (int i; takeIndex(i);)
+			m_obs->onMpvIndex(i);
 	}
 
 	// Watchdog: ping, then judge by silence.  Flips are reported to

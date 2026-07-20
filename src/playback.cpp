@@ -10,9 +10,9 @@
 
 PlaybackCtl::PlaybackCtl(mpv_link_base &link, srt_view_base &view,
                          QStatusBar &status, Trail &trail,
-                         Grabber &grab)
+                         Grabber &grab, video_sync *sync)
 	: m_link(link), m_view(view), m_status(status), m_trail(trail),
-	  m_grab(grab)
+	  m_grab(grab), m_sync(sync)
 {
 	m_followAct.setText(QStringLiteral("&Follow playback\t(f)"));
 	m_followAct.setCheckable(true);
@@ -113,6 +113,12 @@ void PlaybackCtl::toggleFollow()
 void PlaybackCtl::onMpvTime(double t)
 {
 	m_view.setPlayTime(t);
+}
+
+void PlaybackCtl::onMpvIndex(int index)
+{
+	if (m_sync)
+		m_sync->mpvSwitched(index);
 }
 
 void PlaybackCtl::onMpvState(bool responsive)
