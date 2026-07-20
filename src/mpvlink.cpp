@@ -19,6 +19,35 @@ bool debugEnabled()
 	return on;
 }
 
+// Spawned players must not yank the keyboard away from the transcript
+// (video stepping spawns them mid-navigation).  mpv rejects unknown
+// options fatally and renamed this one incompatibly (--focus-on-open
+// was removed in favor of --focus-on=never in 0.38), so probe once
+// which spelling this mpv accepts.
+QString focusFlag()
+{
+	auto const accepts = [](QString const &opt) {
+		QProcess p;
+		p.setStandardOutputFile(QProcess::nullDevice());
+		p.setStandardErrorFile(QProcess::nullDevice());
+		p.start(QStringLiteral("mpv"),
+		        {opt, QStringLiteral("--version")});
+		return p.waitForFinished(3000)
+		    && p.exitStatus() == QProcess::NormalExit
+		    && p.exitCode() == 0;
+	};
+	static QString const flag = [&accepts] {
+		QString const modern = QStringLiteral("--focus-on=never");
+		if (accepts(modern))
+			return modern;
+		QString const old = QStringLiteral("--focus-on-open=no");
+		if (accepts(old))
+			return old;
+		return QString();
+	}();
+	return flag;
+}
+
 } // namespace
 
 mpv_link_base::mpv_link_base()
@@ -57,6 +86,8 @@ bool mpv_link_base::ensureAlive(QString *err)
 	                 QStringLiteral("--sub-auto=no")};
 	if (m_resumeTime >= 0.0)
 		args << QStringLiteral("--start=%1").arg(m_resumeTime, 0, 'f', 3);
+	if (QString const focus = focusFlag(); !focus.isEmpty())
+		args << focus;
 	// WSLg's PulseAudio bridge can drop stream acknowledgments,
 	// wedging mpv's core inside ao_pulse (no-timeout waits) on the
 	// seek/pause storms this tool generates; keeping the stream open

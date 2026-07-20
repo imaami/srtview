@@ -8,6 +8,8 @@
 #include <QStatusBar>
 #include <QTextDocument>
 
+#include <algorithm>
+
 namespace {
 
 // The current hit must pop against three same-hue washes (cursor
@@ -55,9 +57,9 @@ void collectMatches(QTextDocument *doc, QRegularExpression const &re,
 
 SearchCtl::SearchCtl(search_bar_base &bar, srt_view_base &view,
                      QStatusBar &status, Prefs &prefs, Trail &trail,
-                     PlaybackCtl &playback)
+                     PlaybackCtl &playback, search_nav *nav)
 	: m_bar(bar), m_view(view), m_status(status), m_prefs(prefs),
-	  m_trail(trail), m_playback(playback)
+	  m_trail(trail), m_playback(playback), m_nav(nav)
 {
 	m_nextAct.setText(QStringLiteral("Find &next"));
 	m_nextAct.setShortcut(QKeySequence(Qt::Key_F3));
@@ -132,10 +134,10 @@ void SearchCtl::searchChanged()
 		                             // pattern and match set
 	}
 	highlightAll();
-	if (m_trail.applying() || m_priming)
+	if (m_trail.applying() || m_quiet)
 		return;                      // undo restores text only (the
 	                                 // cursor has its own steps), and
-	                                 // priming never moves the cursor
+	                                 // quiet passes never move it
 	if (m_matchStarts.empty() || m_bar.pattern().isEmpty())
 		return;
 	QTextCursor const from = m_anchor.isNull()
@@ -161,6 +163,16 @@ void SearchCtl::findAgain(bool backward, bool syncVideo)
 	if (backward)
 		fl |= QTextDocument::FindBackward;
 	bool hit = m_view.find(re, fl);
+	if (!hit && m_nav && m_nav->hopVideo(re, backward)) {
+		// The direction is exhausted here but not in the corpus:
+		// enter the next matching video from the edge searched away
+		// from.  The offline scan can over-promise (markup the view
+		// strips), in which case this find falls through to the
+		// wrap below.
+		m_view.moveCursor(backward ? QTextCursor::End
+		                           : QTextCursor::Start);
+		hit = m_view.find(re, fl);
+	}
 	if (!hit) {
 		m_view.moveCursor(backward ? QTextCursor::End
 		                           : QTextCursor::Start);
@@ -205,8 +217,15 @@ void SearchCtl::applyHop(trail_step const &s, int dir, bool moved)
 		trail_step g = s;
 		if (!m_playback.jumpTo(g.time, false))
 			g.flags &= ~trail_step::video;
-		if (moved || (g.flags & trail_step::video))
-			m_trail.growHop(g, dir);
+		if (!moved && !(g.flags & trail_step::video))
+			return;
+		m_trail.growHop(g, dir);
+		// Cycles anchor on the first synced hop that sits on an
+		// actual hit (see recordUse on seam squatting).
+		if ((g.flags & trail_step::video) && !m_trail.cycled()
+		    && std::ranges::binary_search(m_matchStarts,
+			m_view.textCursor().selectionStart()))
+			m_trail.anchorCycle();
 		return;
 	}
 }
@@ -226,9 +245,16 @@ void SearchCtl::layoutOverlay()
 
 void SearchCtl::primePattern(QString const &s)
 {
-	m_priming = true;
+	m_quiet = true;
 	m_bar.setPattern(s);
-	m_priming = false;
+	m_quiet = false;
+}
+
+void SearchCtl::refresh()
+{
+	m_quiet = true;
+	searchChanged();
+	m_quiet = false;
 }
 
 void SearchCtl::setSearchText(QString const &s)
@@ -247,8 +273,13 @@ void SearchCtl::recordUse(bool syncVideo)
 {
 	QString const p = m_bar.pattern();
 	bool const changed = p != m_recorded;
-	bool const sync = syncVideo && !p.isEmpty()
-	               && !m_matchStarts.empty();
+	// Sync (and with it the video facet and cycle anchoring) only
+	// from on top of an actual hit: an anchor at any other position
+	// would squat the ring seam as a state no hop can reproduce,
+	// and seeking to a non-hit cue on F3 would be a misjump.
+	bool const onHit = std::ranges::binary_search(
+		m_matchStarts, m_view.textCursor().selectionStart());
+	bool const sync = syncVideo && onHit;
 	// A synced use with no active cycle must still act: it plants
 	// the anchor the episode's ring forms around.
 	if (!changed && !(sync && !m_trail.cycled()))

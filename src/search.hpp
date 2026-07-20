@@ -19,12 +19,25 @@ class search_bar_base;
 class srt_view_base;
 class QStatusBar;
 
+// How the search leaves the current video when a direction is
+// exhausted: implemented by the composition root over the playlist;
+// the search controller stays ignorant of what a playlist is.
+struct search_nav {
+	// Switch to the nearest video (in the given direction) whose
+	// transcript matches; false when there is nowhere to go.
+	virtual bool hopVideo(QRegularExpression const &re,
+	                      bool backward) = 0;
+
+protected:
+	~search_nav() = default;
+};
+
 class SearchCtl
 {
 public:
 	SearchCtl(search_bar_base &bar, srt_view_base &view,
 	          QStatusBar &status, Prefs &prefs, Trail &trail,
-	          PlaybackCtl &playback);
+	          PlaybackCtl &playback, search_nav *nav);
 
 	void showSearch();
 	void hideSearch();
@@ -46,6 +59,10 @@ public:
 	// F3 works immediately, but the cursor stays put -- the topics
 	// are a starting vocabulary, not where reading must begin.
 	void primePattern(QString const &s);
+
+	// Re-evaluate the live pattern against a fresh document without
+	// moving the cursor (video switch).
+	void refresh();
 
 	// Selftest hook: like typing, incremental jump included.
 	void setSearchText(QString const &s);
@@ -80,6 +97,7 @@ private:
 	Prefs             &m_prefs;
 	Trail             &m_trail;
 	PlaybackCtl       &m_playback;
+	search_nav        *m_nav;
 	QAction            m_nextAct, m_prevAct;
 	QAction            m_nextTextAct, m_prevTextAct;
 	QTextCursor        m_anchor;
@@ -88,7 +106,7 @@ private:
 	std::vector<int>   m_matchStarts;
 	int                m_histPos = -1;
 	bool               m_stepping = false;
-	bool               m_priming = false;
+	bool               m_quiet = false;   // suppress pattern-change jumps
 };
 
 #endif // SRTVIEW_SRC_SEARCH_HPP_

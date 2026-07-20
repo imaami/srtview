@@ -18,12 +18,13 @@
 #include <QLabel>
 #include <QMainWindow>
 
-class MainWin : public QMainWindow
+class MainWin : public QMainWindow, private search_nav
 {
 public:
 	MainWin();
 
 	bool openPath(QString const &path, QString const &srtOverride = {});
+	bool openAny(QString const &path);
 	bool loadPlaylist(QString const &path);
 	void undoStep();
 	void redoStep();
@@ -50,6 +51,11 @@ private:
 	};
 
 	static bool droppable(QMimeData const *md);
+	static bool avPath(QString const &p);
+	static bool videoMatches(PlayItem const &it,
+	                         QRegularExpression const &re);
+	bool hopVideo(QRegularExpression const &re,
+	              bool backward) override;
 	void applyStep(trail_step const &s, bool undo);
 	bool applyVideoStep(trail_step const &s);
 	void openDialog(QString const &startDir);

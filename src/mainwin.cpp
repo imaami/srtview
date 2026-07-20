@@ -24,7 +24,7 @@ MainWin::MainWin()
 	, m_link(&m_playback)
 	, m_playback(m_link, m_view, *statusBar(), m_trail)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
-	           m_playback)
+	           m_playback, this)
 {
 	setCentralWidget(&m_view);
 	// For < and > (video stepping): as printable characters they
@@ -137,7 +137,7 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 
 	auto const n = cues.size();
 	m_view.setCues(std::move(cues));
-	m_search.searchChanged();
+	m_search.refresh();
 	setWindowTitle(QStringLiteral("%1 \u2014 srtview")
 	               .arg(QFileInfo(video).fileName()));
 	setState(QStringLiteral("%1 cues \u00b7 mpv %2")
@@ -199,6 +199,8 @@ bool MainWin::loadPlaylist(QString const &path)
 		m_search.primePattern(QString::fromStdString(
 			topics::expand(m_corpus, m_corpus.topics.back())));
 	}
+	// After the auto-open, so the playlist outranks its own videos.
+	m_prefs.addRecentFile(path);
 	return true;
 }
 
@@ -236,6 +238,58 @@ void MainWin::rebuildVideosMenu()
 		connect(a, &QAction::triggered,
 		        this, [this, v, s] { openPath(v, s); });
 	}
+}
+
+// search_nav: leave the current video for the nearest playlist
+// neighbor (cyclically, in the search direction) whose transcript
+// matches.  The scan reads the srt files directly, so videos without
+// a hit are skipped without ever opening them.
+bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
+{
+	qsizetype const n = m_playlist.size();
+	qsizetype at = -1;
+	for (qsizetype i = 0; i < n; ++i) {
+		if (m_playlist[i].id.isEmpty()
+		    || m_playlist[i].id != m_trail.videoId())
+			continue;
+		at = i;
+		break;
+	}
+	// From outside the playlist every entry is a candidate, entered
+	// from the end the direction arrives at; from inside, everyone
+	// but the current video.
+	qsizetype const step = backward ? -1 : 1;
+	qsizetype const m = at < 0 ? n : n - 1;
+	for (qsizetype k = 1; k <= m; ++k) {
+		qsizetype const i = at < 0
+			? (backward ? n - k : k - 1)
+			: ((at + step * k) % n + n) % n;
+		if (videoMatches(m_playlist[i], re))
+			return openPath(m_playlist[i].video,
+			                m_playlist[i].srt);
+	}
+	return false;
+}
+
+bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
+{
+	QString err, srt = it.srt;
+	if (srt.isEmpty())
+		srt = srtForVideo(it.video, &err);
+	if (srt.isEmpty())
+		return false;
+	QFile f(srt);
+	if (!f.open(QIODevice::ReadOnly))
+		return false;
+	QByteArray const raw = f.readAll();
+	for (srt::cue const &c : srt::parse(srt::to_utf8(
+			{raw.constData(), size_t(raw.size())}))) {
+		QString const text = QString::fromUtf8(
+			c.text.data(), qsizetype(c.text.size()));
+		if (re.match(text).hasMatch())
+			return true;
+	}
+	return false;
 }
 
 // mpv's own playlist keys: > forward, < back, wrapping around.  A
@@ -371,7 +425,13 @@ bool MainWin::droppable(QMimeData const *md)
 {
 	if (!md->hasUrls() || md->urls().isEmpty())
 		return false;
-	QString const p = md->urls().first().toLocalFile();
+	return avPath(md->urls().first().toLocalFile());
+}
+
+// A path the direct video/subtitle open flow handles; anything else
+// reappearing from recents is a topic file.
+bool MainWin::avPath(QString const &p)
+{
 	static constexpr QLatin1StringView exts[]{
 		QLatin1StringView(".srt"),  QLatin1StringView(".mp4"),
 		QLatin1StringView(".mkv"),  QLatin1StringView(".webm"),
@@ -383,6 +443,11 @@ bool MainWin::droppable(QMimeData const *md)
 		if (p.endsWith(e, Qt::CaseInsensitive))
 			return true;
 	return false;
+}
+
+bool MainWin::openAny(QString const &path)
+{
+	return avPath(path) ? openPath(path) : loadPlaylist(path);
 }
 
 void MainWin::openDialog(QString const &startDir)
@@ -413,12 +478,14 @@ void MainWin::rebuildRecentMenu()
 		return;
 	}
 	for (QString const &path : files) {
-		QAction *act = m_recentMenu->addAction(
-			QFileInfo(path).fileName());
+		QString name = QFileInfo(path).fileName();
+		if (!avPath(path))
+			name += QStringLiteral("  [playlist]");
+		QAction *act = m_recentMenu->addAction(name);
 		act->setToolTip(path);
 		act->setData(path);
 		connect(act, &QAction::triggered,
-		        this, [this, path] { openPath(path); });
+		        this, [this, path] { openAny(path); });
 	}
 }
 
