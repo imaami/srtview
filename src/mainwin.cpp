@@ -18,6 +18,25 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QStatusBar>
+#include <QTextDocumentFragment>
+
+#include <cstdio>
+
+namespace {
+
+// Corpus-search diagnostics, SRTVIEW_DEBUG-gated like the mpv
+// clients' dbg().
+void dbgHop(QString const &msg)
+{
+	static bool const on =
+		qEnvironmentVariableIsSet("SRTVIEW_DEBUG");
+	if (on) {
+		std::fprintf(stderr, "srtview: %s\n", qPrintable(msg));
+		std::fflush(stderr);
+	}
+}
+
+} // namespace
 
 MainWin::MainWin()
 	: m_view(&m_playback, &m_search, this)
@@ -399,6 +418,9 @@ bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 		at = i;
 		break;
 	}
+	dbgHop(QStringLiteral("hopVideo: at=%1 n=%2 backward=%3 re=%4")
+	       .arg(at).arg(n).arg(int(backward))
+	       .arg(re.pattern().left(48)));
 	// From outside the playlist every entry is a candidate, entered
 	// from the end the direction arrives at; from inside, everyone
 	// but the current video.
@@ -408,7 +430,12 @@ bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 		qsizetype const i = at < 0
 			? (backward ? n - k : k - 1)
 			: ((at + step * k) % n + n) % n;
-		if (videoMatches(m_playlist[i], re))
+		bool const match = videoMatches(m_playlist[i], re);
+		dbgHop(QStringLiteral("  candidate %1 (%2): %3")
+		       .arg(i).arg(QFileInfo(m_playlist[i].video).fileName(),
+		            match ? QStringLiteral("match")
+		                  : QStringLiteral("no match")));
+		if (match)
 			return openPath(m_playlist[i].video,
 			                m_playlist[i].srt);
 	}
@@ -417,14 +444,21 @@ bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 
 // Transcripts are parsed once per session and matched from memory:
 // a boundary crossing costs one regex pass over cached lines, not
-// file I/O plus a parse per candidate.
+// file I/O plus a parse per candidate.  The cached lines are the
+// *rendered* cue text (tags consumed, newlines as line separators),
+// so the offline verdict is exactly what the in-document search will
+// see -- raw srt bytes would reject patterns that visibly match
+// (anchors, spans touching speaker/format markup).
 bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 {
 	QString err, srt = it.srt;
 	if (srt.isEmpty())
 		srt = srtForVideo(it.video, &err);
-	if (srt.isEmpty())
+	if (srt.isEmpty()) {
+		dbgHop(QStringLiteral("videoMatches: no srt for %1: %2")
+		       .arg(it.video, err));
 		return false;
+	}
 	auto at = m_cueCache.constFind(srt);
 	if (at == m_cueCache.constEnd()) {
 		QStringList lines;
@@ -433,11 +467,15 @@ bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 			QByteArray const raw = f.readAll();
 			for (srt::cue const &c : srt::parse(srt::to_utf8(
 					{raw.constData(),
-					 size_t(raw.size())})))
-				lines << QString::fromUtf8(
-					c.text.data(),
-					qsizetype(c.text.size()));
+					 size_t(raw.size())}))) {
+				std::string const html = srt::cue_html(c.text);
+				lines << QTextDocumentFragment::fromHtml(
+					QString::fromUtf8(html.data(),
+					qsizetype(html.size()))).toPlainText();
+			}
 		}
+		dbgHop(QStringLiteral("videoMatches: cached %1 cues "
+		                      "from %2").arg(lines.size()).arg(srt));
 		at = m_cueCache.insert(srt, lines);
 	}
 	for (QString const &text : *at)

@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QTextDocumentFragment>
 
 #include <vector>
 
@@ -17,12 +18,16 @@ namespace exporter {
 
 namespace {
 
-// Cue text as one Markdown-safe line; the raw srt text is the
-// source-material truth, only the line structure is folded.
+// Cue text as the *rendered* one-line form (tags consumed, like the
+// reading view), so export hits agree with interactive hits and the
+// digests read clean.
 QString oneLine(std::string const &text)
 {
-	QString s = QString::fromUtf8(text.data(),
-	                              qsizetype(text.size()));
+	std::string const html = srt::cue_html(text);
+	QString s = QTextDocumentFragment::fromHtml(
+		QString::fromUtf8(html.data(), qsizetype(html.size())))
+		.toPlainText();
+	s.replace(QChar::LineSeparator, QLatin1Char(' '));
 	s.replace(QLatin1Char('\n'), QLatin1Char(' '));
 	return s;
 }
