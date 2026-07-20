@@ -56,8 +56,12 @@ private:
 	QRegularExpression pattern() const;
 	// Record the pattern's first effective use as one combined step:
 	// text change + cursor position, plus the video jump when
-	// syncVideo; also feeds the persistent history.
+	// syncVideo -- which also anchors the hit cycle; also feeds the
+	// persistent history.
 	void recordUse(bool syncVideo);
+	// Route one hit-to-hit hop: travel the ring, grow it, or record
+	// a plain step, seeking the video as the route demands.
+	void applyHop(trail_step const &s, int dir, bool moved);
 	// Seek the video to the cursor's cue; true on success, with the
 	// landed-on time in t.
 	bool syncCue(double &t);

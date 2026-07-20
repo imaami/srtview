@@ -35,9 +35,11 @@ fundo_node_create (void const *data,
 		*n = (struct fundo_node){
 			.hook = list(&n->hook),
 			.children = list(&n->children),
+			.ring = list(&n->ring),
 			.parent = nullptr,
 			.last = nullptr,
-			.size = size
+			.size = size,
+			.trav = {0, -1}
 		};
 
 		if (data) {
@@ -219,4 +221,103 @@ fundo_data (struct fundo_node const *n,
 	if (size)
 		*size = n ? n->size : 0;
 	return n ? n->data : nullptr;
+}
+
+/* Bump a node's travel pair for a pass in direction dir.  A pass
+ * against the direction of earlier surplus passes cancels one of
+ * them, otherwise it counts a new pass; either way the counter of
+ * the latest direction claims index 0.  The stated invariants (one
+ * value >= 0, the other <= -1, only one carrying magnitude) follow:
+ * p grows only while n == -1, n shrinks only while p == 0, and
+ * cancellation stops at the anchors.
+ */
+static void
+fundo_bump_ (int32_t *t, int dir)
+{
+	int32_t p = t[t[0] < 0];
+	int32_t n = t[t[0] >= 0];
+
+	if (dir > 0) {
+		if (n < -1)
+			++n;
+		else
+			++p;
+		t[0] = p;
+		t[1] = n;
+		return;
+	}
+	if (p > 0)
+		--p;
+	else
+		--n;
+	t[0] = n;
+	t[1] = p;
+}
+
+int
+fundo_join (struct fundo            *f,
+            struct fundo_node const *anchor,
+            int                      dir)
+{
+	if (!f || !f->cur || !anchor)
+		return EFAULT;
+
+	struct fundo_node *n = f->cur;
+	if (!dir || anchor == n || n->ring.next != &n->ring)
+		return EINVAL;
+
+	/* The ring links are owned by the (mutable) tree; anchor is
+	 * const only for symmetry with the inspection API.
+	 */
+	struct list *at = (struct list *)&anchor->ring;
+	list_append_(dir > 0 ? at->next : at, &n->ring);
+	return 0;
+}
+
+void const *
+fundo_travel (struct fundo *f,
+              int           dir,
+              size_t       *size)
+{
+	if (!f || !f->cur || !dir)
+		return nullptr;
+
+	struct list *hop = dir > 0 ? f->cur->ring.next
+	                           : f->cur->ring.prev;
+	struct fundo_node *n = container_of(hop, struct fundo_node, ring);
+	fundo_bump_(n->trav, dir);
+	f->cur = n;
+	if (size)
+		*size = n->size;
+	return n->data;
+}
+
+struct fundo_node const *
+fundo_next (struct fundo_node const *n)
+{
+	return n && n->ring.next != &n->ring
+	       ? container_of(n->ring.next, struct fundo_node, ring)
+	       : nullptr;
+}
+
+struct fundo_node const *
+fundo_prev (struct fundo_node const *n)
+{
+	return n && n->ring.prev != &n->ring
+	       ? container_of(n->ring.prev, struct fundo_node, ring)
+	       : nullptr;
+}
+
+int
+fundo_net (struct fundo_node const *n)
+{
+	return n ? n->trav[0] + n->trav[1] + 1 : 0;
+}
+
+int
+fundo_heading (struct fundo_node const *n)
+{
+	if (!n)
+		return 0;
+	return n->trav[0] < 0 ? -1 : 1;
 }

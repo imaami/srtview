@@ -7,6 +7,15 @@
 // encode deterministically so that byte-identical actions trigger the
 // tree's branch adoption.  The applying latch centrally suppresses
 // recording while a step is being applied.
+//
+// Search hits wrapping around the document form travel cycles on top
+// of the tree: hop states (text + cursor + video, all deterministic)
+// join a fundo ring as they are discovered, and a hop whose state is
+// byte-identical to the ring neighbor in its direction travels the
+// ring instead of growing the tree.  On a ring, undo unwinds travel
+// while any is outstanding (backward search and undo coincide, as do
+// forward search and redo) and drops back to tree walking when the
+// ring's net travel reaches zero.
 #ifndef SRTVIEW_SRC_TRAIL_HPP_
 #define SRTVIEW_SRC_TRAIL_HPP_
 
@@ -51,22 +60,42 @@ public:
 	// the drift baseline in sync.
 	void noteVideo(double t) { m_lastVideo = t; }
 
+	// Search-hit cycle: the anchoring act (a full text+cursor+video
+	// state with a reproducible cue-start time) begins an episode;
+	// hops probe, then travel the ring or grow it.
+	void anchorCycle();
+	void dropCycle() { m_cycle = nullptr; m_ringAt = nullptr; }
+	bool cycled() const { return m_cycle != nullptr; }
+
+	// What a hop toward dir amounts to: nothing (the state is already
+	// current), a ring travel, or growth.  Latches the ring position
+	// growHop() will splice after, so probe before seeking -- the
+	// seek's drift breadcrumb moves the tree off the ring.
+	enum class hop { stay, travel, grow };
+	hop probeHop(trail_step const &s, int dir);
+	void travelHop(int dir);
+	void growHop(trail_step const &s, int dir);
+
 	// One step toward the past / future; the state to apply, or
 	// nothing at the root / tip.
 	std::optional<trail_step> undo();
 	std::optional<trail_step> redo();
 
-	bool canUndo() const { return fundo_can_undo(&m_f); }
-	bool canRedo() const { return fundo_can_redo(&m_f); }
+	bool canUndo() const;
+	bool canRedo() const;
 	std::size_t branches() const { return fundo_branches(&m_f); }
 
 	bool applying() const { return m_applying; }
 	void setApplying(bool on) { m_applying = on; }
 
 private:
-	struct fundo          m_f;
-	std::optional<double> m_lastVideo;  // last recorded/applied position
-	bool                  m_applying = false;
+	int travelSlack() const;
+
+	struct fundo             m_f;
+	std::optional<double>    m_lastVideo; // last recorded/applied position
+	struct fundo_node const *m_cycle  = nullptr; // active episode anchor
+	struct fundo_node const *m_ringAt = nullptr; // pending growth splice
+	bool                     m_applying = false;
 };
 
 #endif // SRTVIEW_SRC_TRAIL_HPP_

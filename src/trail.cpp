@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -57,6 +58,17 @@ trail_step decode(void const *data, std::size_t size)
 	return s;
 }
 
+// Byte identity of a node's payload and an encoded state: the ring is
+// self-authenticating -- traveling to a neighbor is valid exactly
+// when the neighbor already is the state being stepped to.
+bool sameState(struct fundo_node const *n, QByteArray const &b)
+{
+	std::size_t size = 0;
+	void const *d = fundo_data(n, &size);
+	return size == std::size_t(b.size())
+	    && (!size || !std::memcmp(d, b.constData(), size));
+}
+
 } // namespace
 
 void Trail::act(trail_step const &s)
@@ -83,8 +95,80 @@ void Trail::driftTo(double t)
 	act(s);
 }
 
+void Trail::anchorCycle()
+{
+	m_cycle = fundo_at(&m_f);
+	m_ringAt = nullptr;
+}
+
+Trail::hop Trail::probeHop(trail_step const &s, int dir)
+{
+	m_ringAt = nullptr;
+	QByteArray const b = encode(s);
+	struct fundo_node const *at = fundo_at(&m_f);
+	if (sameState(at, b))
+		return hop::stay;
+	struct fundo_node const *to = dir > 0 ? fundo_next(at)
+	                                      : fundo_prev(at);
+	if (to && sameState(to, b))
+		return hop::travel;
+	if (m_cycle && (at == m_cycle || fundo_next(at)))
+		m_ringAt = at;               // growth splices after this node
+	return hop::grow;
+}
+
+void Trail::travelHop(int dir)
+{
+	fundo_travel(&m_f, dir, nullptr);
+	m_ringAt = nullptr;
+}
+
+void Trail::growHop(trail_step const &s, int dir)
+{
+	act(s);
+	if (!m_ringAt || !(s.flags & trail_step::video))
+		return;
+	// EINVAL from an adopted member is fine: it already sits in the
+	// ring of the episode being retraced.
+	(void)fundo_join(&m_f, m_ringAt, dir);
+	m_ringAt = nullptr;
+}
+
+// Net outstanding travel around the current node's ring; 0 off-ring.
+// While nonzero, undo unwinds travel instead of walking the tree.
+int Trail::travelSlack() const
+{
+	struct fundo_node const *at = fundo_at(&m_f);
+	struct fundo_node const *n = fundo_next(at);
+	if (!n)
+		return 0;
+	int sum = fundo_net(at);
+	for (; n != at; n = fundo_next(n))
+		sum += fundo_net(n);
+	return sum;
+}
+
+bool Trail::canUndo() const
+{
+	return travelSlack() || fundo_can_undo(&m_f);
+}
+
+bool Trail::canRedo() const
+{
+	struct fundo_node const *at = fundo_at(&m_f);
+	return (fundo_next(at) && fundo_heading(at) < 0)
+	    || fundo_can_redo(&m_f);
+}
+
 std::optional<trail_step> Trail::undo()
 {
+	int const slack = travelSlack();
+	if (slack) {
+		std::size_t n = 0;
+		void const *p = fundo_travel(&m_f, slack < 0 ? 1 : -1, &n);
+		return decode(p, n);
+	}
+
 	std::size_t n = 0;
 	void const *dep = fundo_data(fundo_at(&m_f), &n);
 	if (!fundo_undo(&m_f, nullptr))
@@ -117,6 +201,14 @@ std::optional<trail_step> Trail::undo()
 std::optional<trail_step> Trail::redo()
 {
 	std::size_t n = 0;
+	// A backward heading on a ring means the future lies forward:
+	// replay by traveling (forward search and redo coincide here).
+	struct fundo_node const *at = fundo_at(&m_f);
+	if (fundo_next(at) && fundo_heading(at) < 0) {
+		void const *p = fundo_travel(&m_f, 1, &n);
+		return decode(p, n);
+	}
+
 	void const *p = fundo_redo(&m_f, &n);
 	if (!p)
 		return std::nullopt;

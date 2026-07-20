@@ -107,6 +107,17 @@ void SearchCtl::hideSearch()
 void SearchCtl::commitSearch()
 {
 	recordUse(true);
+	// On an already-recorded pattern the state may not be current
+	// yet: hop to this hit like F3 would, minus the find.
+	if (!m_matchStarts.empty() && m_view.cueCount() > 0) {
+		trail_step s;
+		s.pattern = m_bar.pattern();
+		s.time = m_view.cueStart(m_view.currentCue());
+		s.cur = m_view.textCursor().position();
+		s.flags = trail_step::text | trail_step::cursor
+		        | trail_step::video;
+		applyHop(s, 1, false);
+	}
 	m_bar.dismiss();
 	m_view.setFocus();
 }
@@ -115,8 +126,11 @@ void SearchCtl::commitSearch()
 // or after where the search began.
 void SearchCtl::searchChanged()
 {
-	if (!m_stepping && !m_trail.applying())
+	if (!m_stepping && !m_trail.applying()) {
 		m_histPos = -1;              // fresh typing leaves history
+		m_trail.dropCycle();         // the ring belongs to the old
+		                             // pattern and match set
+	}
 	highlightAll();
 	if (m_trail.applying())
 		return;                      // undo restores text only; the
@@ -140,7 +154,7 @@ void SearchCtl::findAgain(bool backward, bool syncVideo)
 	QRegularExpression const re = pattern();
 	if (!re.isValid() || re.pattern().isEmpty())
 		return;
-	recordUse(false);
+	recordUse(syncVideo);
 	int const posBefore = m_view.textCursor().position();
 	QTextDocument::FindFlags fl;
 	if (backward)
@@ -154,14 +168,46 @@ void SearchCtl::findAgain(bool backward, bool syncVideo)
 			? QStringLiteral("search wrapped")
 			: QStringLiteral("no match"), 1500);
 	}
-	trail_step jump;
-	jump.cur = m_view.textCursor().position();
-	jump.flags = trail_step::cursor;
-	if (hit && syncVideo && syncCue(jump.time))
-		jump.flags |= trail_step::video;
-	if (jump.cur != posBefore || (jump.flags & trail_step::video))
-		m_trail.act(jump);
+	trail_step s;
+	s.cur = m_view.textCursor().position();
+	s.flags = trail_step::cursor;
+	if (hit && syncVideo && m_view.cueCount() > 0) {
+		// Hop states are uniform (text + cursor + video, the time a
+		// cue start): byte-identical when a hit is revisited, which
+		// is what lets the ring recognize and travel them.
+		s.flags |= trail_step::text | trail_step::video;
+		s.pattern = m_bar.pattern();
+		s.time = m_view.cueStart(m_view.currentCue());
+	}
+	applyHop(s, backward ? -1 : 1, s.cur != posBefore);
 	updateCounter(m_view.textCursor());
+}
+
+void SearchCtl::applyHop(trail_step const &s, int dir, bool moved)
+{
+	if (!(s.flags & trail_step::video)) {
+		if (moved)
+			m_trail.act(s);      // text-only jump: plain step
+		return;
+	}
+	switch (m_trail.probeHop(s, dir)) {
+	case Trail::hop::stay:
+		m_playback.applyTime(s.time);    // re-sync drifted playback
+		return;
+	case Trail::hop::travel:
+		// Seek first: travel is infallible, mpv is not, and a
+		// refused seek must leave the ring position untouched.
+		if (m_playback.applyTime(s.time))
+			m_trail.travelHop(dir);
+		return;
+	case Trail::hop::grow:
+		trail_step g = s;
+		if (!m_playback.jumpTo(g.time, false))
+			g.flags &= ~trail_step::video;
+		if (moved || (g.flags & trail_step::video))
+			m_trail.growHop(g, dir);
+		return;
+	}
 }
 
 bool SearchCtl::syncCue(double &t)
@@ -195,18 +241,19 @@ void SearchCtl::recordUse(bool syncVideo)
 	bool const changed = p != m_recorded;
 	bool const sync = syncVideo && !p.isEmpty()
 	               && !m_matchStarts.empty();
-	if (!changed && !sync)
+	// A synced use with no active cycle must still act: it plants
+	// the anchor the episode's ring forms around.
+	if (!changed && !(sync && !m_trail.cycled()))
 		return;
 	trail_step s;
 	s.cur = m_view.textCursor().position();
-	s.flags = trail_step::cursor;
-	if (changed) {
-		s.flags |= trail_step::text;
-		s.pattern = p;
-	}
+	s.flags = trail_step::text | trail_step::cursor;
+	s.pattern = p;
 	if (sync && syncCue(s.time))
 		s.flags |= trail_step::video;
 	m_trail.act(s);
+	if (s.flags & trail_step::video)
+		m_trail.anchorCycle();       // adoption resumes an old ring
 	if (!changed)
 		return;
 	m_recorded = p;

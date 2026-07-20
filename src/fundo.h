@@ -16,6 +16,13 @@
  * until fundo_fini()/fundo_destroy(), since nodes are never freed
  * before then.
  *
+ * Nodes can additionally be joined into a travel ring (fundo_join()):
+ * a closed cycle of states threaded through the tree, for loops like
+ * search hits wrapping around a document.  Traveling the ring
+ * (fundo_travel()) revisits existing nodes instead of growing the
+ * tree, and each node's direction/pass pair linearizes any number of
+ * laps after the fact (fundo_net(), fundo_heading()).
+ *
  * Plain C API, consumable from C++.
  */
 #ifndef SRTVIEW_SRC_FUNDO_H_
@@ -183,6 +190,89 @@ fundo_up (struct fundo_node const *n);
 extern void const *
 fundo_data (struct fundo_node const *n,
             STD(size_t)             *size);
+
+/** @brief Splices the current node into a travel ring.
+ *
+ * The current node must not already be in a ring (every node starts
+ * as a ring of one).  It is inserted as @a anchor's ring successor
+ * when @a dir is positive and as its predecessor when negative; a
+ * loop discovered by walking forward therefore keeps the invariant
+ * that the newest member's next pointer is the origin and the
+ * origin's prev pointer is the newest member.
+ *
+ * @param f      The tree whose current node joins.
+ * @param anchor A node of the same tree to splice next to.  Const
+ *               only for symmetry with the inspection API; the ring
+ *               links belong to the tree and are mutated.
+ * @param dir    Positive to join after @a anchor, negative to join
+ *               before it.
+ * @return       0 on success and an error number on failure.
+ */
+extern int
+fundo_join (struct fundo            *f,
+            struct fundo_node const *anchor,
+            int                      dir);
+
+/** @brief Steps the current position along its travel ring.
+ *
+ * Moves to the ring successor (@a dir positive) or predecessor
+ * (negative) without creating nodes, and bumps the arrival node's
+ * direction/pass pair: a pass against the direction of earlier
+ * surplus passes cancels one of them, otherwise it counts a new
+ * pass, and the latest direction is remembered (fundo_heading()).
+ * A node that never joined a ring is a ring of one, so traveling
+ * steps to the node itself.
+ *
+ * @param f    The tree to travel in.
+ * @param dir  Positive for forward, negative for backward.
+ * @param size Receives the payload size if non-null.
+ * @return     The payload of the node arrived at, or nullptr if
+ *             @a f is empty or @a dir is 0.  On success the pointer
+ *             is never nullptr, even for an empty payload.
+ */
+extern void const *
+fundo_travel (struct fundo *f,
+              int           dir,
+              STD(size_t)  *size);
+
+/** @brief A node's successor on its travel ring.
+ *
+ * @param n The node to inspect.
+ * @return  The next ring member, or nullptr if @a n is nullptr or a
+ *          ring of one.
+ */
+extern struct fundo_node const *
+fundo_next (struct fundo_node const *n);
+
+/** @brief A node's predecessor on its travel ring.
+ *
+ * @param n The node to inspect.
+ * @return  The previous ring member, or nullptr if @a n is nullptr
+ *          or a ring of one.
+ */
+extern struct fundo_node const *
+fundo_prev (struct fundo_node const *n);
+
+/** @brief Net number of travel passes through a node.
+ *
+ * Positive for surplus forward passes, negative for backward.
+ * Summed over a whole ring this linearizes multi-lap travel into a
+ * single position on an unrolled line.
+ *
+ * @param n The node to inspect.
+ * @return  Forward passes minus backward passes; 0 for nullptr.
+ */
+extern int
+fundo_net (struct fundo_node const *n);
+
+/** @brief The direction of the latest travel pass through a node.
+ *
+ * @param n The node to inspect.
+ * @return  1 if the latest pass (or none yet) was forward, -1 if it
+ *          was backward, 0 for nullptr.
+ */
+extern int
+fundo_heading (struct fundo_node const *n);
 
 #ifdef __cplusplus
 } /* extern "C" */

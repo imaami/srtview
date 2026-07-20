@@ -1,6 +1,7 @@
 /** @file
  * Unit tests for the fundo undo tree: linear walk, branch splitting,
- * adoption of identical actions, and redo continuity after detours.
+ * adoption of identical actions, redo continuity after detours, and
+ * travel rings (cycle formation, wrap-around, pass counters).
  */
 #include <stdio.h>
 #include <string.h>
@@ -139,6 +140,82 @@ test_detour (void)
 	fundo_fini(&f);
 }
 
+/* Sequenced travel wrapper, for the same reason as undo_is/redo_is. */
+static bool
+travel_is (struct fundo *f, int dir, char const *want)
+{
+	size_t n = 0;
+	void const *d = fundo_travel(f, dir, &n);
+	return is(d, n, want);
+}
+
+static void
+test_cycle (void)
+{
+	struct fundo f;
+	size_t n;
+
+	fundo_init(&f);
+	act(&f, "O");
+	struct fundo_node const *o = fundo_at(&f);
+	check(fundo_next(o) == nullptr && fundo_prev(o) == nullptr,
+	      "a lone node has no ring neighbors");
+
+	act(&f, "A");
+	struct fundo_node const *a = fundo_at(&f);
+	check(fundo_join(&f, o, 1) == 0, "join after the origin");
+	act(&f, "B");
+	struct fundo_node const *b = fundo_at(&f);
+	check(fundo_join(&f, a, 1) == 0, "join after the newest member");
+	check(fundo_join(&f, o, 1) != 0, "joining twice fails");
+
+	check(fundo_next(o) == a && fundo_next(a) == b
+	      && fundo_next(b) == o,
+	      "ring hops return to the origin");
+	check(fundo_prev(o) == b,
+	      "the origin's prev is the newest member");
+
+	check(travel_is(&f, 1, "O"),
+	      "forward travel wraps to the origin without a new node");
+	check(fundo_net(o) == 1 && fundo_heading(o) == 1,
+	      "arrival counts a forward pass");
+	check(travel_is(&f, 1, "A") && travel_is(&f, 1, "B"),
+	      "forward travel walks the ring");
+	check(fundo_net(o) + fundo_net(a) + fundo_net(b) == 3,
+	      "one lap sums to the number of steps");
+
+	check(travel_is(&f, -1, "A"),
+	      "backward travel returns along the ring");
+	check(fundo_net(a) == 0 && fundo_heading(a) == -1,
+	      "a backward pass cancels a forward one and flips heading");
+	check(travel_is(&f, -1, "O") && travel_is(&f, -1, "B"),
+	      "backward travel wraps from the origin to the newest");
+	check(travel_is(&f, -1, "A") && fundo_net(a) == -1,
+	      "a surplus backward pass goes into debt");
+	check(travel_is(&f, 1, "B") && fundo_net(b) == 1
+	      && fundo_heading(b) == 1,
+	      "forward travel counts again after cancellation");
+
+	check(undo_is(&f, "A") && undo_is(&f, "O"),
+	      "tree undo is unaffected by ring travel");
+
+	check(fundo_travel(&f, 0, &n) == nullptr, "travel needs a direction");
+	check(fundo_join(nullptr, o, 1) != 0
+	      && fundo_travel(nullptr, 1, &n) == nullptr
+	      && fundo_next(nullptr) == nullptr
+	      && fundo_prev(nullptr) == nullptr
+	      && fundo_net(nullptr) == 0 && fundo_heading(nullptr) == 0,
+	      "ring null tolerance");
+
+	fundo_fini(&f);
+
+	fundo_init(&f);
+	act(&f, "S");
+	check(travel_is(&f, 1, "S") && fundo_net(fundo_at(&f)) == 1,
+	      "a ring of one travels to itself");
+	fundo_fini(&f);
+}
+
 static void
 test_edges (void)
 {
@@ -175,6 +252,7 @@ main (void)
 	test_linear();
 	test_branching();
 	test_detour();
+	test_cycle();
 	test_edges();
 	printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	       g_fail, g_fail == 1 ? "" : "s");
