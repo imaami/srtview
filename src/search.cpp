@@ -132,9 +132,10 @@ void SearchCtl::searchChanged()
 		                             // pattern and match set
 	}
 	highlightAll();
-	if (m_trail.applying())
-		return;                      // undo restores text only; the
-	                                 // cursor has its own steps
+	if (m_trail.applying() || m_priming)
+		return;                      // undo restores text only (the
+	                                 // cursor has its own steps), and
+	                                 // priming never moves the cursor
 	if (m_matchStarts.empty() || m_bar.pattern().isEmpty())
 		return;
 	QTextCursor const from = m_anchor.isNull()
@@ -221,6 +222,13 @@ bool SearchCtl::syncCue(double &t)
 void SearchCtl::layoutOverlay()
 {
 	m_bar.reposition(target());
+}
+
+void SearchCtl::primePattern(QString const &s)
+{
+	m_priming = true;
+	m_bar.setPattern(s);
+	m_priming = false;
 }
 
 void SearchCtl::setSearchText(QString const &s)

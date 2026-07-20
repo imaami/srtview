@@ -196,7 +196,7 @@ bool MainWin::loadPlaylist(QString const &path)
 			topics::expand(m_corpus, t)));
 	if (!m_corpus.topics.empty()) {
 		m_search.setRegexEnabled(true);  // topics are regexes
-		m_search.setSearchText(QString::fromStdString(
+		m_search.primePattern(QString::fromStdString(
 			topics::expand(m_corpus, m_corpus.topics.back())));
 	}
 	return true;

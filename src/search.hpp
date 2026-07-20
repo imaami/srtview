@@ -42,8 +42,12 @@ public:
 	// Reposition the overlay over the view (window resize, open).
 	void layoutOverlay();
 
-	// Prime a pattern as the live search (playlist load, selftest):
-	// highlights refresh and F3 works immediately.
+	// Prime a pattern quietly (playlist load): highlights refresh and
+	// F3 works immediately, but the cursor stays put -- the topics
+	// are a starting vocabulary, not where reading must begin.
+	void primePattern(QString const &s);
+
+	// Selftest hook: like typing, incremental jump included.
 	void setSearchText(QString const &s);
 	void setRegexEnabled(bool on);
 	int matchCount() const { return int(m_matchStarts.size()); }
@@ -84,6 +88,7 @@ private:
 	std::vector<int>   m_matchStarts;
 	int                m_histPos = -1;
 	bool               m_stepping = false;
+	bool               m_priming = false;
 };
 
 #endif // SRTVIEW_SRC_SEARCH_HPP_
