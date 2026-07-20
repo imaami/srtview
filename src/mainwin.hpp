@@ -54,6 +54,7 @@ private:
 	bool applyVideoStep(trail_step const &s);
 	void openDialog(QString const &startDir);
 	void openPlaylistDialog();
+	void stepVideo(int dir);
 	void rebuildRecentMenu();
 	void rebuildVideosMenu();
 	void closeFile();

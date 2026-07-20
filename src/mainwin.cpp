@@ -11,6 +11,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QContextMenuEvent>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -26,6 +27,10 @@ MainWin::MainWin()
 	           m_playback)
 {
 	setCentralWidget(&m_view);
+	// For < and > (video stepping): as printable characters they
+	// cannot be window shortcuts without stealing them from regex
+	// typing in the search bar, so they are filtered off the view.
+	m_view.installEventFilter(this);
 	setAcceptDrops(true);
 	resize(920, 720);
 	setWindowTitle(QStringLiteral("srtview"));
@@ -181,6 +186,19 @@ bool MainWin::loadPlaylist(QString const &path)
 		.arg(m_playlist.size()).arg(m_corpus.topics.size()), 3000);
 	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
 		openPath(m_playlist.first().video, m_playlist.first().srt);
+
+	// Topics become the live search vocabulary: every expanded
+	// pattern goes into the bar's history in file order (Up in the
+	// bar walks from the last backward), and the last one is primed
+	// so F3 works the moment the playlist is open.
+	for (topics::topic const &t : m_corpus.topics)
+		m_prefs.addSearch(QString::fromStdString(
+			topics::expand(m_corpus, t)));
+	if (!m_corpus.topics.empty()) {
+		m_search.setRegexEnabled(true);  // topics are regexes
+		m_search.setSearchText(QString::fromStdString(
+			topics::expand(m_corpus, m_corpus.topics.back())));
+	}
 	return true;
 }
 
@@ -198,6 +216,11 @@ void MainWin::openPlaylistDialog()
 void MainWin::rebuildVideosMenu()
 {
 	m_videosMenu->clear();
+	m_videosMenu->addAction(QStringLiteral("&Next video\t(>)"),
+	                        this, [this] { stepVideo(1); });
+	m_videosMenu->addAction(QStringLiteral("&Previous video\t(<)"),
+	                        this, [this] { stepVideo(-1); });
+	m_videosMenu->addSeparator();
 	if (m_playlist.isEmpty()) {
 		m_videosMenu->addAction(QStringLiteral("(no playlist)"))
 			->setEnabled(false);
@@ -213,6 +236,29 @@ void MainWin::rebuildVideosMenu()
 		connect(a, &QAction::triggered,
 		        this, [this, v, s] { openPath(v, s); });
 	}
+}
+
+// mpv's own playlist keys: > forward, < back, wrapping around.  A
+// current video from outside the playlist enters at the ends.
+void MainWin::stepVideo(int dir)
+{
+	if (m_playlist.isEmpty()) {
+		statusBar()->showMessage(QStringLiteral("no playlist"),
+		                         1500);
+		return;
+	}
+	qsizetype const n = m_playlist.size();
+	qsizetype at = -1;
+	for (qsizetype i = 0; i < n; ++i) {
+		if (m_playlist[i].id.isEmpty()
+		    || m_playlist[i].id != m_trail.videoId())
+			continue;
+		at = i;
+		break;
+	}
+	qsizetype const to = at < 0 ? (dir > 0 ? 0 : n - 1)
+	                            : (at + dir + n) % n;
+	openPath(m_playlist[to].video, m_playlist[to].srt);
 }
 
 // Fundo: walk the undo tree.  Both directions receive the state to
@@ -378,8 +424,21 @@ void MainWin::rebuildRecentMenu()
 
 // Right-click on a recent entry: offer to open the file dialog in
 // that entry's directory, for revisiting previously used places.
+// Keys < and > on the view: step the playlist.
 bool MainWin::eventFilter(QObject *obj, QEvent *ev)
 {
+	if (obj == &m_view && ev->type() == QEvent::KeyPress) {
+		auto const *ke = static_cast<QKeyEvent *>(ev);
+		if (ke->text() == QStringLiteral(">")) {
+			stepVideo(1);
+			return true;
+		}
+		if (ke->text() == QStringLiteral("<")) {
+			stepVideo(-1);
+			return true;
+		}
+		return QMainWindow::eventFilter(obj, ev);
+	}
 	if (obj != m_recentMenu || ev->type() != QEvent::ContextMenu)
 		return QMainWindow::eventFilter(obj, ev);
 	auto *ce = static_cast<QContextMenuEvent *>(ev);

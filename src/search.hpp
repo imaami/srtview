@@ -42,7 +42,8 @@ public:
 	// Reposition the overlay over the view (window resize, open).
 	void layoutOverlay();
 
-	// Selftest hooks.
+	// Prime a pattern as the live search (playlist load, selftest):
+	// highlights refresh and F3 works immediately.
 	void setSearchText(QString const &s);
 	void setRegexEnabled(bool on);
 	int matchCount() const { return int(m_matchStarts.size()); }
