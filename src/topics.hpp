@@ -25,7 +25,9 @@
 // by swapping the video's extension) or the names of the topics that
 // apply -- names only, never inline regexes, so a mistyped file://
 // line fails loudly as an unknown topic instead of becoming a silent
-// pattern.
+// pattern.  Topic references are an opt-in restriction: a video with
+// none takes part in every topic.  They curate the exported
+// artifact; interactive search is always corpus-wide.
 //
 // \{name:} inside a fragment references another topic and expands to
 // its fragments wrapped in (?:...); \{ in any other shape is regex

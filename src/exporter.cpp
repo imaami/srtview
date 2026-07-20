@@ -135,8 +135,12 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 		if (!re.isValid())
 			md += QStringLiteral("\n(invalid pattern: ")
 			    + re.errorString() + QStringLiteral(")\n");
+		// Scoping restricts only when present: a video without
+		// topic references takes part in every topic, matching the
+		// corpus-wide behavior of the interactive search.
 		for (source const &v : videos)
-			if (re.isValid() && v.topics.contains(name))
+			if (re.isValid() && (v.topics.isEmpty()
+			                     || v.topics.contains(name)))
 				exportVideo(md, st, re, v, grab, tdir);
 		QFile f(tdir + QLatin1Char('/') + name
 		        + QStringLiteral(".md"));

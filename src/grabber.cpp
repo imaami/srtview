@@ -342,6 +342,8 @@ void Grabber::finish(Job &j)
 	m_picks[j.id].insert(j.hit, {j.prevMs, j.nextMs});
 	m_strikes = 0;
 	m_jobs.removeFirst();
+	if (m_listener && !m_jobs.isEmpty())
+		m_listener->grabProgress();
 	startJob();
 	drained();
 }

@@ -59,8 +59,9 @@ private:
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
 	void grabsIdle() override;
+	void grabProgress() override;
 	void startExport();
-	void runExport();
+	void runExport(bool drained);
 	QString exportDir() const;
 	void applyStep(trail_step const &s, bool undo);
 	bool applyVideoStep(trail_step const &s);
@@ -88,6 +89,7 @@ private:
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
+	QElapsedTimer                   m_exportTick;
 	int                             m_exportQueued = -1;
 	bool                            m_exportPending = false;
 };

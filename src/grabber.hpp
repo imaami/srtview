@@ -37,10 +37,12 @@
 
 #include <utility>
 
-// Told when the grab queue drains; implemented by the composition
-// root (which may be waiting to finish an export).
+// Told about grab completion; implemented by the composition root
+// (which may be folding finished frames into an export).  grabsIdle
+// fires when the queue drains, grabProgress after each mid-queue job.
 struct grab_listener {
 	virtual void grabsIdle() = 0;
+	virtual void grabProgress() {}
 
 protected:
 	~grab_listener() = default;

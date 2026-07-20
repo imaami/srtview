@@ -28,6 +28,7 @@ MainWin::MainWin()
 	           m_playback, this)
 {
 	m_grab.setListener(this);
+	m_exportTick.start();
 	setCentralWidget(&m_view);
 	// For < and > (video stepping): as printable characters they
 	// cannot be window shortcuts without stealing them from regex
@@ -247,9 +248,10 @@ void MainWin::rebuildVideosMenu()
 }
 
 // Export as a build: write what the frame cache has, enqueue what it
-// lacks, and re-run whenever the grab queue drains until the digest
-// is whole -- or until a pass makes no progress (mpv striking out),
-// which ends the loop with an honest "incomplete".
+// lacks, fold finished frames in as they land (throttled), and stop
+// when the digest is whole -- or when a drained queue made no
+// progress (mpv striking out), which ends the loop with an honest
+// "incomplete".
 void MainWin::startExport()
 {
 	if (m_corpusPath.isEmpty()) {
@@ -258,16 +260,22 @@ void MainWin::startExport()
 		return;
 	}
 	m_exportQueued = -1;
-	runExport();
+	runExport(true);
 }
 
 void MainWin::grabsIdle()
 {
 	if (m_exportPending)
-		runExport();
+		runExport(true);
 }
 
-void MainWin::runExport()
+void MainWin::grabProgress()
+{
+	if (m_exportPending && m_exportTick.elapsed() > 15000)
+		runExport(false);
+}
+
+void MainWin::runExport(bool drained)
 {
 	QList<exporter::source> vids;
 	for (qsizetype i = 0; i < m_playlist.size(); ++i) {
@@ -282,6 +290,7 @@ void MainWin::runExport()
 	QString const out = exportDir();
 	exporter::stats const st =
 		exporter::run(m_corpus, vids, m_grab, out);
+	m_exportTick.restart();
 	if (st.queued == 0) {
 		m_exportPending = false;
 		statusBar()->showMessage(QStringLiteral(
@@ -289,7 +298,8 @@ void MainWin::runExport()
 			.arg(st.topics).arg(st.hits).arg(out), 6000);
 		return;
 	}
-	if (m_exportQueued >= 0 && st.queued >= m_exportQueued) {
+	if (drained && m_exportQueued >= 0
+	    && st.queued >= m_exportQueued) {
 		m_exportPending = false;
 		statusBar()->showMessage(QStringLiteral(
 			"export incomplete: %1 hits lack frames → %2")
@@ -299,8 +309,8 @@ void MainWin::runExport()
 	m_exportQueued = st.queued;
 	m_exportPending = true;
 	statusBar()->showMessage(QStringLiteral(
-		"export: grabbing frames for %1 hits…")
-		.arg(st.queued), 6000);
+		"export: %1 of %2 hits still grabbing…")
+		.arg(st.queued).arg(st.hits), 6000);
 }
 
 QString MainWin::exportDir() const
