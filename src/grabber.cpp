@@ -91,20 +91,48 @@ void Grabber::setVideo(QString const &path, QString const &id)
 
 void Grabber::enqueue(double t)
 {
-	if (m_path.isEmpty() || m_id.isEmpty() || t < 0.0)
+	enqueue(m_path, m_id, t);
+}
+
+void Grabber::enqueue(QString const &path, QString const &id, double t)
+{
+	if (path.isEmpty() || id.isEmpty() || t < 0.0)
 		return;
+	QDir().mkpath(dir(id));
+	loadKnown(id);
 	qint64 const ms = qint64(t * 1000.0 + 0.5);
-	QSet<qint64> &known = m_known[m_id];
+	QSet<qint64> &known = m_known[id];
 	if (known.contains(ms))
 		return;
 	known.insert(ms);
 	Job j;
-	j.path = m_path;
-	j.id = m_id;
+	j.path = path;
+	j.id = id;
 	j.hit = ms;
 	m_jobs << j;
 	if (m_jobs.size() == 1)
 		startJob();
+}
+
+bool Grabber::picksFor(QString const &id, qint64 hitMs,
+                       qint64 &prev, qint64 &next)
+{
+	loadKnown(id);
+	auto const video = m_picks.constFind(id);
+	if (video == m_picks.constEnd())
+		return false;
+	auto const it = video->constFind(hitMs);
+	if (it == video->constEnd())
+		return false;
+	prev = it->first;
+	next = it->second;
+	return true;
+}
+
+QString Grabber::framePath(QString const &id, qint64 ms) const
+{
+	return dir(id) + QLatin1Char('/') + QString::number(ms)
+	     + QStringLiteral(".png");
 }
 
 void Grabber::shutdown()
@@ -311,9 +339,11 @@ void Grabber::finish(Job &j)
 		f.write(QByteArray::number(j.hit) + ' '
 		        + QByteArray::number(j.prevMs) + ' '
 		        + QByteArray::number(j.nextMs) + '\n');
+	m_picks[j.id].insert(j.hit, {j.prevMs, j.nextMs});
 	m_strikes = 0;
 	m_jobs.removeFirst();
 	startJob();
+	drained();
 }
 
 void Grabber::abortJob()
@@ -333,9 +363,16 @@ void Grabber::abortJob()
 	if (++m_strikes >= 3) {              // mpv is not cooperating
 		m_jobs.clear();
 		m_poll.stop();
-		return;
+	} else {
+		startJob();
 	}
-	startJob();
+	drained();
+}
+
+void Grabber::drained()
+{
+	if (m_listener && m_jobs.isEmpty())
+		m_listener->grabsIdle();
 }
 
 void Grabber::ensureProc()
@@ -385,10 +422,16 @@ void Grabber::loadKnown(QString const &id)
 	QFile f(dir(id) + QStringLiteral("/picks.txt"));
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
 		return;
+	PickMap &picks = m_picks[id];
 	while (!f.atEnd()) {
-		QByteArray const line = f.readLine().simplified();
-		if (!line.isEmpty())
-			set.insert(line.split(' ').first().toLongLong());
+		QList<QByteArray> const col =
+			f.readLine().simplified().split(' ');
+		if (col.size() != 3)
+			continue;
+		qint64 const hit = col[0].toLongLong();
+		set.insert(hit);
+		picks.insert(hit, {col[1].toLongLong(),
+		                   col[2].toLongLong()});
 	}
 }
 
@@ -399,6 +442,5 @@ QString Grabber::dir(QString const &id) const
 
 QString Grabber::frameFile(qint64 ms) const
 {
-	return dir(m_jobs.first().id) + QLatin1Char('/')
-	     + QString::number(ms) + QStringLiteral(".png");
+	return framePath(m_jobs.first().id, ms);
 }

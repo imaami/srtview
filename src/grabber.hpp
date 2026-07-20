@@ -35,17 +35,40 @@
 #include <QString>
 #include <QTimer>
 
+#include <utility>
+
+// Told when the grab queue drains; implemented by the composition
+// root (which may be waiting to finish an export).
+struct grab_listener {
+	virtual void grabsIdle() = 0;
+
+protected:
+	~grab_listener() = default;
+};
+
 class Grabber : public QObject
 {
 public:
 	Grabber();
 	~Grabber() override;
 
+	void setListener(grab_listener *l) { m_listener = l; }
+
 	// The video whose jumps are being followed (set on every open).
 	void setVideo(QString const &path, QString const &id);
 
 	// A jump landed at t seconds: schedule its three picks.
 	void enqueue(double t);
+
+	// Backfill flavor: schedule a hit in any video (export).
+	void enqueue(QString const &path, QString const &id, double t);
+
+	// The recorded picks of a hit; false while not yet grabbed.
+	bool picksFor(QString const &id, qint64 hitMs,
+	              qint64 &prev, qint64 &next);
+
+	// Cache location of one frame (may not exist).
+	QString framePath(QString const &id, qint64 ms) const;
 
 	void shutdown();
 
@@ -81,6 +104,7 @@ private:
 	void bisectFwd(Job &j);
 	void finish(Job &j);
 	void abortJob();
+	void drained();
 	void ensureProc();
 	void send(QString const &line);
 	void armDeadline(qint64 ms);
@@ -88,16 +112,20 @@ private:
 	QString dir(QString const &id) const;
 	QString frameFile(qint64 ms) const;
 
+	using PickMap = QHash<qint64, std::pair<qint64, qint64>>;
+
 	QProcess                     m_proc;
 	QLocalSocket                 m_conn;
 	QTimer                       m_poll;
 	QElapsedTimer                m_deadline;
 	QHash<QString, QSet<qint64>> m_known;   // grabbed or queued hits
+	QHash<QString, PickMap>      m_picks;   // finished hits only
 	QList<Job>                   m_jobs;
 	QByteArray                   m_buf;
 	QString                      m_path, m_id; // the followed video
 	QString                      m_loadedId;   // in the shadow player
 	QString                      m_sock;
+	grab_listener               *m_listener = nullptr;
 	qint64                       m_wantMs = -1;
 	qint64                       m_deadlineMs = 0;
 	int                          m_strikes = 0;

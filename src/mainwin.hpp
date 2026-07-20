@@ -19,7 +19,8 @@
 #include <QLabel>
 #include <QMainWindow>
 
-class MainWin : public QMainWindow, private search_nav
+class MainWin : public QMainWindow, private search_nav,
+                private grab_listener
 {
 public:
 	MainWin();
@@ -57,6 +58,10 @@ private:
 	                         QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
+	void grabsIdle() override;
+	void startExport();
+	void runExport();
+	QString exportDir() const;
 	void applyStep(trail_step const &s, bool undo);
 	bool applyVideoStep(trail_step const &s);
 	void openDialog(QString const &startDir);
@@ -71,6 +76,7 @@ private:
 	Prefs                           m_prefs;
 	Trail                           m_trail;
 	topics::doc                     m_corpus;
+	QString                         m_corpusPath;
 	QList<PlayItem>                 m_playlist;
 	QHash<QString, PlayItem>        m_videosById;
 	QMenu                          *m_recentMenu = nullptr;
@@ -82,6 +88,8 @@ private:
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
+	int                             m_exportQueued = -1;
+	bool                            m_exportPending = false;
 };
 
 #endif // SRTVIEW_SRC_MAINWIN_HPP_

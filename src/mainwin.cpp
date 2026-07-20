@@ -1,6 +1,7 @@
 #include "mainwin.hpp"
 
 #include "discovery.hpp"
+#include "exporter.hpp"
 #include "palettefix.hpp"
 #include "srt.hpp"
 
@@ -26,6 +27,7 @@ MainWin::MainWin()
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
 	           m_playback, this)
 {
+	m_grab.setListener(this);
 	setCentralWidget(&m_view);
 	// For < and > (video stepping): as printable characters they
 	// cannot be window shortcuts without stealing them from regex
@@ -45,6 +47,8 @@ MainWin::MainWin()
 	        this, [this] { rebuildRecentMenu(); });
 	file->addAction(QStringLiteral("Open p&laylist…"),
 	                this, [this] { openPlaylistDialog(); });
+	file->addAction(QStringLiteral("&Export frames"),
+	                this, [this] { startExport(); });
 	file->addAction(QStringLiteral("&Close"), QKeySequence::Close,
 	                this, [this] { closeFile(); });
 	file->addSeparator();
@@ -168,6 +172,7 @@ bool MainWin::loadPlaylist(QString const &path)
 			.arg(QString::fromStdString(r.error)));
 
 	m_corpus = std::move(r.value);
+	m_corpusPath = path;
 	m_playlist.clear();
 	QDir const dir = QFileInfo(path).absoluteDir();
 	auto const resolve = [&dir](std::string const &p) {
@@ -239,6 +244,70 @@ void MainWin::rebuildVideosMenu()
 		connect(a, &QAction::triggered,
 		        this, [this, v, s] { openPath(v, s); });
 	}
+}
+
+// Export as a build: write what the frame cache has, enqueue what it
+// lacks, and re-run whenever the grab queue drains until the digest
+// is whole -- or until a pass makes no progress (mpv striking out),
+// which ends the loop with an honest "incomplete".
+void MainWin::startExport()
+{
+	if (m_corpusPath.isEmpty()) {
+		statusBar()->showMessage(QStringLiteral(
+			"no playlist loaded"), 2000);
+		return;
+	}
+	m_exportQueued = -1;
+	runExport();
+}
+
+void MainWin::grabsIdle()
+{
+	if (m_exportPending)
+		runExport();
+}
+
+void MainWin::runExport()
+{
+	QList<exporter::source> vids;
+	for (qsizetype i = 0; i < m_playlist.size(); ++i) {
+		exporter::source s;
+		s.video = m_playlist[i].video;
+		s.srt = m_playlist[i].srt;
+		s.id = m_playlist[i].id;
+		for (std::string const &n : m_corpus.videos[size_t(i)].topics)
+			s.topics << QString::fromStdString(n);
+		vids << s;
+	}
+	QString const out = exportDir();
+	exporter::stats const st =
+		exporter::run(m_corpus, vids, m_grab, out);
+	if (st.queued == 0) {
+		m_exportPending = false;
+		statusBar()->showMessage(QStringLiteral(
+			"export complete: %1 topics, %2 hits → %3")
+			.arg(st.topics).arg(st.hits).arg(out), 6000);
+		return;
+	}
+	if (m_exportQueued >= 0 && st.queued >= m_exportQueued) {
+		m_exportPending = false;
+		statusBar()->showMessage(QStringLiteral(
+			"export incomplete: %1 hits lack frames → %2")
+			.arg(st.queued).arg(out), 6000);
+		return;
+	}
+	m_exportQueued = st.queued;
+	m_exportPending = true;
+	statusBar()->showMessage(QStringLiteral(
+		"export: grabbing frames for %1 hits…")
+		.arg(st.queued), 6000);
+}
+
+QString MainWin::exportDir() const
+{
+	QFileInfo const fi(m_corpusPath);
+	return fi.absolutePath() + QLatin1Char('/')
+	     + fi.completeBaseName() + QStringLiteral("-export");
 }
 
 // search_nav: leave the current video for the nearest playlist
