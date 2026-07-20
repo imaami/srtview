@@ -49,7 +49,7 @@
 // --pulse-latency-hacks=yes; --ao=null confirms the diagnosis.
 //
 // Build:  cmake -B build && cmake --build build
-// Deps :  qt6-base-dev (Widgets, Network), a C++20 compiler
+// Deps :  qt6-base-dev (Widgets, Network), a C++23 compiler
 
 #include "mainwin.hpp"
 #include "selftest.hpp"
