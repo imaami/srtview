@@ -131,8 +131,19 @@ MainWin::MainWin()
 	search->addAction(&m_search.prevTextAction());
 
 	// --- status bar ---
+	statusBar()->addPermanentWidget(&m_info);
 	statusBar()->addPermanentWidget(&m_state);
 	setState(QStringLiteral("no file"));
+	// Search-side changes push updates (searchInfoChanged); the
+	// poll covers what only drifts -- timestamp and pause state.
+	m_infoTick.setInterval(500);
+	connect(&m_infoTick, &QTimer::timeout,
+	        this, [this] { updateInfo(); });
+	m_infoTick.start();
+	m_tallyLag.setSingleShot(true);
+	m_tallyLag.setInterval(300);
+	connect(&m_tallyLag, &QTimer::timeout,
+	        this, [this] { recomputeTally(); });
 
 	repairMenuPalette(menuBar());
 }
@@ -487,6 +498,90 @@ bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 		if (re.match(text).hasMatch())
 			return true;
 	return false;
+}
+
+// The always-on status line: pattern, playlist position, timestamp,
+// match counters, play state -- assembled whole, set only when it
+// actually changed.
+void MainWin::updateInfo()
+{
+	QStringList parts;
+	QString const pat = m_search.patternText();
+	if (!pat.isEmpty())
+		parts << m_info.fontMetrics().elidedText(
+			pat, Qt::ElideRight, 320);
+	qsizetype const at = indexOfId(m_trail.videoId());
+	if (at >= 0)
+		parts << QStringLiteral("video %1/%2")
+			.arg(at + 1).arg(m_playlist.size());
+	if (double const t = m_link.lastTime(); t >= 0.0)
+		parts << fmtTime(t, false);
+	if (QString const m = matchInfo(at); !m.isEmpty())
+		parts << m;
+	if (m_view.cueCount() > 0)
+		parts << (m_link.lastPause()
+			? QStringLiteral("video paused")
+			: QStringLiteral("video playing"));
+	QString const text = parts.join(QStringLiteral("  ·  "));
+	if (text != m_info.text())
+		m_info.setText(text);
+}
+
+// "Match 3/18 (11/23)": active/total in this video, and across the
+// corpus.  The corpus tally is debounced -- typing must not re-scan
+// every transcript per keystroke -- and shows an ellipsis while
+// pending.
+QString MainWin::matchInfo(qsizetype at)
+{
+	int const n = m_search.matchCount();
+	if (n <= 0)
+		return {};
+	int const idx = m_search.matchIndex();
+	QString s = QStringLiteral("Match %1/%2")
+		.arg(idx > 0 ? QString::number(idx)
+		             : QStringLiteral("?"))
+		.arg(n);
+	if (at < 0 || m_playlist.size() < 2)
+		return s;
+	QRegularExpression const re = m_search.effectivePattern();
+	QString const key = re.pattern()
+	                  + QString::number(int(re.patternOptions()));
+	if (key != m_tallyKey) {
+		m_tallyKey = key;
+		m_tallyTotal = -1;
+		m_tallyLag.start();
+	}
+	if (m_tallyTotal < 0 || m_tally.size() != m_playlist.size())
+		return s + QStringLiteral(" (…)");
+	int before = 0;
+	for (qsizetype i = 0; i < at; ++i)
+		before += m_tally[i];
+	return s + QStringLiteral(" (%1/%2)")
+		.arg(idx > 0 ? QString::number(before + idx)
+		             : QStringLiteral("?"))
+		.arg(m_tallyTotal);
+}
+
+void MainWin::recomputeTally()
+{
+	m_tally.clear();
+	int total = 0;
+	QRegularExpression const re = m_search.effectivePattern();
+	if (re.isValid() && !re.pattern().isEmpty()) {
+		for (PlayItem const &it : m_playlist) {
+			int c = 0;
+			for (QString const &line : exporter::load(
+					m_transcripts, srtOf(it)).lines) {
+				auto mi = re.globalMatch(line);
+				for (; mi.hasNext(); mi.next())
+					++c;
+			}
+			m_tally << c;
+			total += c;
+		}
+	}
+	m_tallyTotal = total;
+	updateInfo();
 }
 
 // The focused widget names the zoom domain: the pattern field, the

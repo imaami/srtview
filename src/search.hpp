@@ -28,6 +28,10 @@ struct search_nav {
 	virtual bool hopVideo(QRegularExpression const &re,
 	                      bool backward) = 0;
 
+	// The pattern or match position changed; status surfaces may
+	// care.  Default: nobody does.
+	virtual void searchInfoChanged() {}
+
 protected:
 	~search_nav() = default;
 };
@@ -69,6 +73,12 @@ public:
 	void setRegexEnabled(bool on);
 	int matchCount() const { return int(m_matchStarts.size()); }
 
+	// Status surfaces: the live pattern, the active match (1-based,
+	// 0 when the cursor is off-match), and the effective regex.
+	QString patternText() const;
+	int matchIndex() const { return m_matchIdx; }
+	QRegularExpression effectivePattern() const { return pattern(); }
+
 	QAction &nextAction() { return m_nextAct; }
 	QAction &prevAction() { return m_prevAct; }
 	QAction &nextTextAction() { return m_nextTextAct; }
@@ -104,6 +114,7 @@ private:
 	QString            m_recorded;   // last pattern written to the trail
 	QString            m_draft;      // live text while stepping history
 	std::vector<int>   m_matchStarts;
+	int                m_matchIdx = 0;
 	int                m_histPos = -1;
 	bool               m_stepping = false;
 	bool               m_quiet = false;   // suppress pattern-change jumps

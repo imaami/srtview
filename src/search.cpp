@@ -257,6 +257,11 @@ void SearchCtl::refresh()
 	m_quiet = false;
 }
 
+QString SearchCtl::patternText() const
+{
+	return m_bar.pattern();
+}
+
 void SearchCtl::setSearchText(QString const &s)
 {
 	if (m_anchor.isNull() && m_view.cueCount() > 0)
@@ -363,6 +368,9 @@ void SearchCtl::highlightAll()
 	}
 	m_view.setMatchSelections(sels);
 	m_bar.setCount(0, empty ? 0 : int(m_matchStarts.size()));
+	m_matchIdx = 0;
+	if (m_nav)
+		m_nav->searchInfoChanged();
 }
 
 void SearchCtl::updateCounter(QTextCursor const &cur)
@@ -376,6 +384,9 @@ void SearchCtl::updateCounter(QTextCursor const &cur)
 		break;
 	}
 	m_bar.setCount(idx, int(m_matchStarts.size()));
+	m_matchIdx = idx;
+	if (m_nav)
+		m_nav->searchInfoChanged();
 	QList<QTextEdit::ExtraSelection> sel;
 	if (idx > 0 && cur.hasSelection()) {
 		QTextEdit::ExtraSelection s;

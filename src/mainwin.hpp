@@ -68,7 +68,11 @@ private:
 	                  QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
+	void searchInfoChanged() override { updateInfo(); }
 	void mpvSwitched(int index) override;
+	void updateInfo();
+	QString matchInfo(qsizetype at);
+	void recomputeTally();
 	bool showDoc(QString const &video, QString const &srt);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
@@ -111,12 +115,18 @@ private:
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
+	QLabel                          m_info;      // the live status line
+	QTimer                          m_infoTick;  // time/pause poll
+	QTimer                          m_tallyLag;  // debounced tally
+	QList<int>                      m_tally;     // hits per video
+	QString                         m_tallyKey;  // pattern it is for
 	QElapsedTimer                   m_exportTick;
 	QFont                           m_baseFont;  // first-launch font
 	double                          m_zoomBase = 1.0;
 	double                          m_zoomCaptions = 1.0;
 	double                          m_zoomBar = 1.0;
 	double                          m_zoomRegex = 1.0;
+	int                             m_tallyTotal = -1;
 	int                             m_exportQueued = -1;
 	bool                            m_exportPending = false;
 };

@@ -74,6 +74,9 @@ public:
 	// Last observed playback-time, or negative before any event.
 	double lastTime() const { return m_lastTime; }
 
+	// Last observed pause state (true until told otherwise).
+	bool lastPause() const { return m_lastPause; }
+
 protected:
 	mpv_link_base();
 
