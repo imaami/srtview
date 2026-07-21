@@ -9,12 +9,14 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QApplication>
 #include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
 
@@ -47,14 +49,29 @@ MainWin::MainWin()
 {
 	m_grab.setListener(this, this);
 	m_exportTick.start();
+	m_baseFont = QApplication::font();
 	setCentralWidget(&m_view);
 	// For < and > (video stepping): as printable characters they
 	// cannot be window shortcuts without stealing them from regex
 	// typing in the search bar, so they are filtered off the view.
 	m_view.installEventFilter(this);
 	setAcceptDrops(true);
-	resize(920, 720);
+	resize(1220, 1440);
 	setWindowTitle(QStringLiteral("srtview"));
+
+	// Zoom keys route by focus (zoomDomain), so they must fire from
+	// anywhere in the application.
+	auto const zoomKey = [this](char const *seq, auto fn) {
+		auto *sc = new QShortcut(
+			QKeySequence(QLatin1StringView(seq)), this);
+		sc->setContext(Qt::ApplicationShortcut);
+		connect(sc, &QShortcut::activated, this, fn);
+	};
+	zoomKey("Ctrl++", [this] { zoomStep(1); });
+	zoomKey("Ctrl+=", [this] { zoomStep(1); });
+	zoomKey("Ctrl+-", [this] { zoomStep(-1); });
+	zoomKey("Ctrl+0", [this] { zoomReset(false); });
+	zoomKey("Ctrl+Shift+0", [this] { zoomReset(true); });
 
 	// --- menus ---
 	auto *file = menuBar()->addMenu(QStringLiteral("&File"));
@@ -470,6 +487,72 @@ bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 		if (re.match(text).hasMatch())
 			return true;
 	return false;
+}
+
+// The focused widget names the zoom domain: the pattern field, the
+// rest of the search bar, the captions, or everything else (the
+// base UI).
+MainWin::ZoomDom MainWin::zoomDomain() const
+{
+	QWidget const *fw = QApplication::focusWidget();
+	if (!fw)
+		return ZoomDom::base;
+	if (m_bar.editFocused())
+		return ZoomDom::regex;
+	if (fw == &m_bar || m_bar.isAncestorOf(fw))
+		return ZoomDom::bar;
+	if (fw == &m_view || m_view.isAncestorOf(fw))
+		return ZoomDom::captions;
+	return ZoomDom::base;
+}
+
+double *MainWin::zoomOf(ZoomDom d)
+{
+	switch (d) {
+	case ZoomDom::captions:
+		return &m_zoomCaptions;
+	case ZoomDom::bar:
+		return &m_zoomBar;
+	case ZoomDom::regex:
+		return &m_zoomRegex;
+	case ZoomDom::base:
+		break;
+	}
+	return &m_zoomBase;
+}
+
+// The domains nest, so applying is strictly top-down: the base font
+// first (menus, dialogs, footer -- everything without its own
+// derivation), then the widgets that derive from it.
+void MainWin::applyZoom()
+{
+	QFont f = m_baseFont;
+	f.setPointSizeF(m_baseFont.pointSizeF() * m_zoomBase);
+	QApplication::setFont(f);
+	m_view.setTypeZoom(m_zoomCaptions);
+	m_bar.setTypeZoom(m_zoomBar, m_zoomRegex);
+	m_search.layoutOverlay();
+}
+
+void MainWin::zoomStep(int dir)
+{
+	static constexpr double kStep = 1.125;
+	double &z = *zoomOf(zoomDomain());
+	z = std::clamp(z * (dir > 0 ? kStep : 1.0 / kStep), 0.25, 4.0);
+	applyZoom();
+}
+
+void MainWin::zoomReset(bool all)
+{
+	if (all) {
+		m_zoomBase = 1.0;
+		m_zoomCaptions = 1.0;
+		m_zoomBar = 1.0;
+		m_zoomRegex = 1.0;
+	} else {
+		*zoomOf(zoomDomain()) = 1.0;
+	}
+	applyZoom();
 }
 
 // mpv's own playlist keys: > forward, < back, wrapping around.  A

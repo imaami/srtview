@@ -26,10 +26,6 @@
 
 #include <vector>
 
-// Type scale relative to the theme font; make this configurable when
-// settings land.
-inline constexpr double kFontScale = 1.75;
-
 class srt_view_base : public QTextEdit
 {
 public:
@@ -47,6 +43,10 @@ public:
 
 	void setMatchSelections(QList<ExtraSelection> const &sel);
 	void setCurrentMatchSelection(QList<ExtraSelection> const &sel);
+
+	// Caption zoom domain: a factor on top of the application font
+	// times kFontScale; re-derives everything font-sized.
+	void setTypeZoom(double z);
 
 	// Playback following: the cue containing t gets a light
 	// full-width background tint; when following is on, the view
@@ -70,6 +70,8 @@ protected:
 private:
 	static constexpr qreal kCueGap = 14.0;
 
+	void applyType();
+	void refitGutter();
 	void layoutGutter();
 	template <typename F> void visitVisibleBlocks(F f);
 	int cueAt(double t) const;
@@ -81,6 +83,7 @@ private:
 	QWidget                 m_gutter;
 	QFont                   m_gutterFont;
 	QPropertyAnimation      m_glide;
+	double                  m_typeZoom = 1.0;
 	int                     m_gutterW = 0;
 	int                     m_playCue = -1;
 	bool                    m_follow = true;

@@ -1,5 +1,7 @@
 #include "searchbar.hpp"
 
+#include "scale.hpp"
+
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -8,20 +10,20 @@
 search_bar_base::search_bar_base(QWidget *parent)
 	: QWidget(parent)
 {
-	// The bar overlays the reading view and would inherit its scaled
-	// reading font; chrome uses the application font.
-	setFont(QApplication::font());
 	setAutoFillBackground(true);
+	// Buttons keep tight padding: the chrome font matches the
+	// caption scale, and style-proportional gaps grow too wide at
+	// that size.
 	setStyleSheet(QStringLiteral(
 		"SearchBar, QWidget { background: palette(window); }"
 		"QLineEdit { border: none; background: palette(base);"
-		"            padding: 3px 6px; border-radius: 4px; }"));
+		"            padding: 3px 6px; border-radius: 4px; }"
+		"QToolButton { padding: 2px 4px; }"));
 	auto *frame = new QHBoxLayout(this);
 	frame->setContentsMargins(10, 8, 10, 8);
-	frame->setSpacing(6);
+	frame->setSpacing(2);
 
 	m_edit.setPlaceholderText(QStringLiteral("search\u2026"));
-	m_edit.setMinimumWidth(240);
 	m_edit.installEventFilter(this);
 	frame->addWidget(&m_edit);
 
@@ -48,8 +50,6 @@ search_bar_base::search_bar_base(QWidget *parent)
 	frame->addWidget(&m_prev);
 	frame->addWidget(&m_next);
 
-	m_count.setMinimumWidth(
-		fontMetrics().horizontalAdvance(QStringLiteral("000/000")));
 	m_count.setAlignment(Qt::AlignCenter);
 	frame->addWidget(&m_count);
 
@@ -61,7 +61,32 @@ search_bar_base::search_bar_base(QWidget *parent)
 	m_anim.setPropertyName("pos");
 	m_anim.setDuration(140);
 	m_anim.setEasingCurve(QEasingCurve::OutCubic);
+	applyType();
 	hide();
+}
+
+void search_bar_base::setTypeZoom(double bar, double edit)
+{
+	m_barZoom = bar;
+	m_editZoom = edit;
+	applyType();
+}
+
+// Everything font-sized, derived in one place: chrome from the
+// application font at the caption scale, the pattern text and its
+// field width from the chrome.
+void search_bar_base::applyType()
+{
+	QFont f = QApplication::font();
+	f.setPointSizeF(f.pointSizeF() * kFontScale * m_barZoom);
+	setFont(f);
+	QFont ef = f;
+	ef.setPointSizeF(f.pointSizeF() * m_editZoom);
+	m_edit.setFont(ef);
+	m_edit.setMinimumWidth(QFontMetrics(ef).averageCharWidth() * 32);
+	m_count.setMinimumWidth(
+		fontMetrics().horizontalAdvance(QStringLiteral("000/000")));
+	adjustSize();
 }
 
 void search_bar_base::setCount(int idx, int n)

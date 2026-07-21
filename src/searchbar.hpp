@@ -38,6 +38,12 @@ public:
 	void dismiss();
 	void reposition(QPoint const &target);
 
+	// Zoom domains: the bar's chrome scales from the application
+	// font (defaulting to the caption scale), the pattern text from
+	// the chrome; the caller repositions after a change.
+	void setTypeZoom(double bar, double edit);
+	bool editFocused() const { return m_edit.hasFocus(); }
+
 protected:
 	explicit search_bar_base(QWidget *parent);
 
@@ -51,12 +57,15 @@ protected:
 	QToolButton        &closeButton() { return m_close; }
 
 private:
+	void applyType();
 	void slideTo(QPoint const &to);
 
 	QLineEdit           m_edit;
 	QToolButton         m_regex, m_case, m_prev, m_next, m_close;
 	QLabel              m_count;
 	QPropertyAnimation  m_anim;
+	double              m_barZoom = 1.0;
+	double              m_editZoom = 1.0;
 	QPoint              m_target;
 };
 

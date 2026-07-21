@@ -54,6 +54,12 @@ private:
 		QString video, srt, id;
 	};
 
+	// The four zoom domains, nested: captions and the search bar
+	// chrome scale from the base (application) font, the pattern
+	// text from the chrome.  Ctrl +/-/0 act on the focused domain;
+	// Ctrl+Shift+0 resets the lot.
+	enum class ZoomDom { base, captions, bar, regex };
+
 	static bool droppable(QMimeData const *md);
 	static bool avPath(QString const &p);
 	QString srtOf(PlayItem const &it);
@@ -77,6 +83,11 @@ private:
 	void openDialog(QString const &startDir);
 	void openPlaylistDialog();
 	void stepVideo(int dir);
+	ZoomDom zoomDomain() const;
+	double *zoomOf(ZoomDom d);
+	void applyZoom();
+	void zoomStep(int dir);
+	void zoomReset(bool all);
 	void rebuildRecentMenu();
 	void rebuildVideosMenu();
 	void closeFile();
@@ -101,6 +112,11 @@ private:
 	SearchCtl                       m_search;
 	QLabel                          m_state;
 	QElapsedTimer                   m_exportTick;
+	QFont                           m_baseFont;  // first-launch font
+	double                          m_zoomBase = 1.0;
+	double                          m_zoomCaptions = 1.0;
+	double                          m_zoomBar = 1.0;
+	double                          m_zoomRegex = 1.0;
 	int                             m_exportQueued = -1;
 	bool                            m_exportPending = false;
 };

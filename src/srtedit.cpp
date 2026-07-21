@@ -1,6 +1,9 @@
 #include "srtedit.hpp"
 
+#include "scale.hpp"
+
 #include <QAbstractTextDocumentLayout>
+#include <QApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -17,11 +20,7 @@ srt_view_base::srt_view_base(QWidget *parent)
 	setFrameShape(QFrame::NoFrame);
 	setAcceptDrops(false);               // let the host take the drop
 	viewport()->setAcceptDrops(false);
-	QFont f = font();
-	f.setPointSizeF(std::max(f.pointSizeF(), 10.0) * kFontScale);
-	setFont(f);
-	m_gutterFont = f;
-	m_gutterFont.setPointSizeF(f.pointSizeF() * 0.62);
+	applyType();
 	document()->setDocumentMargin(28);
 	m_glide.setTargetObject(verticalScrollBar());
 	m_glide.setPropertyName("value");
@@ -35,6 +34,37 @@ srt_view_base::srt_view_base(QWidget *parent)
 	        &m_gutter, QOverload<>::of(&QWidget::update));
 	connect(this, &QTextEdit::cursorPositionChanged,
 	        this, [this] { updateCurrentCueHighlight(); });
+}
+
+void srt_view_base::setTypeZoom(double z)
+{
+	m_typeZoom = z;
+	applyType();
+}
+
+// Everything font-sized, derived in one place from the application
+// font (the base zoom domain) times the caption scale and zoom.
+void srt_view_base::applyType()
+{
+	QFont f = QApplication::font();
+	f.setPointSizeF(std::max(f.pointSizeF(), 10.0) * kFontScale
+	                * m_typeZoom);
+	setFont(f);
+	m_gutterFont = f;
+	m_gutterFont.setPointSizeF(f.pointSizeF() * 0.62);
+	document()->setDefaultFont(f);
+	refitGutter();
+}
+
+void srt_view_base::refitGutter()
+{
+	QString const widest = m_cues.empty()
+		? QString() : fmtTime(m_cues.back().start, false);
+	m_gutterW = QFontMetrics(m_gutterFont).horizontalAdvance(widest)
+	          + 26;
+	setViewportMargins(m_gutterW, 0, 0, 0);
+	layoutGutter();
+	m_gutter.update();
 }
 
 void srt_view_base::setCues(std::vector<srt::cue> cues)
@@ -61,12 +91,7 @@ void srt_view_base::setCues(std::vector<srt::cue> cues)
 		                                 qsizetype(html.size())));
 	}
 
-	// gutter width from the widest start time in this file
-	QString const widest = m_cues.empty()
-		? QString() : fmtTime(m_cues.back().start, false);
-	m_gutterW = QFontMetrics(m_gutterFont).horizontalAdvance(widest) + 26;
-	setViewportMargins(m_gutterW, 0, 0, 0);
-	layoutGutter();
+	refitGutter();
 	m_glide.stop();
 	m_playCue = -1;
 	m_playSel.clear();
