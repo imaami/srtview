@@ -12,7 +12,6 @@
 
 #include "exporter.hpp"
 
-#include "discovery.hpp"
 #include "grabber.hpp"
 #include "srt.hpp"
 #include "timefmt.hpp"
@@ -239,10 +238,7 @@ void attribute(sink &k, QRegularExpressionMatchIterator it,
 void exportVideo(sink &k, QRegularExpression const &re,
                  source const &v)
 {
-	QString err, srtPath = v.srt;
-	if (srtPath.isEmpty())
-		srtPath = srtForVideo(v.video, &err);
-	transcript const &tx = load(k.texts, srtPath);
+	transcript const &tx = load(k.texts, v.srt);
 	bool head = false;
 	for (std::size_t i = 0; i < tx.cues.size(); ++i) {
 		QRegularExpressionMatchIterator const it =

@@ -5,6 +5,7 @@
 #ifndef SRTVIEW_SRC_MAINWIN_HPP_
 #define SRTVIEW_SRC_MAINWIN_HPP_
 
+#include "discovery.hpp"
 #include "exporter.hpp"
 #include "grabber.hpp"
 #include "mpvlink.hpp"
@@ -55,16 +56,17 @@ private:
 
 	static bool droppable(QMimeData const *md);
 	static bool avPath(QString const &p);
-	static QString srtOf(PlayItem const &it);
+	QString srtOf(PlayItem const &it);
+	QString videoId(QString const &video);
 	bool videoMatches(PlayItem const &it,
 	                  QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
 	void mpvSwitched(int index) override;
 	bool showDoc(QString const &video, QString const &srt);
-	qsizetype playlistIndex(QString const &video) const;
+	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
-	QList<play_entry> corpusEntries() const;
+	QList<play_entry> corpusEntries();
 	void grabsIdle() override;
 	void grabProgress() override;
 	void startExport();
@@ -83,6 +85,7 @@ private:
 
 	Prefs                           m_prefs;
 	Trail                           m_trail;
+	discovery                       m_disc;
 	topics::doc                     m_corpus;
 	QString                         m_corpusPath;
 	QList<PlayItem>                 m_playlist;

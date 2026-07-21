@@ -30,7 +30,7 @@
 #       .srt path from which the video is derived).  No seeking.
 #
 # The mpv IPC socket is derived from the video file's canonical path:
-#   $XDG_RUNTIME_DIR/srtjump/<first 16 hex of sha256(realpath)>.sock
+#   $XDG_RUNTIME_DIR/srtjump/<first 16 hex of blake2b-256(realpath)>.sock
 # so independent processes (less session, Kate, your own scripts)
 # all find the same player.  A session reuses a live instance instead
 # of starting a second one, and leaves it running on exit if so.
@@ -48,7 +48,7 @@
 #   Start the player with: srtjump mpv VIDEO.mp4
 #
 # The transcript is looked up as VIDEO.mp4.srt first, VIDEO.srt second.
-# Requires: less, mpv, socat, awk, sha256sum.  less >= 582 preferred
+# Requires: less, mpv, socat, awk, cksum (coreutils >= 9.0).  less >= 582 preferred
 # (--lesskey-src); older less needs lesskey(1).  On less < 661 the T
 # key leaves a one-off "|done (press RETURN)" notice until the next
 # keypress (which is still processed normally); the same applies to
@@ -73,7 +73,8 @@ rundir() {
 sock_for() {
 	local rp h
 	rp=$(realpath -- "$1") || die "cannot resolve path: $1"
-	h=$(printf '%s' "$rp" | sha256sum) || die "sha256sum failed"
+	h=$(printf '%s' "$rp" | cksum -a blake2b -l 256 --untagged) \
+		|| die "cksum failed"
 	printf '%s/%s.sock' "$(rundir)" "${h:0:16}"
 }
 

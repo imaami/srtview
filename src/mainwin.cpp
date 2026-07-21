@@ -1,7 +1,5 @@
 #include "mainwin.hpp"
 
-#include "discovery.hpp"
-#include "exporter.hpp"
 #include "palettefix.hpp"
 #include "srt.hpp"
 
@@ -125,25 +123,30 @@ MainWin::MainWin()
 bool MainWin::openPath(QString const &path, QString const &srtOverride)
 {
 	QString err, video = path, srt = srtOverride;
+	std::string story;
 	if (path.endsWith(QStringLiteral(".srt"), Qt::CaseInsensitive)) {
 		srt   = path;
-		video = videoForSrt(path, &err);
+		video = QString::fromStdString(
+			m_disc.video_for_srt(path.toStdString(), story));
 		if (video.isEmpty())
-			return fail(err);
+			return fail(QString::fromStdString(story));
 	} else if (srt.isEmpty()) {
-		srt = srtForVideo(video, &err);
+		srt = QString::fromStdString(
+			m_disc.srt_for_video(video.toStdString(), story));
 		if (srt.isEmpty())
-			return fail(err);
+			return fail(QString::fromStdString(story));
 	}
 	// Player routing: playlist members navigate inside the
 	// persistent corpus instance -- same window, no respawn, no
 	// focus theft; anything else gets a single-entry playlist on
 	// the per-video socket (the srtjump sharing scheme).
 	qsizetype const at = playlistIndex(video);
-	QString const sock = at >= 0 ? sockForVideo(m_corpusPath, &err)
-	                             : sockForVideo(video, &err);
+	QString const claim = at >= 0 ? m_corpusPath : video;
+	QString const sock = QString::fromStdString(
+		m_disc.sock_for_video(claim.toStdString()));
 	if (sock.isEmpty())
-		return fail(err);
+		return fail(QStringLiteral("cannot resolve path: %1")
+		            .arg(claim));
 	QList<play_entry> list;
 	int index = 0;
 	if (at >= 0) {
@@ -157,9 +160,15 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 	return showDoc(video, srt);
 }
 
-qsizetype MainWin::playlistIndex(QString const &video) const
+QString MainWin::videoId(QString const &video)
 {
-	return indexOfId(idForVideo(video));
+	return QString::fromStdString(
+		m_disc.id_for_video(video.toStdString()));
+}
+
+qsizetype MainWin::playlistIndex(QString const &video)
+{
+	return indexOfId(videoId(video));
 }
 
 qsizetype MainWin::indexOfId(QString const &id) const
@@ -177,13 +186,14 @@ QString MainWin::srtOf(PlayItem const &it)
 {
 	if (!it.srt.isEmpty())
 		return it.srt;
-	QString err;
-	return srtForVideo(it.video, &err);
+	std::string story;
+	return QString::fromStdString(
+		m_disc.srt_for_video(it.video.toStdString(), story));
 }
 
 // The player's playlist mirror needs a concrete srt per entry, so
 // subtitles attach even for entries reached with mpv's own keys.
-QList<play_entry> MainWin::corpusEntries() const
+QList<play_entry> MainWin::corpusEntries()
 {
 	QList<play_entry> l;
 	for (PlayItem const &it : m_playlist)
@@ -220,7 +230,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 
 	// Register under the discovery identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.
-	QString const id = idForVideo(video);
+	QString const id = videoId(video);
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
@@ -273,7 +283,7 @@ bool MainWin::loadPlaylist(QString const &path)
 	};
 	for (topics::video const &v : m_corpus.videos) {
 		PlayItem it{resolve(v.path), resolve(v.srt), {}};
-		it.id = idForVideo(it.video);
+		it.id = videoId(it.video);
 		if (!it.id.isEmpty())
 			m_videosById.insert(it.id, it);
 		m_playlist << it;
@@ -371,7 +381,7 @@ void MainWin::runExport(bool drained)
 	for (qsizetype i = 0; i < m_playlist.size(); ++i) {
 		exporter::source s;
 		s.video = m_playlist[i].video;
-		s.srt = m_playlist[i].srt;
+		s.srt = srtOf(m_playlist[i]);
 		s.id = m_playlist[i].id;
 		for (std::string const &n : m_corpus.videos[size_t(i)].topics)
 			s.topics << QString::fromStdString(n);

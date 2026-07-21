@@ -25,7 +25,8 @@ class Grabber;
 namespace exporter {
 
 struct source {
-	QString     video, srt, id;  // resolved paths + discovery id
+	QString     video, srt, id;  // fully resolved (srt derivation
+	                             // included) + discovery id
 	QStringList topics;          // topic names scoped to this video
 };
 
