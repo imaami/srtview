@@ -81,12 +81,28 @@ void search_bar_base::setTypeZoom(double bar, double edit)
 // Everything font-sized, derived in one place: chrome from the
 // application font at the caption scale, the pattern text within
 // the chrome's box.  Integer points throughout; the zoom domain
-// guarantees the text factor never exceeds 1.
+// guarantees the text factor never exceeds 1.  Each widget is only
+// touched when its rounded font actually moved, so a pattern-text
+// step reduces to one setFont and the chrome geometry stays put.
 void search_bar_base::applyType()
 {
 	QFont f = QApplication::font();
 	f.setPointSize(std::max(1, int(std::lround(
 		f.pointSize() * kFontScale * m_barZoom))));
+	// The pattern box belongs to the bar's geometry: its size comes
+	// from the chrome font alone, so the text zoom moves nothing
+	// but the glyphs.
+	QFont ef = f;
+	ef.setPointSize(std::max(1, int(std::lround(
+		f.pointSize() * m_editZoom))));
+	if (ef != m_edit.font())
+		m_edit.setFont(ef);
+	// Compare against the font last *applied*, never the widget's
+	// current one: the bar inherits the caption font from its
+	// parent, which can coincide with the chrome default.
+	if (f == m_chromeFont)
+		return;
+	m_chromeFont = f;
 	setFont(f);
 	// The style sheet stops parent-font propagation to children:
 	// hand the chrome font to each of them explicitly, so the whole
@@ -95,13 +111,6 @@ void search_bar_base::applyType()
 	                           &m_close, &m_count};
 	for (QWidget *c : chrome)
 		c->setFont(f);
-	// The pattern box belongs to the bar's geometry: its size comes
-	// from the chrome font alone, so the text zoom moves nothing
-	// but the glyphs.
-	QFont ef = f;
-	ef.setPointSize(std::max(1, int(std::lround(
-		f.pointSize() * m_editZoom))));
-	m_edit.setFont(ef);
 	QFontMetrics const fm(f);
 	m_edit.setMinimumWidth(fm.averageCharWidth() * 32);
 	m_edit.setFixedHeight(fm.height() + 8);

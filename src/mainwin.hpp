@@ -91,7 +91,7 @@ private:
 	void stepVideo(int dir);
 	ZoomDom zoomDomain() const;
 	int *zoomOf(ZoomDom d);
-	void applyZoom();
+	void applyZoom(ZoomDom d);
 	void zoomStep(int dir);
 	void zoomReset(bool all);
 	void rebuildRecentMenu();

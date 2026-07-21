@@ -8,6 +8,7 @@
 #include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
+#include <QFontInfo>
 #include <QFileInfo>
 #include <QApplication>
 #include <QContextMenuEvent>
@@ -74,6 +75,14 @@ MainWin::MainWin()
 	statusBar()->installEventFilter(this);
 	menuBar()->installEventFilter(this);
 	m_baseFont = QApplication::font();
+	// A pixel-sized platform font would read pointSize() == -1 in
+	// every derived font downstream; normalize once at the source
+	// so integer points hold everywhere.
+	if (m_baseFont.pointSize() <= 0) {
+		m_baseFont.setPointSize(
+			std::max(1, QFontInfo(m_baseFont).pointSize()));
+		QApplication::setFont(m_baseFont);
+	}
 	for (char const *cls : kThemedClasses)
 		m_classFonts << QApplication::font(cls);
 	setCentralWidget(&m_view);
@@ -642,38 +651,45 @@ int *MainWin::zoomOf(ZoomDom d)
 	return &m_zoomBase;
 }
 
-// The domains nest, so applying is strictly top-down: the base font
-// first -- the general font, the theme-pinned class fonts, and our
-// own chrome widgets explicitly, so menus, dialogs and the footer
-// scale uniformly -- then the widgets that derive from it.  All
-// derived sizes are integer points.
-void MainWin::applyZoom()
+// The domains nest, so a change applies strictly top-down from the
+// changed domain: only a base step rewrites the application and
+// chrome fonts (menus, dialogs and the footer scale uniformly with
+// it), captions and the bar touch just their own widgets, and a
+// pattern-text step never reflows the captions or moves the bar.
+// All derived sizes are integer points.
+void MainWin::applyZoom(ZoomDom d)
 {
-	auto const scaled = [this](QFont f) {
-		double const z = zoomFactor(m_zoomBase);
-		if (f.pixelSize() > 0)
-			f.setPixelSize(std::max(1,
-				int(std::lround(f.pixelSize() * z))));
-		else
-			f.setPointSize(std::max(1,
-				int(std::lround(f.pointSize() * z))));
-		return f;
-	};
-	QFont const base = scaled(m_baseFont);
-	QApplication::setFont(base);
-	for (qsizetype i = 0; i < m_classFonts.size(); ++i)
-		QApplication::setFont(scaled(m_classFonts[i]),
-		                      kThemedClasses[i]);
-	// Our own chrome, deterministically: theme-class propagation
-	// quirks must not decide whether the footer scales.
-	menuBar()->setFont(QApplication::font("QMenuBar"));
-	statusBar()->setFont(QApplication::font("QStatusBar"));
-	m_info.setFont(base);
-	m_state.setFont(base);
-	m_view.setTypeZoom(zoomFactor(m_zoomCaptions));
-	m_bar.setTypeZoom(zoomFactor(m_zoomBar),
-	                  zoomFactor(m_zoomRegex));
-	m_search.layoutOverlay();
+	if (d == ZoomDom::base) {
+		auto const scaled = [this](QFont f) {
+			double const z = zoomFactor(m_zoomBase);
+			if (f.pixelSize() > 0)
+				f.setPixelSize(std::max(1,
+					int(std::lround(f.pixelSize() * z))));
+			else
+				f.setPointSize(std::max(1,
+					int(std::lround(f.pointSize() * z))));
+			return f;
+		};
+		QFont const base = scaled(m_baseFont);
+		QApplication::setFont(base);
+		for (qsizetype i = 0; i < m_classFonts.size(); ++i)
+			QApplication::setFont(scaled(m_classFonts[i]),
+			                      kThemedClasses[i]);
+		// Our own chrome, deterministically: theme-class
+		// propagation quirks must not decide whether the footer
+		// scales.
+		menuBar()->setFont(QApplication::font("QMenuBar"));
+		statusBar()->setFont(QApplication::font("QStatusBar"));
+		m_info.setFont(base);
+		m_state.setFont(base);
+	}
+	if (d == ZoomDom::base || d == ZoomDom::captions)
+		m_view.setTypeZoom(zoomFactor(m_zoomCaptions));
+	if (d != ZoomDom::captions)
+		m_bar.setTypeZoom(zoomFactor(m_zoomBar),
+		                  zoomFactor(m_zoomRegex));
+	if (d == ZoomDom::base || d == ZoomDom::bar)
+		m_search.layoutOverlay();
 }
 
 // Constrain first, compare second, act third: a step against a
@@ -688,26 +704,39 @@ void MainWin::zoomStep(int dir)
 	if (next == steps)
 		return;
 	steps = next;
-	applyZoom();
+	applyZoom(d);
 }
 
 void MainWin::zoomReset(bool all)
 {
-	if (all) {
-		if (!m_zoomBase && !m_zoomCaptions && !m_zoomBar
-		    && !m_zoomRegex)
+	if (!all) {
+		ZoomDom const d = zoomDomain();
+		int &steps = *zoomOf(d);
+		if (!steps)
 			return;
+		steps = 0;
+		applyZoom(d);
+		return;
+	}
+	// Reset everything, applying only where a counter moved; a
+	// moved base covers the lot.
+	if (m_zoomBase) {
 		m_zoomBase = 0;
 		m_zoomCaptions = 0;
 		m_zoomBar = 0;
 		m_zoomRegex = 0;
-	} else {
-		int &steps = *zoomOf(zoomDomain());
-		if (!steps)
-			return;
-		steps = 0;
+		applyZoom(ZoomDom::base);
+		return;
 	}
-	applyZoom();
+	if (m_zoomCaptions) {
+		m_zoomCaptions = 0;
+		applyZoom(ZoomDom::captions);
+	}
+	if (m_zoomBar || m_zoomRegex) {
+		m_zoomBar = 0;
+		m_zoomRegex = 0;
+		applyZoom(ZoomDom::bar);
+	}
 }
 
 // mpv's own playlist keys: > forward, < back, wrapping around.  A

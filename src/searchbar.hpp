@@ -65,6 +65,7 @@ private:
 	QToolButton         m_regex, m_case, m_prev, m_next, m_close;
 	QLabel              m_count;
 	QPropertyAnimation  m_anim;
+	QFont               m_chromeFont; // last applied, not inherited
 	double              m_barZoom = 1.0;
 	double              m_editZoom = 1.0;
 	QPoint              m_target;

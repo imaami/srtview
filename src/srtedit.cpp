@@ -21,7 +21,7 @@ srt_view_base::srt_view_base(QWidget *parent)
 	setFrameShape(QFrame::NoFrame);
 	setAcceptDrops(false);               // let the host take the drop
 	viewport()->setAcceptDrops(false);
-	applyType();
+	applyType(typeFont());
 	document()->setDocumentMargin(28);
 	m_glide.setTargetObject(verticalScrollBar());
 	m_glide.setPropertyName("value");
@@ -39,14 +39,19 @@ srt_view_base::srt_view_base(QWidget *parent)
 
 // Anchor the reading position through the relayout: the cue at the
 // viewport's center stays at the center, instead of the pixel
-// offset deciding which lines survive the zoom.
+// offset deciding which lines survive the zoom.  When integer
+// rounding lands on the size already shown there is nothing to do,
+// so the document never reflows for a no-visible-change step.
 void srt_view_base::setTypeZoom(double z)
 {
+	m_typeZoom = z;
+	QFont const f = typeFont();
+	if (f == font())
+		return;
 	QPoint const mid(viewport()->width() / 2,
 	                 viewport()->height() / 2);
 	int const anchor = cursorForPosition(mid).blockNumber();
-	m_typeZoom = z;
-	applyType();
+	applyType(f);
 	QTextBlock const b = document()->findBlockByNumber(anchor);
 	if (!b.isValid())
 		return;
@@ -56,14 +61,19 @@ void srt_view_base::setTypeZoom(double z)
 		int(std::lround(r.center().y())) - mid.y());
 }
 
-// Everything font-sized, derived in one place from the application
-// font (the base zoom domain) times the caption scale and zoom.
-// Integer points, like every derived font in the program.
-void srt_view_base::applyType()
+// The caption font, derived in one place from the application font
+// (the base zoom domain) times the caption scale and zoom.  Integer
+// points, like every derived font in the program.
+QFont srt_view_base::typeFont() const
 {
 	QFont f = QApplication::font();
 	f.setPointSize(std::max(1, int(std::lround(
 		std::max(f.pointSize(), 10) * kFontScale * m_typeZoom))));
+	return f;
+}
+
+void srt_view_base::applyType(QFont const &f)
+{
 	setFont(f);
 	m_gutterFont = f;
 	m_gutterFont.setPointSize(std::max(1, int(std::lround(
@@ -76,11 +86,14 @@ void srt_view_base::refitGutter()
 {
 	QString const widest = m_cues.empty()
 		? QString() : fmtTime(m_cues.back().start, false);
-	m_gutterW = QFontMetrics(m_gutterFont).horizontalAdvance(widest)
-	          + 26;
+	int const w = QFontMetrics(m_gutterFont)
+	              .horizontalAdvance(widest) + 26;
+	m_gutter.update();     // glyphs may change at the same width
+	if (w == m_gutterW)
+		return;
+	m_gutterW = w;
 	setViewportMargins(m_gutterW, 0, 0, 0);
 	layoutGutter();
-	m_gutter.update();
 }
 
 void srt_view_base::setCues(std::vector<srt::cue> cues)

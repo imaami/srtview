@@ -70,7 +70,8 @@ protected:
 private:
 	static constexpr qreal kCueGap = 14.0;
 
-	void applyType();
+	QFont typeFont() const;
+	void applyType(QFont const &f);
 	void refitGutter();
 	void layoutGutter();
 	template <typename F> void visitVisibleBlocks(F f);
