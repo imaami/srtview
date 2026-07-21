@@ -48,6 +48,7 @@ protected:
 	explicit search_bar_base(QWidget *parent);
 
 	void paintEvent(QPaintEvent *) override;
+	void mousePressEvent(QMouseEvent *ev) override;
 
 	QLineEdit          &edit() { return m_edit; }
 	QToolButton        &regexButton() { return m_regex; }

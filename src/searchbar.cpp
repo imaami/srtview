@@ -10,6 +10,9 @@
 search_bar_base::search_bar_base(QWidget *parent)
 	: QWidget(parent)
 {
+	// Clicking the bar's own surface (not a child) focuses the bar:
+	// that is how the chrome zoom domain is reached by mouse.
+	setFocusPolicy(Qt::ClickFocus);
 	setAutoFillBackground(true);
 	// Buttons keep tight padding: the chrome font matches the
 	// caption scale, and style-proportional gaps grow too wide at
@@ -84,8 +87,10 @@ void search_bar_base::applyType()
 	ef.setPointSizeF(f.pointSizeF() * m_editZoom);
 	m_edit.setFont(ef);
 	m_edit.setMinimumWidth(QFontMetrics(ef).averageCharWidth() * 32);
+	// Reserve for the common case only ("00/00"): the idle em-dash
+	// must not hold a wide empty box open between the buttons.
 	m_count.setMinimumWidth(
-		fontMetrics().horizontalAdvance(QStringLiteral("000/000")));
+		fontMetrics().horizontalAdvance(QStringLiteral("00/00")));
 	adjustSize();
 }
 
@@ -135,6 +140,15 @@ void search_bar_base::reposition(QPoint const &target)
 		move(target);
 }
 
+
+// A press on the bar's own surface (margins, gaps, the count label
+// passing through) lands here: focusing the bar is how the chrome
+// zoom domain is reached by mouse.
+void search_bar_base::mousePressEvent(QMouseEvent *ev)
+{
+	setFocus(Qt::MouseFocusReason);
+	QWidget::mousePressEvent(ev);
+}
 
 void search_bar_base::paintEvent(QPaintEvent *)
 {
