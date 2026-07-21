@@ -12,6 +12,7 @@
 #include <QToolTip>
 
 #include <algorithm>
+#include <cmath>
 
 srt_view_base::srt_view_base(QWidget *parent)
 	: QTextEdit(parent), m_gutter(this)
@@ -36,22 +37,37 @@ srt_view_base::srt_view_base(QWidget *parent)
 	        this, [this] { updateCurrentCueHighlight(); });
 }
 
+// Anchor the reading position through the relayout: the cue at the
+// viewport's center stays at the center, instead of the pixel
+// offset deciding which lines survive the zoom.
 void srt_view_base::setTypeZoom(double z)
 {
+	QPoint const mid(viewport()->width() / 2,
+	                 viewport()->height() / 2);
+	int const anchor = cursorForPosition(mid).blockNumber();
 	m_typeZoom = z;
 	applyType();
+	QTextBlock const b = document()->findBlockByNumber(anchor);
+	if (!b.isValid())
+		return;
+	QRectF const r = document()->documentLayout()
+	               ->blockBoundingRect(b);
+	verticalScrollBar()->setValue(
+		int(std::lround(r.center().y())) - mid.y());
 }
 
 // Everything font-sized, derived in one place from the application
 // font (the base zoom domain) times the caption scale and zoom.
+// Integer points, like every derived font in the program.
 void srt_view_base::applyType()
 {
 	QFont f = QApplication::font();
-	f.setPointSizeF(std::max(f.pointSizeF(), 10.0) * kFontScale
-	                * m_typeZoom);
+	f.setPointSize(std::max(1, int(std::lround(
+		std::max(f.pointSize(), 10) * kFontScale * m_typeZoom))));
 	setFont(f);
 	m_gutterFont = f;
-	m_gutterFont.setPointSizeF(f.pointSizeF() * 0.62);
+	m_gutterFont.setPointSize(std::max(1, int(std::lround(
+		f.pointSize() * 0.62))));
 	document()->setDefaultFont(f);
 	refitGutter();
 }

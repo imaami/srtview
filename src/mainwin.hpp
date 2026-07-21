@@ -57,9 +57,9 @@ private:
 	// The four zoom domains, nested: captions and the search bar
 	// chrome scale from the base (application) font, the pattern
 	// text from the chrome.  Ctrl +/-/0 act on the focused domain;
-	// Ctrl+Shift+0 resets the lot.  The footer takes focus on click
-	// as the base domain's mouse handle (menu and status chrome are
-	// otherwise unfocusable).
+	// Ctrl+Shift+0 resets the lot.  Clicking the menu bar or the
+	// footer focuses the footer: the base domain's mouse handle
+	// (neither bar is focusable by itself).
 	enum class ZoomDom { base, captions, bar, regex };
 
 	static bool droppable(QMimeData const *md);
@@ -90,7 +90,7 @@ private:
 	void openPlaylistDialog();
 	void stepVideo(int dir);
 	ZoomDom zoomDomain() const;
-	double *zoomOf(ZoomDom d);
+	int *zoomOf(ZoomDom d);
 	void applyZoom();
 	void zoomStep(int dir);
 	void zoomReset(bool all);
@@ -125,10 +125,12 @@ private:
 	QElapsedTimer                   m_exportTick;
 	QFont                           m_baseFont;  // first-launch font
 	QList<QFont>                    m_classFonts; // themed classes
-	double                          m_zoomBase = 1.0;
-	double                          m_zoomCaptions = 1.0;
-	double                          m_zoomBar = 1.0;
-	double                          m_zoomRegex = 1.0;
+	// Zoom state as integer step counts (factor = 1.125^steps):
+	// exact comparison, exact reset, no accumulation drift.
+	int                             m_zoomBase = 0;
+	int                             m_zoomCaptions = 0;
+	int                             m_zoomBar = 0;
+	int                             m_zoomRegex = 0;
 	int                             m_tallyTotal = -1;
 	int                             m_exportQueued = -1;
 	bool                            m_exportPending = false;

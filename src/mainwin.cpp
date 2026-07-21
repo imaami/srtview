@@ -20,6 +20,7 @@
 #include <QStatusBar>
 #include <QTextDocumentFragment>
 
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -31,6 +32,15 @@ namespace {
 constexpr char const *kThemedClasses[] = {
 	"QMenuBar", "QMenu", "QMessageBox", "QToolTip", "QStatusBar",
 };
+
+// One zoom step per Ctrl+-/+ press; 12 steps ~ a factor of four.
+constexpr double kZoomStep = 1.125;
+constexpr int    kZoomSpan = 12;
+
+double zoomFactor(int steps)
+{
+	return std::pow(kZoomStep, steps);
+}
 
 // Corpus-search diagnostics, SRTVIEW_DEBUG-gated like the mpv
 // clients' dbg().
@@ -57,9 +67,12 @@ MainWin::MainWin()
 {
 	m_grab.setListener(this, this);
 	m_exportTick.start();
-	// The footer is the base zoom domain's mouse handle: menu and
-	// status chrome are otherwise unfocusable.
+	// Clicks on the top or bottom chrome focus the footer: that is
+	// the base zoom domain's handle (neither bar is focusable by
+	// itself, and focusing the menu bar would hijack plain keys as
+	// mnemonics).
 	statusBar()->installEventFilter(this);
+	menuBar()->installEventFilter(this);
 	m_baseFont = QApplication::font();
 	for (char const *cls : kThemedClasses)
 		m_classFonts << QApplication::font(cls);
@@ -614,7 +627,7 @@ MainWin::ZoomDom MainWin::zoomDomain() const
 	return ZoomDom::base;
 }
 
-double *MainWin::zoomOf(ZoomDom d)
+int *MainWin::zoomOf(ZoomDom d)
 {
 	switch (d) {
 	case ZoomDom::captions:
@@ -630,45 +643,69 @@ double *MainWin::zoomOf(ZoomDom d)
 }
 
 // The domains nest, so applying is strictly top-down: the base font
-// first (general and theme-pinned class fonts alike, so menus,
-// dialogs and footer scale uniformly), then the widgets that derive
-// from it.
+// first -- the general font, the theme-pinned class fonts, and our
+// own chrome widgets explicitly, so menus, dialogs and the footer
+// scale uniformly -- then the widgets that derive from it.  All
+// derived sizes are integer points.
 void MainWin::applyZoom()
 {
 	auto const scaled = [this](QFont f) {
-		if (f.pointSizeF() > 0.0)
-			f.setPointSizeF(f.pointSizeF() * m_zoomBase);
-		else if (f.pixelSize() > 0)
+		double const z = zoomFactor(m_zoomBase);
+		if (f.pixelSize() > 0)
 			f.setPixelSize(std::max(1,
-				int(f.pixelSize() * m_zoomBase + 0.5)));
+				int(std::lround(f.pixelSize() * z))));
+		else
+			f.setPointSize(std::max(1,
+				int(std::lround(f.pointSize() * z))));
 		return f;
 	};
-	QApplication::setFont(scaled(m_baseFont));
+	QFont const base = scaled(m_baseFont);
+	QApplication::setFont(base);
 	for (qsizetype i = 0; i < m_classFonts.size(); ++i)
 		QApplication::setFont(scaled(m_classFonts[i]),
 		                      kThemedClasses[i]);
-	m_view.setTypeZoom(m_zoomCaptions);
-	m_bar.setTypeZoom(m_zoomBar, m_zoomRegex);
+	// Our own chrome, deterministically: theme-class propagation
+	// quirks must not decide whether the footer scales.
+	menuBar()->setFont(QApplication::font("QMenuBar"));
+	statusBar()->setFont(QApplication::font("QStatusBar"));
+	m_info.setFont(base);
+	m_state.setFont(base);
+	m_view.setTypeZoom(zoomFactor(m_zoomCaptions));
+	m_bar.setTypeZoom(zoomFactor(m_zoomBar),
+	                  zoomFactor(m_zoomRegex));
 	m_search.layoutOverlay();
 }
 
+// Constrain first, compare second, act third: a step against a
+// domain bound changes nothing and must do nothing.  The pattern
+// text cannot outgrow its box, so its domain tops out at 0.
 void MainWin::zoomStep(int dir)
 {
-	static constexpr double kStep = 1.125;
-	double &z = *zoomOf(zoomDomain());
-	z = std::clamp(z * (dir > 0 ? kStep : 1.0 / kStep), 0.25, 4.0);
+	ZoomDom const d = zoomDomain();
+	int &steps = *zoomOf(d);
+	int const top = d == ZoomDom::regex ? 0 : kZoomSpan;
+	int const next = std::clamp(steps + dir, -kZoomSpan, top);
+	if (next == steps)
+		return;
+	steps = next;
 	applyZoom();
 }
 
 void MainWin::zoomReset(bool all)
 {
 	if (all) {
-		m_zoomBase = 1.0;
-		m_zoomCaptions = 1.0;
-		m_zoomBar = 1.0;
-		m_zoomRegex = 1.0;
+		if (!m_zoomBase && !m_zoomCaptions && !m_zoomBar
+		    && !m_zoomRegex)
+			return;
+		m_zoomBase = 0;
+		m_zoomCaptions = 0;
+		m_zoomBar = 0;
+		m_zoomRegex = 0;
 	} else {
-		*zoomOf(zoomDomain()) = 1.0;
+		int &steps = *zoomOf(zoomDomain());
+		if (!steps)
+			return;
+		steps = 0;
 	}
 	applyZoom();
 }
@@ -869,7 +906,8 @@ void MainWin::rebuildRecentMenu()
 // Keys < and > on the view: step the playlist.
 bool MainWin::eventFilter(QObject *obj, QEvent *ev)
 {
-	if (obj == statusBar() && ev->type() == QEvent::MouseButtonPress) {
+	if ((obj == statusBar() || obj == menuBar())
+	    && ev->type() == QEvent::MouseButtonPress) {
 		statusBar()->setFocus(Qt::MouseFocusReason);
 		return false;                // and let the click proceed
 	}
