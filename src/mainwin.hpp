@@ -57,7 +57,9 @@ private:
 	// The four zoom domains, nested: captions and the search bar
 	// chrome scale from the base (application) font, the pattern
 	// text from the chrome.  Ctrl +/-/0 act on the focused domain;
-	// Ctrl+Shift+0 resets the lot.
+	// Ctrl+Shift+0 resets the lot.  The footer takes focus on click
+	// as the base domain's mouse handle (menu and status chrome are
+	// otherwise unfocusable).
 	enum class ZoomDom { base, captions, bar, regex };
 
 	static bool droppable(QMimeData const *md);
@@ -122,6 +124,7 @@ private:
 	QString                         m_tallyKey;  // pattern it is for
 	QElapsedTimer                   m_exportTick;
 	QFont                           m_baseFont;  // first-launch font
+	QList<QFont>                    m_classFonts; // themed classes
 	double                          m_zoomBase = 1.0;
 	double                          m_zoomCaptions = 1.0;
 	double                          m_zoomBar = 1.0;

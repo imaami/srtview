@@ -7,6 +7,8 @@
 #include <QKeyEvent>
 #include <QPainter>
 
+#include <algorithm>
+
 search_bar_base::search_bar_base(QWidget *parent)
 	: QWidget(parent)
 {
@@ -76,21 +78,34 @@ void search_bar_base::setTypeZoom(double bar, double edit)
 }
 
 // Everything font-sized, derived in one place: chrome from the
-// application font at the caption scale, the pattern text and its
-// field width from the chrome.
+// application font at the caption scale, the pattern text within
+// the chrome's box.
 void search_bar_base::applyType()
 {
 	QFont f = QApplication::font();
 	f.setPointSizeF(f.pointSizeF() * kFontScale * m_barZoom);
 	setFont(f);
+	// The style sheet stops parent-font propagation to children:
+	// hand the chrome font to each of them explicitly, so the whole
+	// bar scales as one shape.
+	QWidget *const chrome[] = {&m_regex, &m_case, &m_prev, &m_next,
+	                           &m_close, &m_count};
+	for (QWidget *c : chrome)
+		c->setFont(f);
+	// The pattern box belongs to the bar's geometry: its size comes
+	// from the chrome font alone, and the text inside may shrink
+	// but never outgrow its box (capped at the chrome size), so the
+	// text zoom moves nothing but the glyphs.
 	QFont ef = f;
-	ef.setPointSizeF(f.pointSizeF() * m_editZoom);
+	ef.setPointSizeF(f.pointSizeF() * std::min(m_editZoom, 1.0));
 	m_edit.setFont(ef);
-	m_edit.setMinimumWidth(QFontMetrics(ef).averageCharWidth() * 32);
+	QFontMetrics const fm(f);
+	m_edit.setMinimumWidth(fm.averageCharWidth() * 32);
+	m_edit.setFixedHeight(fm.height() + 8);
 	// Reserve for the common case only ("00/00"): the idle em-dash
 	// must not hold a wide empty box open between the buttons.
 	m_count.setMinimumWidth(
-		fontMetrics().horizontalAdvance(QStringLiteral("00/00")));
+		fm.horizontalAdvance(QStringLiteral("00/00")));
 	adjustSize();
 }
 

@@ -24,6 +24,14 @@
 
 namespace {
 
+// Platform themes pin per-class fonts (menus, tooltips, message
+// boxes) separately from the general application font; the base
+// zoom domain must carry them along or "everything" leaves the
+// chrome behind.
+constexpr char const *kThemedClasses[] = {
+	"QMenuBar", "QMenu", "QMessageBox", "QToolTip", "QStatusBar",
+};
+
 // Corpus-search diagnostics, SRTVIEW_DEBUG-gated like the mpv
 // clients' dbg().
 void dbgHop(QString const &msg)
@@ -49,7 +57,12 @@ MainWin::MainWin()
 {
 	m_grab.setListener(this, this);
 	m_exportTick.start();
+	// The footer is the base zoom domain's mouse handle: menu and
+	// status chrome are otherwise unfocusable.
+	statusBar()->installEventFilter(this);
 	m_baseFont = QApplication::font();
+	for (char const *cls : kThemedClasses)
+		m_classFonts << QApplication::font(cls);
 	setCentralWidget(&m_view);
 	// For < and > (video stepping): as printable characters they
 	// cannot be window shortcuts without stealing them from regex
@@ -617,13 +630,23 @@ double *MainWin::zoomOf(ZoomDom d)
 }
 
 // The domains nest, so applying is strictly top-down: the base font
-// first (menus, dialogs, footer -- everything without its own
-// derivation), then the widgets that derive from it.
+// first (general and theme-pinned class fonts alike, so menus,
+// dialogs and footer scale uniformly), then the widgets that derive
+// from it.
 void MainWin::applyZoom()
 {
-	QFont f = m_baseFont;
-	f.setPointSizeF(m_baseFont.pointSizeF() * m_zoomBase);
-	QApplication::setFont(f);
+	auto const scaled = [this](QFont f) {
+		if (f.pointSizeF() > 0.0)
+			f.setPointSizeF(f.pointSizeF() * m_zoomBase);
+		else if (f.pixelSize() > 0)
+			f.setPixelSize(std::max(1,
+				int(f.pixelSize() * m_zoomBase + 0.5)));
+		return f;
+	};
+	QApplication::setFont(scaled(m_baseFont));
+	for (qsizetype i = 0; i < m_classFonts.size(); ++i)
+		QApplication::setFont(scaled(m_classFonts[i]),
+		                      kThemedClasses[i]);
 	m_view.setTypeZoom(m_zoomCaptions);
 	m_bar.setTypeZoom(m_zoomBar, m_zoomRegex);
 	m_search.layoutOverlay();
@@ -846,6 +869,10 @@ void MainWin::rebuildRecentMenu()
 // Keys < and > on the view: step the playlist.
 bool MainWin::eventFilter(QObject *obj, QEvent *ev)
 {
+	if (obj == statusBar() && ev->type() == QEvent::MouseButtonPress) {
+		statusBar()->setFocus(Qt::MouseFocusReason);
+		return false;                // and let the click proceed
+	}
 	if (obj == &m_view && ev->type() == QEvent::KeyPress) {
 		auto const *ke = static_cast<QKeyEvent *>(ev);
 		if (ke->text() == QStringLiteral(">")) {
