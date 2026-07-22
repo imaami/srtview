@@ -89,6 +89,7 @@ private:
 	void openDialog(QString const &startDir);
 	void openPlaylistDialog();
 	void stepVideo(int dir);
+	bool barFocused() const;
 	ZoomDom zoomDomain() const;
 	int *zoomOf(ZoomDom d);
 	void applyZoom(ZoomDom d);

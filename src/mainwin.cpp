@@ -312,7 +312,10 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	         .arg(n)
 	         .arg(m_link.spawned() ? QStringLiteral("spawned")
 	                               : QStringLiteral("reused")));
-	m_view.setFocus();
+	// A search-driven hop must not pull focus out of the bar; only
+	// a switch made from elsewhere hands the keyboard to the view.
+	if (!barFocused())
+		m_view.setFocus();
 	return true;
 }
 
@@ -622,6 +625,12 @@ void MainWin::recomputeTally()
 // The focused widget names the zoom domain: the pattern field, the
 // rest of the search bar, the captions, or everything else (the
 // base UI).
+bool MainWin::barFocused() const
+{
+	QWidget const *fw = QApplication::focusWidget();
+	return fw && (fw == &m_bar || m_bar.isAncestorOf(fw));
+}
+
 MainWin::ZoomDom MainWin::zoomDomain() const
 {
 	QWidget const *fw = QApplication::focusWidget();
@@ -629,7 +638,7 @@ MainWin::ZoomDom MainWin::zoomDomain() const
 		return ZoomDom::base;
 	if (m_bar.editFocused())
 		return ZoomDom::regex;
-	if (fw == &m_bar || m_bar.isAncestorOf(fw))
+	if (barFocused())
 		return ZoomDom::bar;
 	if (fw == &m_view || m_view.isAncestorOf(fw))
 		return ZoomDom::captions;
@@ -660,6 +669,10 @@ int *MainWin::zoomOf(ZoomDom d)
 void MainWin::applyZoom(ZoomDom d)
 {
 	if (d == ZoomDom::base) {
+		// An open menu popup is positioned for the old chrome
+		// metrics; close it rather than leave it detached.
+		if (QWidget *pop = QApplication::activePopupWidget())
+			pop->close();
 		auto const scaled = [this](QFont f) {
 			double const z = zoomFactor(m_zoomBase);
 			if (f.pixelSize() > 0)

@@ -24,10 +24,10 @@ search_bar_base::search_bar_base(QWidget *parent)
 		"SearchBar, QWidget { background: palette(window); }"
 		"QLineEdit { border: none; background: palette(base);"
 		"            padding: 3px 6px; border-radius: 4px; }"
-		"QToolButton { padding: 2px 4px; }"));
+		"QToolButton { padding: 1px 3px; }"));
 	auto *frame = new QHBoxLayout(this);
 	frame->setContentsMargins(10, 8, 10, 8);
-	frame->setSpacing(2);
+	frame->setSpacing(1);
 
 	m_edit.setPlaceholderText(QStringLiteral("search\u2026"));
 	m_edit.installEventFilter(this);
@@ -55,6 +55,13 @@ search_bar_base::search_bar_base(QWidget *parent)
 	m_next.setToolTip(QStringLiteral("Next match (F3)"));
 	frame->addWidget(&m_prev);
 	frame->addWidget(&m_next);
+	// Navigating by mouse selects the bar's zoom domain, exactly
+	// like a press on the bar's own surface.  The toggles stay
+	// non-focusing so flipping them mid-typing keeps the cursor.
+	connect(&m_prev, &QToolButton::pressed,
+	        this, [this] { setFocus(Qt::MouseFocusReason); });
+	connect(&m_next, &QToolButton::pressed,
+	        this, [this] { setFocus(Qt::MouseFocusReason); });
 
 	m_count.setAlignment(Qt::AlignCenter);
 	frame->addWidget(&m_count);
@@ -105,19 +112,25 @@ void search_bar_base::applyType()
 	m_chromeFont = f;
 	setFont(f);
 	// The style sheet stops parent-font propagation to children:
-	// hand the chrome font to each of them explicitly, so the whole
-	// bar scales as one shape.
-	QWidget *const chrome[] = {&m_regex, &m_case, &m_prev, &m_next,
-	                           &m_close, &m_count};
-	for (QWidget *c : chrome)
-		c->setFont(f);
+	// hand each of them its font explicitly.  Buttons and counter
+	// dress at 0.8x the chrome so the pattern box stays the bar's
+	// protagonist; they still follow every zoom at that proportion.
+	QFont bf = f;
+	bf.setPointSize(std::max(1, int(std::lround(
+		f.pointSize() * 0.8))));
+	m_regex.setFont(bf);
+	m_case.setFont(bf);
+	m_prev.setFont(bf);
+	m_next.setFont(bf);
+	m_close.setFont(bf);
+	m_count.setFont(bf);
 	QFontMetrics const fm(f);
 	m_edit.setMinimumWidth(fm.averageCharWidth() * 32);
 	m_edit.setFixedHeight(fm.height() + 8);
 	// Reserve for the common case only ("00/00"): the idle em-dash
 	// must not hold a wide empty box open between the buttons.
-	m_count.setMinimumWidth(
-		fm.horizontalAdvance(QStringLiteral("00/00")));
+	m_count.setMinimumWidth(QFontMetrics(bf)
+		.horizontalAdvance(QStringLiteral("00/00")));
 	adjustSize();
 }
 
