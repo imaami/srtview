@@ -1,4 +1,5 @@
 /** @file
+ *
  * Unit tests for the fundo undo tree: linear walk, branch splitting,
  * adoption of identical actions, redo continuity after detours, and
  * travel rings (cycle formation, wrap-around, pass counters).

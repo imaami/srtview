@@ -11,6 +11,8 @@ add_executable(srtview
 	exporter.cpp
 	fundo.c
 	list.c
+	llm.c
+	facts.cpp
 	search.cpp
 	mpvclient.cpp
 	mpvlink.cpp
@@ -22,7 +24,7 @@ add_executable(srtview
 	selftest.cpp
 )
 target_link_libraries(srtview PRIVATE Qt6::Widgets Qt6::Network
-                      PkgConfig::FFMPEG)
+                      PkgConfig::FFMPEG Threads::Threads)
 target_compile_options(srtview PRIVATE -Wall -Wextra)
 
 install(TARGETS srtview RUNTIME DESTINATION bin)
