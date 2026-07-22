@@ -1,7 +1,7 @@
 {
   "attribution": {
     "sessionUrl": false
-  }
+  },
   "permissions": {
     "allow": [
       "Bash(bash .claude/skills/coderabbit/cr.sh *)",
