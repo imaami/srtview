@@ -47,6 +47,20 @@ reviews:
         (the fundo and llm tests no C++ at all); flag suggestions
         that would add such dependencies, and do not propose
         deduplicating the target definitions.
+    - path: "{bests,pests}/**"
+      instructions: >-
+        Exemplar snippets outside the build; nothing here compiles
+        or should. Each bests/ file condenses one desirable house
+        habit; each pests/ file is a deliberate anti-example --
+        code that could pass tests but is banned in this repo.
+        Never suggest fixing, completing, or modernizing a pest:
+        being wrong is its content. Never flag either directory's
+        files for being fragmentary, unused, or uncompilable. Both
+        are comment-free by policy (a snippet needing explanation
+        has failed), except files whose demonstrated subject is a
+        comment-writing approach. Flag only a change that makes a
+        best drift from house style, makes a pest accidentally
+        acceptable, or adds stray comments.
     - path: "**/CMakeLists.txt"
       instructions: >-
         Tabs for indentation. Executables land in build/ via
