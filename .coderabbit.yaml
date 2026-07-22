@@ -1,0 +1,65 @@
+# .coderabbit.yaml -- srtview review rules, first version.
+# NOTE: a committed config replaces the Organization UI settings
+# entirely for this repo, so the review profile is restated here.
+tone_instructions: >-
+  Terse and technical. Findings only, no praise, no restating the
+  diff. When a house rule from path instructions conflicts with a
+  general best practice, the house rule wins.
+reviews:
+  profile: assertive
+  path_instructions:
+    - path: "src/**/*.{c,h}"
+      instructions: >-
+        C23 core code (no Qt, no C++). Doxygen /** */ documents the
+        API: file headers, structs, public functions; internal notes
+        use plain /* */. The bare "/** @file" with the filename
+        omitted is the documented Doxygen idiom for "the containing
+        file" -- intentional, do not flag it. Headers consumed
+        across the C/C++ boundary (e.g. fundo.h, llm.h) use int
+        documented as 1/0 for booleans, never bool, for pre-C23 ABI
+        safety; bool is fine in internal headers. Indentation is
+        tabs, alignment is spaces: continuation lines carry the
+        statement's leading tabs then spaces only -- never report
+        space-aligned continuations as mixed indentation. House
+        style prefers lookup tables and switch dispatch over
+        if/else chains, and at most two nesting levels via guard
+        clauses.
+    - path: "src/**/*.{cpp,hpp}"
+      instructions: >-
+        C++23. Qt appears only at the UI boundary; core modules
+        (srt, topics, decoder, discovery) are std-only and must
+        stay that way. Prefer compile-time dispatch (templates,
+        CRTP behind non-template bases) over virtual functions and
+        std::function. East const. Deletion bias: prefer
+        suggestions that shrink the diff and the binary. Same
+        tabs-indent, spaces-align convention as the C code.
+    - path: "tests/**"
+      instructions: >-
+        Test code is exempt from the production style rules by
+        maintainer policy. Repetition, long functions, short
+        identifiers, boilerplate and duplicated assertions are all
+        acceptable; more checks are always welcome. Review only
+        functional correctness: wrong expectations, race
+        conditions, unchecked failure paths, portability of the
+        fake-server plumbing. Do not raise readability, naming,
+        length or duplication findings here. Test targets
+        deliberately compile core sources directly and link no Qt
+        (the fundo and llm tests no C++ at all); flag suggestions
+        that would add such dependencies, and do not propose
+        deduplicating the target definitions.
+    - path: "**/CMakeLists.txt"
+      instructions: >-
+        Tabs for indentation. Executables land in build/ via
+        CMAKE_RUNTIME_OUTPUT_DIRECTORY; LTO flags come from
+        cmake/compiler.cmake through CMAKE_USER_MAKE_RULES_OVERRIDE.
+        Do not suggest restructuring either mechanism.
+  tools:
+    # clang-tidy's default checks (readability-identifier-length,
+    # braces-around-statements, init-variables) contradict the
+    # house style and flooded the llm PR with noise; gcc with
+    # -Wall -Wextra already gates the build.
+    clang:
+      enabled: false
+knowledge_base:
+  learnings:
+    scope: local
