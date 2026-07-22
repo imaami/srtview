@@ -292,6 +292,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_trail.setVideo(id);
 		m_grab.setVideo(video, id);
 	}
+	offerFacts(srt);
 
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
@@ -310,6 +311,18 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	if (!barFocused())
 		m_view.setFocus();
 	return true;
+}
+
+// The facts cache is keyed by the srt file's own discovery identity:
+// one summary per unique srt however many entries share it.  The
+// rendered transcript (tags consumed) is what the model reads.
+void MainWin::offerFacts(QString const &srt)
+{
+	std::string const id = m_disc.id_for_video(srt.toStdString());
+	if (id.empty())
+		return;
+	m_facts.offer(id, exporter::load(m_transcripts, srt)
+	                  .lines.join(QLatin1Char('\n')).toStdString());
 }
 
 // A topic file: the corpus source of videos and composable regexes
@@ -350,6 +363,11 @@ bool MainWin::loadPlaylist(QString const &path)
 	statusBar()->showMessage(QStringLiteral(
 		"playlist: %1 videos, %2 topics")
 		.arg(m_playlist.size()).arg(m_corpus.topics.size()), 3000);
+	// Background factual summaries, one per srt not yet in the facts
+	// cache.  The transcript cache is shared with the tally and the
+	// exporter, so nothing gets parsed twice.
+	for (PlayItem const &it : m_playlist)
+		offerFacts(it.srt);
 	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
 		openPath(m_playlist.first().video, m_playlist.first().srt);
 

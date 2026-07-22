@@ -12,6 +12,7 @@ add_executable(srtview
 	fundo.c
 	list.c
 	llm.c
+	facts.cpp
 	search.cpp
 	mpvclient.cpp
 	mpvlink.cpp

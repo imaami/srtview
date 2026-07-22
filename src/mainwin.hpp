@@ -7,6 +7,7 @@
 
 #include "discovery.hpp"
 #include "exporter.hpp"
+#include "facts.hpp"
 #include "grabber.hpp"
 #include "mpvlink.hpp"
 #include "playback.hpp"
@@ -76,6 +77,7 @@ private:
 	QString matchInfo(qsizetype at);
 	void recomputeTally();
 	bool showDoc(QString const &video, QString const &srt);
+	void offerFacts(QString const &srt);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();
@@ -115,6 +117,7 @@ private:
 	SearchBar<SearchCtl>            m_bar;
 	MpvLink<PlaybackCtl>            m_link;
 	Grabber                         m_grab;
+	Facts                           m_facts;
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
