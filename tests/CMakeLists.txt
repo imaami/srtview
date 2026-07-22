@@ -29,3 +29,16 @@ target_include_directories(fundo_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(fundo_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME fundo_tests COMMAND fundo_tests)
+
+# The llm client is plain C (POSIX sockets + pthread); its test
+# drives it against a fake in-process HTTP server, no C++ involved.
+add_executable(llm_tests
+	llm_test.c
+	${CMAKE_SOURCE_DIR}/src/llm.c
+	${CMAKE_SOURCE_DIR}/src/list.c
+)
+target_include_directories(llm_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(llm_tests PRIVATE -Wall -Wextra)
+target_link_libraries(llm_tests PRIVATE Threads::Threads)
+
+add_test(NAME llm_tests COMMAND llm_tests)
