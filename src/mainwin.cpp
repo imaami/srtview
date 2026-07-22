@@ -8,7 +8,6 @@
 #include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
-#include <QFontInfo>
 #include <QFileInfo>
 #include <QApplication>
 #include <QContextMenuEvent>
@@ -74,15 +73,9 @@ MainWin::MainWin()
 	// mnemonics).
 	statusBar()->installEventFilter(this);
 	menuBar()->installEventFilter(this);
+	// main() has normalized a pixel-sized platform font to integer
+	// points before any widget constructed.
 	m_baseFont = QApplication::font();
-	// A pixel-sized platform font would read pointSize() == -1 in
-	// every derived font downstream; normalize once at the source
-	// so integer points hold everywhere.
-	if (m_baseFont.pointSize() <= 0) {
-		m_baseFont.setPointSize(
-			std::max(1, QFontInfo(m_baseFont).pointSize()));
-		QApplication::setFont(m_baseFont);
-	}
 	for (char const *cls : kThemedClasses)
 		m_classFonts << QApplication::font(cls);
 	setCentralWidget(&m_view);

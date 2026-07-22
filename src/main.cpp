@@ -55,11 +55,22 @@
 #include "selftest.hpp"
 
 #include <QApplication>
+#include <QFontInfo>
+
+#include <algorithm>
 
 int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
 	QApplication::setApplicationName(QStringLiteral("srtview"));
+	// A pixel-sized platform font would read pointSize() == -1 in
+	// every derived font; normalize before any widget constructs so
+	// integer points hold everywhere (MainWin's members derive
+	// their fonts in their constructors).
+	if (QFont f = QApplication::font(); f.pointSize() <= 0) {
+		f.setPointSize(std::max(1, QFontInfo(f).pointSize()));
+		QApplication::setFont(f);
+	}
 	MainWin w;
 	w.show();
 
