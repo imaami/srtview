@@ -1,4 +1,5 @@
 /** @file
+ *
  * Circular doubly-linked list, sentinel-head style: an empty list is
  * one node whose next and prev point to itself.  Adapted from the
  * mcp2210-proxy list module.

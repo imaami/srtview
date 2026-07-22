@@ -1,4 +1,5 @@
 /** @file
+ *
  * Fundo: an undo *tree* with persistent side branches.
  *
  * Actions grow the tree upward (up = future); undo climbs down toward

@@ -1,4 +1,5 @@
 /** @file
+ *
  * Unit tests for the llm client: JSON escaping and extraction, HTTP
  * response parsing (content-length, chunked, close-delimited), and
  * full round-trips against a fake in-process server -- success,
@@ -377,6 +378,7 @@ test_chunked_trip (void)
 	check(fake_start(&f, resp, 1), "chunked fake up");
 	slot_init(&s);
 	c = llm_create("localhost", f.port);
+	check(c != nullptr, "client up");
 	check(llm_ask(c, &(struct llm_task){ .prompt = "x" },
 	              on_done, &s) != 0, "task queued");
 	check(slot_wait(&s, 5000) && s.status == LLM_OK &&
@@ -404,6 +406,7 @@ test_http_error (void)
 	check(fake_start(&f, resp, 1), "erroring fake up");
 	slot_init(&s);
 	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
 	check(llm_ask(c, &(struct llm_task){ .prompt = "x" },
 	              on_done, &s) != 0, "task queued");
 	check(slot_wait(&s, 5000) && s.status == LLM_ERR_HTTP,
@@ -434,6 +437,7 @@ test_refused (void)
 		close(fd);      /* free the port again: nobody listens */
 	slot_init(&s);
 	c = llm_create(nullptr, port);
+	check(c != nullptr, "client up");
 	check(llm_ask(c, &(struct llm_task){ .prompt = "x" },
 	              on_done, &s) != 0, "task queued");
 	check(slot_wait(&s, 5000) && s.status == LLM_ERR_CONNECT,
@@ -451,6 +455,7 @@ test_timeout (void)
 	check(fake_start(&f, nullptr, 1), "stalling fake up");
 	slot_init(&s);
 	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
 	check(llm_ask(c, &ask, on_done, &s) != 0, "task queued");
 	check(slot_wait(&s, 5000) && s.status == LLM_ERR_TIMEOUT,
 	      "silent server reported as LLM_ERR_TIMEOUT");
@@ -470,6 +475,7 @@ test_cancel (void)
 	slot_init(&s1);
 	slot_init(&s2);
 	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
 	id1 = llm_ask(c, &(struct llm_task){ .prompt = "one" },
 	              on_done, &s1);
 	id2 = llm_ask(c, &(struct llm_task){ .prompt = "two" },
@@ -502,6 +508,7 @@ test_fifo (void)
 	slot_init(&s1);
 	slot_init(&s2);
 	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
 	id1 = llm_ask(c, &(struct llm_task){ .prompt = "first" },
 	              on_done, &s1);
 	id2 = llm_ask(c, &(struct llm_task){ .prompt = "second" },
@@ -537,6 +544,7 @@ test_live (void)
 		return;
 	slot_init(&s);
 	c = llm_create(nullptr, 0);
+	check(c != nullptr, "client up");
 	check(llm_ask(c, &ask, on_done, &s) != 0, "live task queued");
 	check(slot_wait(&s, 300000) && s.status == LLM_OK && s.size,
 	      "live server answered");

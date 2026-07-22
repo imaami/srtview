@@ -1,4 +1,5 @@
 /** @file
+ *
  * Small C utility layer for the fundo core; the subset of the donor
  * project's util.h that this module needs.
  */

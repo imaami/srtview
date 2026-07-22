@@ -1,4 +1,5 @@
 /** @file
+ *
  * llm implementation: a private worker drains a FIFO of prepared
  * HTTP requests, one blocking round-trip per task.  The request is
  * built whole on the asking thread (fail fast, nothing to copy
