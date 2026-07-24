@@ -21,6 +21,7 @@
 #include <QHash>
 #include <QLabel>
 #include <QMainWindow>
+#include <QRegularExpression>
 
 class MainWin : public QMainWindow, private search_nav,
                 private grab_listener, private video_sync
@@ -55,6 +56,18 @@ private:
 		QString video, srt, id;
 	};
 
+	// One background topic scan toward a dive: the corpus hits of
+	// one expanded pattern, collected a video per timer tick so a
+	// corpus load never stalls the UI thread.
+	struct DiveScan {
+		QRegularExpression       re;
+		QString                  parts;    // excerpt sections
+		std::string              id;       // hash of the pattern
+		std::vector<std::string> deps;     // leaf ids of hit videos
+		qsizetype                video    = 0;
+		bool                     exported = true;
+	};
+
 	// The four zoom domains, nested: captions and the search bar
 	// chrome scale from the base (application) font, the pattern
 	// text from the chrome.  Ctrl +/-/0 act on the focused domain;
@@ -79,6 +92,10 @@ private:
 	void feedHeat();
 	bool showDoc(QString const &video, QString const &srt);
 	std::string offerFacts(QString const &srt);
+	void queueDives();
+	void diveStep();
+	void scanDiveVideo(DiveScan &s, PlayItem const &it);
+	void finishDive(DiveScan const &s);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();
@@ -125,6 +142,9 @@ private:
 	QLabel                          m_info;      // the live status line
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
+	QTimer                          m_diveTick;  // topic scan pump
+	QList<DiveScan>                 m_diveScans; // pending scans
+	std::string                     m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
 	QElapsedTimer                   m_exportTick;

@@ -45,6 +45,9 @@ struct task {
 	std::string              id{};     // cache identity (hex)
 	std::vector<std::string> deps{};   // ids that must be done first
 	std::vector<std::string> keys{};   // heat keys: subtitle ids
+	std::vector<std::string> refs{};   // optional context ids: read
+	                                   // at assembly when their
+	                                   // files exist, never awaited
 	kind                     what     = kind::leaf;
 	std::uint8_t             tier     = 0;
 	bool                     exported = true;

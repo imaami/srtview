@@ -6,8 +6,11 @@
 // next pick.  Kinds map to prompts and inputs as follows: a *leaf*
 // summarizes transcript text snapshot on the offering (UI) thread;
 // a *node* merges the cache files of its children, which dependency
-// gating guarantees exist; dives arrive in a later stage.  Cache
-// layout, sibling to the frame cache:
+// gating guarantees exist; a *dive* explains one topic's matched
+// excerpts (snapshot like a leaf) against the summaries of the
+// videos they came from (deps, guaranteed) and the corpus overview
+// (refs, attached only if already in the cache).  Cache layout,
+// sibling to the frame cache:
 //   $XDG_CACHE_HOME/srtview/facts/<id>.txt        leaves and nodes
 //   $XDG_CACHE_HOME/srtview/facts/dives/<id>.txt  dives
 // File existence is the manifest: done work is marked done instead
@@ -64,6 +67,11 @@ public:
 	// nodes whose files exist are marked done instead of queued.
 	void corpus(std::vector<agenda::task> nodes);
 
+	// One topic dive: the caller-built task (id, deps = hit-video
+	// leaves, keys, refs = optional overview) plus the matched
+	// excerpts, snapshot here.  Cached dives are marked done.
+	void dive(agenda::task t, std::string const &utf8Excerpts);
+
 	void heat(std::string const &key, double add);
 	void decay(double keep);
 
@@ -79,6 +87,9 @@ private:
 	void advance();
 	bool submit(agenda::task const &t);
 	std::string assemble(agenda::task const &t);
+	std::string assemble_node(agenda::task const &t) const;
+	std::string assemble_dive(agenda::task const &t);
+	std::string spend_body(std::string const &id);
 	std::string path_of(agenda::task const &t) const;
 
 	mutable std::mutex m_mtx;

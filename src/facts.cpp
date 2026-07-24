@@ -39,6 +39,23 @@ constexpr char kNodePrompt[] =
 	"terms. Generalize where the sections agree and keep the "
 	"notable specifics. Plain text only; no preamble, no headings.";
 
+constexpr char kDivePrompt[] =
+	"The user message holds labeled sections separated by lines of "
+	"three dashes: OVERVIEW summarizes a whole video collection "
+	"(the section may be absent), SUMMARIES holds condensed "
+	"summaries of the videos where a search pattern matched, and "
+	"MATCHES holds the matching subtitle excerpts grouped per "
+	"video under == headers. Explain in specific detail what the "
+	"matched material covers -- the concrete facts, claims, "
+	"decisions, numbers and names in it -- and then state what "
+	"distinguishes this material from the rest of the collection. "
+	"Plain text only; no preamble, no headings.";
+
+// System prompt per task kind: leaf, node, dive.
+constexpr char const *kPromptOf[] = {
+	kLeafPrompt, kNodePrompt, kDivePrompt,
+};
+
 // Connect refusals in a row before the pipeline parks itself for
 // the session; anything else the server says resets the count.
 constexpr int kRefusalCap = 3;
@@ -153,6 +170,15 @@ std::string slurp(std::string const &path)
 	return {std::istreambuf_iterator<char>(in), {}};
 }
 
+void add_section(std::string &to, std::string const &sec)
+{
+	if (sec.empty())
+		return;
+	if (!to.empty())
+		to += "\n---\n";
+	to += sec;
+}
+
 } // namespace
 
 Facts::Facts()
@@ -214,6 +240,26 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 		else
 			m_plan.add(std::move(t));
 	}
+	advance();
+}
+
+void Facts::dive(agenda::task t, std::string const &utf8Excerpts)
+{
+	if (t.id.empty() || utf8Excerpts.empty())
+		return;
+
+	std::lock_guard const lock(m_mtx);
+	if (!m_llm || m_plan.status(t.id) != agenda::plan::state::unknown)
+		return;
+	t.what = agenda::kind::dive;
+	std::error_code ec;
+	if (std::filesystem::exists(path_of(t), ec)) {
+		m_plan.done(t.id);
+		advance();
+		return;
+	}
+	m_bodies.emplace_back(t.id, std::string(clip(utf8Excerpts)));
+	m_plan.add(std::move(t));
 	advance();
 }
 
@@ -311,8 +357,7 @@ bool Facts::submit(agenda::task const &t)
 	if (!ctx)
 		return false;
 	llm_task const ask = {
-		.system      = t.what == agenda::kind::node ? kNodePrompt
-		                                            : kLeafPrompt,
+		.system      = kPromptOf[std::size_t(t.what)],
 		.prompt      = body.c_str(),
 		.max_tokens  = kMaxTokens,
 		.timeout_s   = kTimeoutS,
@@ -331,21 +376,26 @@ bool Facts::submit(agenda::task const &t)
 
 // m_mtx held.  A leaf spends its snapshot; a node reads its
 // children's cache files, present by dependency gating (an empty
-// read means a raced cache wipe -- the caller parks the task).
+// read means a raced cache wipe -- the caller parks the task); a
+// dive layers required and best-effort context under its snapshot.
 std::string Facts::assemble(agenda::task const &t)
 {
-	if (t.what != agenda::kind::node) {
-		for (std::size_t i = 0; i < m_bodies.size(); ++i) {
-			if (m_bodies[i].first != t.id)
-				continue;
-			std::string spent = std::move(m_bodies[i].second);
-			m_bodies.erase(m_bodies.begin()
-			               + std::ptrdiff_t(i));
-			return spent;
-		}
-		return {};
+	switch (t.what) {
+	case agenda::kind::leaf:
+		return spend_body(t.id);
+
+	case agenda::kind::node:
+		return assemble_node(t);
+
+	case agenda::kind::dive:
+		return assemble_dive(t);
 	}
 
+	return {};
+}
+
+std::string Facts::assemble_node(agenda::task const &t) const
+{
 	std::string all;
 	for (std::string const &dep : t.deps) {
 		std::string const part =
@@ -357,6 +407,55 @@ std::string Facts::assemble(agenda::task const &t)
 		all += part;
 	}
 	return std::string(clip(all));
+}
+
+// OVERVIEW (refs, attached only when cached) --- SUMMARIES (deps,
+// dependency-gated, missing parks the task) --- MATCHES (the
+// snapshot).  The snapshot is spent last, so parking on a missing
+// input keeps it for a later plan.
+std::string Facts::assemble_dive(agenda::task const &t)
+{
+	std::string over;
+	for (std::string const &ref : t.refs) {
+		std::string const part =
+			slurp(m_dir + '/' + ref + ".txt");
+		if (part.empty())
+			continue;
+		over += over.empty() ? "OVERVIEW\n" : "\n\n";
+		over += part;
+	}
+
+	std::string sums;
+	for (std::string const &dep : t.deps) {
+		std::string const part =
+			slurp(m_dir + '/' + dep + ".txt");
+		if (part.empty())
+			return {};
+		sums += sums.empty() ? "SUMMARIES\n" : "\n\n";
+		sums += part;
+	}
+
+	std::string const hits = spend_body(t.id);
+	if (hits.empty())
+		return {};
+	std::string all;
+	add_section(all, over);
+	add_section(all, sums);
+	add_section(all, "MATCHES\n" + hits);
+	return std::string(clip(all));
+}
+
+// m_mtx held.  Takes and erases the snapshot stored under id.
+std::string Facts::spend_body(std::string const &id)
+{
+	for (std::size_t i = 0; i < m_bodies.size(); ++i) {
+		if (m_bodies[i].first != id)
+			continue;
+		std::string spent = std::move(m_bodies[i].second);
+		m_bodies.erase(m_bodies.begin() + std::ptrdiff_t(i));
+		return spent;
+	}
+	return {};
 }
 
 std::string Facts::path_of(agenda::task const &t) const

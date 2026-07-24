@@ -62,6 +62,22 @@ std::string treeId(std::vector<std::string> const &kids)
 	return h.result().toHex().left(16).toStdString();
 }
 
+// Dive identity is the expanded pattern's hash: editing a topic
+// re-dives it, and identical patterns share one cache file.
+std::string diveId(std::string const &pattern)
+{
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView("dive"));
+	h.addData(QByteArrayView("\n", 1));
+	h.addData(QByteArrayView(pattern.data(),
+	                         qsizetype(pattern.size())));
+	return h.result().toHex().left(16).toStdString();
+}
+
+// Excerpt budget per dive, in UTF-16 units: roughly half the llm
+// clip so the context sections keep their share of the window.
+constexpr qsizetype kDiveBudget = 48 * 1024;
+
 double zoomFactor(int steps)
 {
 	return std::pow(kZoomStep, steps);
@@ -197,6 +213,9 @@ MainWin::MainWin()
 	m_tallyLag.setInterval(300);
 	connect(&m_tallyLag, &QTimer::timeout,
 	        this, [this] { recomputeTally(); });
+	m_diveTick.setInterval(0);
+	connect(&m_diveTick, &QTimer::timeout,
+	        this, [this] { diveStep(); });
 
 	repairMenuPalette(menuBar());
 }
@@ -352,6 +371,88 @@ std::string MainWin::offerFacts(QString const &srt)
 	return id;
 }
 
+// Stage the corpus topic dives: one scan per exported grouping,
+// chewed a video per tick.  Reopening a summarized corpus still
+// scans (a few ms per cell, spread out); Facts drops the finished
+// scan against its cache.
+void MainWin::queueDives()
+{
+	m_diveScans.clear();
+	m_diveTick.stop();
+	for (topics::export_item const &e : topics::export_plan(m_corpus)) {
+		DiveScan s;
+		s.re = QRegularExpression(QString::fromStdString(e.pattern));
+		if (!s.re.isValid())
+			continue;
+		s.id = diveId(e.pattern);
+		m_diveScans << std::move(s);
+	}
+	if (!m_diveScans.isEmpty())
+		m_diveTick.start();
+}
+
+void MainWin::diveStep()
+{
+	if (m_diveScans.isEmpty() || m_playlist.isEmpty()) {
+		m_diveScans.clear();
+		m_diveTick.stop();
+		return;
+	}
+	DiveScan &s = m_diveScans.first();
+	if (s.video < m_playlist.size()) {
+		scanDiveVideo(s, m_playlist[s.video]);
+		++s.video;
+		return;
+	}
+	finishDive(s);
+	m_diveScans.removeFirst();
+	if (m_diveScans.isEmpty())
+		m_diveTick.stop();
+}
+
+// One (topic, video) cell: matched cue lines become an excerpt
+// section and the video's leaf a dependency.  Past the budget a
+// video is dropped whole -- section and dependency both -- so the
+// dive never cites a video it did not quote.
+void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
+{
+	if (s.parts.size() > kDiveBudget)
+		return;
+	QString const srt = srtOf(it);
+	QStringList hits;
+	for (QString const &line :
+	     exporter::load(m_transcripts, srt).lines) {
+		if (s.re.match(line).hasMatch())
+			hits << line;
+	}
+	if (hits.isEmpty())
+		return;
+	std::string id = m_disc.id_for_video(srt.toStdString());
+	if (id.empty() || std::ranges::find(s.deps, id) != s.deps.end())
+		return;
+	s.deps.push_back(std::move(id));
+	s.parts += QStringLiteral("== %1\n%2\n")
+		.arg(QFileInfo(it.video).fileName(), hits.join(u'\n'));
+}
+
+// A finished scan becomes a dive task: deps gate on the hit videos'
+// leaf summaries, heat follows the same videos, and the pyramid
+// root rides along as optional overview context.
+void MainWin::finishDive(DiveScan const &s)
+{
+	if (s.deps.empty())
+		return;
+	agenda::task t;
+	t.id = s.id;
+	t.deps = s.deps;
+	t.keys = s.deps;
+	t.what = agenda::kind::dive;
+	t.exported = s.exported;
+	if (!m_rootId.empty())
+		t.refs.push_back(m_rootId);
+	m_facts.dive(std::move(t), s.parts.toStdString());
+}
+
 // A topic file: the corpus source of videos and composable regexes
 // (grammar in topics.hpp).  Loading replaces the playlist; relative
 // paths resolve against the file's own directory.
@@ -402,7 +503,10 @@ bool MainWin::loadPlaylist(QString const &path)
 		                   == leaves.end())
 			leaves.push_back(std::move(id));
 	}
-	m_facts.corpus(agenda::pyramid(leaves, treeId));
+	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
+	m_rootId = nodes.empty() ? std::string() : nodes.back().id;
+	m_facts.corpus(std::move(nodes));
+	queueDives();
 	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
 		openPath(m_playlist.first().video, m_playlist.first().srt);
 
@@ -589,6 +693,20 @@ bool MainWin::videoMatches(PlayItem const &it, QRegularExpression const &re)
 // actually changed.
 void MainWin::updateInfo()
 {
+	// The tally -- and through it the facts heat map -- keys on
+	// the pattern alone: a search that misses this video but hits
+	// others must still recompute and bias the queue.
+	if (!m_playlist.isEmpty()) {
+		QRegularExpression const re = m_search.effectivePattern();
+		QString const key = re.pattern()
+		                  + QString::number(int(re.patternOptions()));
+		if (key != m_tallyKey) {
+			m_tallyKey = key;
+			m_tallyTotal = -1;
+			m_tallyLag.start();
+		}
+	}
+
 	QStringList parts;
 	QString const pat = m_search.patternText();
 	if (!pat.isEmpty())
@@ -627,14 +745,6 @@ QString MainWin::matchInfo(qsizetype at)
 		.arg(n);
 	if (at < 0 || m_playlist.size() < 2)
 		return s;
-	QRegularExpression const re = m_search.effectivePattern();
-	QString const key = re.pattern()
-	                  + QString::number(int(re.patternOptions()));
-	if (key != m_tallyKey) {
-		m_tallyKey = key;
-		m_tallyTotal = -1;
-		m_tallyLag.start();
-	}
 	if (m_tallyTotal < 0 || m_tally.size() != m_playlist.size())
 		return s + QStringLiteral(" (…)");
 	int before = 0;
