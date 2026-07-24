@@ -59,28 +59,66 @@ constexpr char kDivePrompt[] =
 	"material', 'these excerpts', 'the matches show'. Plain text "
 	"only; no preamble, no headings.";
 
-// System prompt per task kind (leaf, node, dive).  The views wrap
-// NUL-terminated literals, so .data() satisfies the C API below.
+constexpr char kFocusPrompt[] =
+	"The user message holds two sections separated by a line of "
+	"three dashes, FIRST and SECOND: each describes one searched "
+	"theme from the same video collection, and each may open with "
+	"a PATTERN line naming the regex that found it. Judge whether "
+	"the two themes genuinely touch. If they do not, reply with "
+	"the single word NONE. If they do, describe the shared thread "
+	"itself concretely -- its facts, names and numbers -- "
+	"sharpening toward what is most distinctive about it; do not "
+	"average the themes into generality. Then end with one line "
+	"of exactly this form: REGEX: followed by one PCRE2 regular "
+	"expression that traces the thread through subtitle text -- "
+	"typically an alternation collecting the spellings, "
+	"mistranscriptions and near-synonymous phrasings under which "
+	"it appears, case-insensitive via (?i:...) where sensible, no "
+	"delimiters or flags outside the pattern. Write about the "
+	"subject, never about the act of reviewing it. Plain text; no "
+	"headings besides that final REGEX line.";
+
+// System prompt per task kind (leaf, node, dive, focus).  The
+// views wrap NUL-terminated literals, so .data() satisfies the C
+// API below.
 constexpr std::string_view kPromptOf[] = {
-	kLeafPrompt, kNodePrompt, kDivePrompt,
+	kLeafPrompt, kNodePrompt, kDivePrompt, kFocusPrompt,
+};
+
+// Cache subdirectory per task kind: leaves and nodes share the
+// flat root so any dependency reads at facts/<id>.txt.
+constexpr std::string_view kSubdir[] = {
+	"/", "/", "/dives/", "/focus/",
 };
 
 // Connect refusals in a row before the pipeline parks itself for
 // the session; anything else the server says resets the count.
 constexpr int kRefusalCap = 3;
 
-constexpr char const *kKindName[] = {"leaf", "node", "dive"};
+constexpr char const *kKindName[] = {"leaf", "node", "dive",
+                                     "focus"};
 
 // The path a reply belongs to travels as the task's user data,
 // heap-owned: exactly one callback per accepted task makes adoption
-// in deliver() the release.  The journal line rides along, prepared
-// while the task is known.
+// in deliver() the release.  The journal line and the file head
+// ride along, prepared while the task is known.
 struct reply_ctx {
 	Facts      *self;
 	std::string path;
 	std::string line;
+	std::string head;
 	agenda::id  id;
 };
+
+// A dive file opens with its regex: the focus assembly downstream
+// wants the prose and the pattern both, and human readers get the
+// same favor.
+std::string dive_head(agenda::task const &t)
+{
+	return t.what == agenda::kind::dive && !t.note.empty()
+	       ? "PATTERN " + t.note + "\n\n"
+	       : std::string();
+}
 
 bool debug()
 {
@@ -163,11 +201,13 @@ std::string_view clip(std::string const &text)
 
 // Atomic cache write: all-or-nothing via .tmp and rename, so a
 // reader on any thread sees either nothing or a whole summary.
-bool store(std::string const &path, char const *text, std::size_t n)
+bool store(std::string const &path, std::string const &head,
+           char const *text, std::size_t n)
 {
 	std::string const tmp = path + ".tmp";
 	{
 		std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+		out.write(head.data(), std::streamsize(head.size()));
 		out.write(text, std::streamsize(n));
 		out.put('\n');
 		// close() flushes: a full disk surfaces here, not in the
@@ -239,6 +279,8 @@ Facts::Facts()
 {
 	std::error_code ec;
 	std::filesystem::create_directories(m_dir + "/dives", ec);
+	if (!ec)
+		std::filesystem::create_directories(m_dir + "/focus", ec);
 	if (!ec) {
 		endpoint const ep = serverEnv();
 		m_llm = llm_create(ep.host.empty() ? nullptr
@@ -365,7 +407,7 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 	std::unique_ptr<reply_ctx> const ctx(
 		static_cast<reply_ctx *>(ud));
 	bool const wrote = status == LLM_OK && size
-	                && store(ctx->path, text, size);
+	                && store(ctx->path, ctx->head, text, size);
 	if (wrote)
 		// m_dir never changes after construction; the worker
 		// reads it unlocked.
@@ -424,7 +466,8 @@ bool Facts::submit(agenda::task const &t)
 	// The context first: a leaf's snapshot is spent by assemble(),
 	// so nothing fallible may sit between spending it and the ask.
 	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t),
-	                                         journal_line(t), t.id};
+	                                         journal_line(t),
+	                                         dive_head(t), t.id};
 	if (!ctx)
 		return false;
 	std::string const body = assemble(t);
@@ -465,9 +508,29 @@ std::string Facts::assemble(agenda::task const &t)
 
 	case agenda::kind::dive:
 		return assemble_dive(t);
+
+	case agenda::kind::focus:
+		return assemble_focus(t);
 	}
 
 	return {};
+}
+
+// FIRST and SECOND are the pair's finished dives, read whole: their
+// PATTERN heads travel along, so the model sees both the prose and
+// the regexes whose threads it is asked to join or refuse.
+std::string Facts::assemble_focus(agenda::task const &t) const
+{
+	std::string all;
+	for (agenda::id const dep : t.deps) {
+		std::string const part =
+			slurp(m_dir + "/dives/" + dep.hex() + ".txt");
+		if (part.empty())
+			return {};
+		all += all.empty() ? "FIRST\n" : "\n---\nSECOND\n";
+		all += part;
+	}
+	return std::string(clip(all));
 }
 
 std::string Facts::assemble_node(agenda::task const &t) const
@@ -544,7 +607,6 @@ std::string Facts::spend_body(agenda::id which)
 
 std::string Facts::path_of(agenda::task const &t) const
 {
-	return t.what == agenda::kind::dive
-	       ? m_dir + "/dives/" + t.id.hex() + ".txt"
-	       : m_dir + '/' + t.id.hex() + ".txt";
+	return m_dir + std::string(kSubdir[std::size_t(t.what)])
+	     + t.id.hex() + ".txt";
 }

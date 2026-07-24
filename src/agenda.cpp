@@ -9,10 +9,11 @@ namespace agenda {
 namespace {
 
 // Score anatomy, mirrored in the header comment: kinds set the
-// neighborhood a full unit apart, tiers order within a kind, the
-// export edge floats a topic over its supportive components, and
-// heat (unbounded) moves everything across those bands.
-constexpr double kKindBase[]  = {3.0, 2.0, 1.0};
+// neighborhood (leaf, node, dive a unit apart, focus half a band
+// under dives), tiers order within a kind, the export edge floats
+// a topic over its supportive components, and heat (unbounded)
+// moves everything across those bands.
+constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5};
 constexpr double kTierStep    = 1.0 / 32.0;
 constexpr double kExportEdge  = 1.0 / 4.0;
 

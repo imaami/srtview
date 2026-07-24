@@ -41,7 +41,12 @@
 
 namespace agenda {
 
-enum class kind : std::uint8_t { leaf, node, dive };
+// A *leaf* summarizes one subtitle file; a *node* merges child
+// summaries (the pyramid, generalizing upward); a *dive* details
+// one search pattern's matched material; a *focus* takes two
+// finished dives and either refuses or sharpens their common
+// thread -- prose plus a hypothesized regex that re-collects it.
+enum class kind : std::uint8_t { leaf, node, dive, focus };
 
 // Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,
 // kept binary in memory -- hex materializes only at the filesystem

@@ -9,10 +9,14 @@
 // gating guarantees exist; a *dive* explains one topic's matched
 // excerpts (snapshot like a leaf) against the summaries of the
 // videos they came from (deps, guaranteed) and the corpus overview
-// (refs, attached only if already in the cache).  Cache layout,
-// sibling to the frame cache:
+// (refs, attached only if already in the cache); a *focus* reads a
+// pair of finished dives (deps) and either refuses (NONE) or
+// sharpens their common thread, closing with a REGEX line the UI
+// layer harvests back into the corpus.  Cache layout, sibling to
+// the frame cache:
 //   $XDG_CACHE_HOME/srtview/facts/<id>.txt        leaves and nodes
 //   $XDG_CACHE_HOME/srtview/facts/dives/<id>.txt  dives
+//   $XDG_CACHE_HOME/srtview/facts/focus/<id>.txt  focuses
 // File existence is the manifest: done work is marked done instead
 // of queued, a failed or cancelled task writes nothing and retries
 // next session by its absence, and an empty reply writes nothing so
@@ -68,9 +72,13 @@ public:
 	// plan already knows and ids whose file exists are skipped.
 	void offer(agenda::id key, std::string const &utf8Text);
 
-	// The corpus abstraction pyramid (agenda::pyramid output);
-	// nodes whose files exist are marked done instead of queued.
+	// Body-less tasks whose inputs are cache files: pyramid nodes
+	// and dive-pair focuses.  Tasks whose files exist are marked
+	// done instead of queued.
 	void corpus(std::vector<agenda::task> nodes);
+
+	// The cache root; never changes after construction.
+	std::string const &dir() const { return m_dir; }
 
 	// One topic dive: the caller-built task (id, deps = hit-video
 	// leaves, keys, refs = optional overview) plus the matched
@@ -94,6 +102,7 @@ private:
 	std::string assemble(agenda::task const &t);
 	std::string assemble_node(agenda::task const &t) const;
 	std::string assemble_dive(agenda::task const &t);
+	std::string assemble_focus(agenda::task const &t) const;
 	std::string spend_body(agenda::id which);
 	std::string path_of(agenda::task const &t) const;
 

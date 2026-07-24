@@ -239,6 +239,11 @@ void testAdopt()
 	      "reference syntax is refused unvalidated");
 	check(topics::adopt(d, "brace \\{2} escape"),
 	      "an escaped brace without the reference shape is fine");
+	check(topics::adopt(d, "(?i:thread)", "focus")
+	      && d.topics.back().name == "focus1"
+	      && topics::adopt(d, "(?i:threads)", "focus")
+	      && d.topics.back().name == "focus2",
+	      "stems name their own families");
 
 	auto const plan = topics::export_plan(d);
 	bool found = false;

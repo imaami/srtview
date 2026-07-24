@@ -442,7 +442,7 @@ std::vector<topic const *> components(doc const &d)
 	return out;
 }
 
-bool adopt(doc &d, std::string const &pattern)
+bool adopt(doc &d, std::string const &pattern, char const *stem)
 {
 	// Edge whitespace would not survive write()/parse() -- the
 	// file format strips it -- so adopting it would break the
@@ -458,7 +458,7 @@ bool adopt(doc &d, std::string const &pattern)
 
 	std::string name;
 	for (unsigned n = 1;; ++n) {
-		name = "adhoc" + std::to_string(n);
+		name = stem + std::to_string(n);
 		if (!find(d, name))
 			break;
 	}

@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace {
 
@@ -70,6 +71,32 @@ agenda::id treeId(std::vector<agenda::id> const &kids)
 			reinterpret_cast<char const *>(k.b.data()),
 			qsizetype(k.b.size())));
 	return takeId(h);
+}
+
+// Focus identity from the unordered dive pair, sorted so the same
+// two dives name the same focus whichever finished first.
+agenda::id focusId(agenda::id a, agenda::id b)
+{
+	if (b.b < a.b)
+		std::swap(a, b);
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView("focus"));
+	h.addData(QByteArrayView(
+		reinterpret_cast<char const *>(a.b.data()),
+		qsizetype(a.b.size())));
+	h.addData(QByteArrayView(
+		reinterpret_cast<char const *>(b.b.data()),
+		qsizetype(b.b.size())));
+	return takeId(h);
+}
+
+bool sharesKey(std::vector<agenda::id> const &a,
+               std::vector<agenda::id> const &b)
+{
+	for (agenda::id const k : a)
+		if (std::ranges::find(b, k) != b.end())
+			return true;
+	return false;
 }
 
 // Dive identity is the expanded pattern's hash: editing a topic
@@ -225,6 +252,13 @@ MainWin::MainWin()
 	m_diveTick.setInterval(0);
 	connect(&m_diveTick, &QTimer::timeout,
 	        this, [this] { diveStep(); });
+	// The harvest pump: completed focuses drop REGEX hypotheses
+	// into the cache, and every tick folds new ones back into the
+	// corpus as generated topics.
+	m_focusTick.setInterval(10000);
+	connect(&m_focusTick, &QTimer::timeout,
+	        this, [this] { harvestFocus(); });
+	m_focusTick.start();
 
 	repairMenuPalette(menuBar());
 }
@@ -404,6 +438,11 @@ agenda::id MainWin::offerFacts(QString const &srt)
 // itself on show.)
 void MainWin::rebuildCorpus(bool fresh)
 {
+	if (fresh) {
+		m_dives.clear();
+		m_generated.clear();
+		m_harvested.clear();
+	}
 	m_playlist.clear();
 	QDir const dir = QFileInfo(m_corpusPath).absoluteDir();
 	auto const resolve = [&dir](std::string const &p) {
@@ -430,6 +469,9 @@ void MainWin::rebuildCorpus(bool fresh)
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
+	// Harvest before staging, so last session's focus regexes sit
+	// in the corpus when the dive scans are drawn from it.
+	harvestFocus();
 	queueDives(fresh);
 	updateInfo();
 }
@@ -475,7 +517,7 @@ void MainWin::searchCommitted()
 		return;
 	// Only the new pattern needs staging; a full restage would
 	// throw away every in-progress scan on each committed search.
-	stageDive(pat, true);
+	stageDive(pat, true, false);
 	if (m_diveAt < m_diveScans.size())
 		m_diveTick.start();
 }
@@ -490,13 +532,16 @@ void MainWin::queueDives(bool fresh)
 		m_diveScans.clear();
 		m_diveAt = 0;
 	}
-	for (topics::export_item const &e : topics::export_plan(m_corpus))
-		stageDive(e.pattern, true);
+	for (topics::export_item const &e :
+	     topics::export_plan(m_corpus)) {
+		bool const gen = m_generated.contains(e.pattern);
+		stageDive(e.pattern, !gen, gen);
+	}
 	// The supportive layer: referenced topics dive too, a band
 	// lower and unexported -- the nested regexes reveal semantic
 	// structure inside the tops, and the queue can lean on it.
 	for (topics::topic const *t : topics::components(m_corpus))
-		stageDive(topics::expand(m_corpus, *t), false);
+		stageDive(topics::expand(m_corpus, *t), false, false);
 	if (m_diveAt < m_diveScans.size())
 		m_diveTick.start();
 	else
@@ -505,7 +550,8 @@ void MainWin::queueDives(bool fresh)
 
 // Already-staged ids are left alone, finished or in flight: a merge
 // restage must not reset a scan's progress.
-void MainWin::stageDive(std::string const &pattern, bool exported)
+void MainWin::stageDive(std::string const &pattern, bool exported,
+                        bool generated)
 {
 	DiveScan s;
 	s.re = QRegularExpression(QString::fromStdString(pattern));
@@ -517,6 +563,7 @@ void MainWin::stageDive(std::string const &pattern, bool exported)
 			return;
 	s.pattern = pattern;
 	s.exported = exported;
+	s.generated = generated;
 	m_diveScans.push_back(std::move(s));
 }
 
@@ -597,9 +644,92 @@ void MainWin::finishDive(DiveScan &s)
 		if (m_rootId)
 			t.refs.push_back(m_rootId);
 		m_facts.dive(std::move(t), s.parts);
+		pairFocus(s);
 	}
 	s.parts.clear();
 	s.parts.shrink_to_fit();
+}
+
+// The focus trigger: a finished first-generation dive pairs with
+// every earlier one sharing a hit video.  Each pair's focus depends
+// on the two dive files, so the agenda holds it until both exist --
+// "at least two dives" falls out of dependency gating.  Generated
+// dives never pair: recursion stops one hop past the hypothesis.
+void MainWin::pairFocus(DiveScan const &s)
+{
+	if (s.generated)
+		return;
+	std::vector<agenda::task> staged;
+	for (FinishedDive const &o : m_dives) {
+		if (sharesKey(o.keys, s.deps))
+			staged.push_back(makeFocus(o, s));
+	}
+	m_dives.push_back({s.id, s.deps, s.pattern});
+	if (!staged.empty())
+		m_facts.corpus(std::move(staged));
+}
+
+agenda::task MainWin::makeFocus(FinishedDive const &a,
+                                DiveScan const &b) const
+{
+	agenda::task t;
+	t.id = focusId(a.id, b.id);
+	t.deps = {a.id, b.id};
+	t.keys = a.keys;
+	for (agenda::id const k : b.deps)
+		if (std::ranges::find(t.keys, k) == t.keys.end())
+			t.keys.push_back(k);
+	t.note = a.pattern + " ~ " + b.pattern;
+	t.what = agenda::kind::focus;
+	t.exported = false;
+	return t;
+}
+
+// Harvest completed focuses: NONE verdicts and malformed regex
+// lines are final; a valid REGEX line joins the corpus as a
+// generated topic (focusN) and dives like any other, supportive.
+// Runs on a slow tick and at every corpus rebuild, so one session's
+// hypotheses re-enter the next session's plan from the cache.
+void MainWin::harvestFocus()
+{
+	QDir const dir(QString::fromStdString(m_facts.dir())
+	               + QStringLiteral("/focus"));
+	for (QString const &name : dir.entryList(
+	     {QStringLiteral("*.txt")}, QDir::Files)) {
+		if (m_harvested.insert(name.toStdString()).second)
+			harvestOne(dir.filePath(name));
+	}
+	if (m_diveAt < m_diveScans.size())
+		m_diveTick.start();
+}
+
+void MainWin::harvestOne(QString const &file)
+{
+	QFile f(file);
+	if (!f.open(QIODevice::ReadOnly))
+		return;
+	std::string const text = f.readAll().toStdString();
+	if (text.starts_with("NONE"))
+		return;
+	std::size_t const at = text.rfind("REGEX:");
+	if (at == std::string::npos || (at && text[at - 1] != '\n'))
+		return;
+	std::size_t from = at + 6;
+	std::size_t end = text.find('\n', from);
+	if (end == std::string::npos)
+		end = text.size();
+	while (from < end && (text[from] == ' ' || text[from] == '\t'))
+		++from;
+	while (end > from
+	       && static_cast<unsigned char>(text[end - 1]) <= 0x20)
+		--end;
+	std::string const pat = text.substr(from, end - from);
+	if (pat.empty() || !QRegularExpression(
+	                    	QString::fromStdString(pat)).isValid())
+		return;
+	topics::adopt(m_corpus, pat, "focus");
+	m_generated.insert(pat);
+	stageDive(pat, false, true);
 }
 
 // A topic file: the corpus source of videos and composable regexes

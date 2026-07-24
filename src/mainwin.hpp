@@ -25,6 +25,7 @@
 #include <QRegularExpression>
 
 #include <cstddef>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -72,8 +73,17 @@ private:
 		std::string             parts;    // excerpts, UTF-8
 		std::vector<agenda::id> deps;     // leaves of hit videos
 		agenda::id              id;       // hash of the pattern
-		std::size_t             video    = 0;
-		bool                    exported = true;
+		std::size_t             video     = 0;
+		bool                    exported  = true;
+		bool                    generated = false; // from a focus
+	};
+
+	// A finished first-generation dive, kept for pairing: two that
+	// share a hit video stage a focus over their cache files.
+	struct FinishedDive {
+		agenda::id              id;
+		std::vector<agenda::id> keys;
+		std::string             pattern;
 	};
 
 	// The four zoom domains, nested: captions and the search bar
@@ -104,10 +114,16 @@ private:
 	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
 	void queueDives(bool fresh);
-	void stageDive(std::string const &pattern, bool exported);
+	void stageDive(std::string const &pattern, bool exported,
+	               bool generated);
 	void diveStep();
 	void scanDiveVideo(DiveScan &s, PlayItem const &it);
 	void finishDive(DiveScan &s);
+	void pairFocus(DiveScan const &s);
+	agenda::task makeFocus(FinishedDive const &a,
+	                       DiveScan const &b) const;
+	void harvestFocus();
+	void harvestOne(QString const &file);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();
@@ -156,8 +172,12 @@ private:
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
 	QTimer                          m_diveTick;  // topic scan pump
+	QTimer                          m_focusTick; // harvest pump
 	std::vector<DiveScan>           m_diveScans; // staged scans
 	std::size_t                     m_diveAt = 0;// scan cursor
+	std::vector<FinishedDive>       m_dives;     // for pairing
+	std::set<std::string>           m_generated; // harvested regexes
+	std::set<std::string>           m_harvested; // focus files seen
 	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
