@@ -1,8 +1,10 @@
 #include "mainwin.hpp"
 
+#include "agenda.hpp"
 #include "palettefix.hpp"
 #include "srt.hpp"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -20,6 +22,7 @@
 #include <QStatusBar>
 #include <QTextDocumentFragment>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -36,6 +39,23 @@ constexpr char const *kThemedClasses[] = {
 // One zoom step per Ctrl+-/+ press; 12 steps ~ a factor of four.
 constexpr double kZoomStep = 1.125;
 constexpr int    kZoomSpan = 12;
+
+// Focus bias on the facts queue: opening a video warms its leaf.
+constexpr double kFocusHeat = 0.5;
+
+// Pyramid-node identity from ordered children, same alphabet as the
+// discovery ids (16 hex of BLAKE2b-256): two corpora sharing a
+// prefix of leaves share the prefix's summary files.
+std::string treeId(std::vector<std::string> const &kids)
+{
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView("tree"));
+	for (std::string const &k : kids) {
+		h.addData(QByteArrayView("\n", 1));
+		h.addData(QByteArrayView(k.data(), qsizetype(k.size())));
+	}
+	return h.result().toHex().left(16).toStdString();
+}
 
 double zoomFactor(int steps)
 {
@@ -292,7 +312,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_trail.setVideo(id);
 		m_grab.setVideo(video, id);
 	}
-	offerFacts(srt);
+	m_facts.heat(offerFacts(srt), kFocusHeat);
 
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
@@ -315,14 +335,16 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 
 // The facts cache is keyed by the srt file's own discovery identity:
 // one summary per unique srt however many entries share it.  The
-// rendered transcript (tags consumed) is what the model reads.
-void MainWin::offerFacts(QString const &srt)
+// rendered transcript (tags consumed) is what the model reads.  The
+// returned id feeds the corpus pyramid and the heat map.
+std::string MainWin::offerFacts(QString const &srt)
 {
 	std::string const id = m_disc.id_for_video(srt.toStdString());
-	if (id.empty())
-		return;
-	m_facts.offer(id, exporter::load(m_transcripts, srt)
-	                  .lines.join(QLatin1Char('\n')).toStdString());
+	if (!id.empty())
+		m_facts.offer(id, exporter::load(m_transcripts, srt)
+		                  .lines.join(QLatin1Char('\n'))
+		                  .toStdString());
+	return id;
 }
 
 // A topic file: the corpus source of videos and composable regexes
@@ -347,6 +369,7 @@ bool MainWin::loadPlaylist(QString const &path)
 	m_corpusPath = path;
 	m_playlist.clear();
 	m_transcripts.clear();               // natural refresh point
+	m_facts.reset();
 	QDir const dir = QFileInfo(path).absoluteDir();
 	auto const resolve = [&dir](std::string const &p) {
 		QString const q = QString::fromStdString(p);
@@ -364,10 +387,17 @@ bool MainWin::loadPlaylist(QString const &path)
 		"playlist: %1 videos, %2 topics")
 		.arg(m_playlist.size()).arg(m_corpus.topics.size()), 3000);
 	// Background factual summaries, one per srt not yet in the facts
-	// cache.  The transcript cache is shared with the tally and the
+	// cache, then the abstraction pyramid over them in playlist
+	// order.  The transcript cache is shared with the tally and the
 	// exporter, so nothing gets parsed twice.
-	for (PlayItem const &it : m_playlist)
-		offerFacts(it.srt);
+	std::vector<std::string> leaves;
+	for (PlayItem const &it : m_playlist) {
+		std::string id = offerFacts(srtOf(it));
+		if (!id.empty() && std::ranges::find(leaves, id)
+		                   == leaves.end())
+			leaves.push_back(std::move(id));
+	}
+	m_facts.corpus(agenda::pyramid(leaves, treeId));
 	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
 		openPath(m_playlist.first().video, m_playlist.first().srt);
 

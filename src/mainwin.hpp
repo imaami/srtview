@@ -77,7 +77,7 @@ private:
 	QString matchInfo(qsizetype at);
 	void recomputeTally();
 	bool showDoc(QString const &video, QString const &srt);
-	void offerFacts(QString const &srt);
+	std::string offerFacts(QString const &srt);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();

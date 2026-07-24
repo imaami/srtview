@@ -30,6 +30,16 @@ target_compile_options(fundo_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME fundo_tests COMMAND fundo_tests)
 
+# The agenda scheduler is standard C++; no Qt, no IO, no threads.
+add_executable(agenda_tests
+	agenda_test.cpp
+	${CMAKE_SOURCE_DIR}/src/agenda.cpp
+)
+target_include_directories(agenda_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(agenda_tests PRIVATE -Wall -Wextra)
+
+add_test(NAME agenda_tests COMMAND agenda_tests)
+
 # The llm client is plain C (POSIX sockets + pthread); its test
 # drives it against a fake in-process HTTP server, no C++ involved.
 add_executable(llm_tests
