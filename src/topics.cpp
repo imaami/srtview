@@ -421,6 +421,25 @@ std::vector<export_item> export_plan(doc const &d)
 	return plan;
 }
 
+bool adopt(doc &d, std::string const &pattern)
+{
+	ref r;
+	if (pattern.empty() || next_ref(pattern, 0, r))
+		return false;
+	for (topic const &t : d.topics)
+		if (expand(d, t) == pattern)
+			return false;
+
+	std::string name;
+	for (unsigned n = 1;; ++n) {
+		name = "adhoc" + std::to_string(n);
+		if (!find(d, name))
+			break;
+	}
+	d.topics.push_back({std::move(name), {pattern}});
+	return true;
+}
+
 std::string write(doc const &d)
 {
 	std::string out;

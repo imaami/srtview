@@ -32,6 +32,11 @@ struct search_nav {
 	// care.  Default: nobody does.
 	virtual void searchInfoChanged() {}
 
+	// Enter accepted the pattern: the moment a search phrase
+	// becomes something kept rather than typed.  Default: nobody
+	// cares.
+	virtual void searchCommitted() {}
+
 protected:
 	~search_nav() = default;
 };

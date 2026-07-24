@@ -197,6 +197,47 @@ void testLexical()
 	      "bare-CR line endings");
 }
 
+void testAdopt()
+{
+	auto r = topics::parse(kSketch);
+	auto &d = r.value;
+	auto const before = d.topics.size();
+
+	check(topics::adopt(d, "(?i:kestrel)")
+	      && d.topics.size() == before + 1
+	      && d.topics.back().name == "adhoc1"
+	      && d.topics.back().fragments
+	         == std::vector<std::string>{"(?i:kestrel)"},
+	      "a fresh pattern adopts as adhoc1");
+	check(!topics::adopt(d, "(?i:kestrel)")
+	      && d.topics.size() == before + 1,
+	      "the same pattern deduplicates");
+	check(topics::adopt(d, "[Bb]udget")
+	      && d.topics.back().name == "adhoc2",
+	      "the next adoption numbers upward");
+	check(!topics::adopt(d,
+	      "uses? ((?:([Aa]n )?i[Pp]hone|([Aa] )?([Ss]amsung|"
+	      "(1|[Oo]ne)[Pp]lus)))"),
+	      "a pattern equal to a topic's expansion deduplicates");
+	check(!topics::adopt(d, ""), "the empty pattern is refused");
+	check(!topics::adopt(d, "x\\{phone:}y"),
+	      "reference syntax is refused unvalidated");
+	check(topics::adopt(d, "brace \\{2} escape"),
+	      "an escaped brace without the reference shape is fine");
+
+	auto const plan = topics::export_plan(d);
+	bool found = false;
+	for (auto const &e : plan)
+		found = found || (e.name == "adhoc1"
+		                  && e.pattern == "(?i:kestrel)"
+		                  && e.parts.empty());
+	check(found, "adopted topics are top-level export groupings");
+
+	auto const back = topics::parse(topics::write(d));
+	check(back.error.empty() && back.value == d,
+	      "a document with adoptions round-trips through write");
+}
+
 } // namespace
 
 int main()
@@ -207,6 +248,7 @@ int main()
 	testExportPlan();
 	testErrors();
 	testLexical();
+	testAdopt();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	            g_fail, g_fail == 1 ? "" : "s");
 	return g_fail ? 1 : 0;

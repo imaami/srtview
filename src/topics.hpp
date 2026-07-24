@@ -120,6 +120,14 @@ struct export_item {
 // doc that came through parse().
 std::vector<export_item> export_plan(doc const &d);
 
+// Adopts an on-the-spot search as an implicitly exported topic: the
+// pattern becomes a single-fragment topic under a generated
+// "adhocN" name, unless some topic already expands to the same
+// pattern.  Patterns containing the \{name:} reference shape are
+// refused: adopted text has not been through parse(), and expand()
+// must never meet an unvalidated reference.
+bool adopt(doc &d, std::string const &pattern);
+
 // Canonical text form; parses back to an equal document.
 std::string write(doc const &d);
 

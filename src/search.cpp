@@ -109,6 +109,8 @@ void SearchCtl::hideSearch()
 void SearchCtl::commitSearch()
 {
 	recordUse(true);
+	if (m_nav)
+		m_nav->searchCommitted();
 	// On an already-recorded pattern the state may not be current
 	// yet: hop to this hit like F3 would, minus the find.
 	if (!m_matchStarts.empty() && m_view.cueCount() > 0) {

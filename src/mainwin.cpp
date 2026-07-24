@@ -244,12 +244,21 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 		if (srt.isEmpty())
 			return fail(QString::fromStdString(story));
 	}
+	// On-the-spot videos join the corpus: a bare open founds an
+	// implicit playlist of one, an open beside a loaded corpus
+	// extends it, and the knowledge pipeline follows either way.
+	adoptVideo(video, srt);
 	// Player routing: playlist members navigate inside the
 	// persistent corpus instance -- same window, no respawn, no
-	// focus theft; anything else gets a single-entry playlist on
-	// the per-video socket (the srtjump sharing scheme).
+	// focus theft.  The corpus claims the topic file's socket, or,
+	// for an implicit corpus with no file, the founding video's --
+	// which keeps a bare single-video open byte-compatible with
+	// the srtjump sharing scheme.
 	qsizetype const at = playlistIndex(video);
-	QString const claim = at >= 0 ? m_corpusPath : video;
+	QString const claim = at < 0 ? video
+	                    : m_corpusPath.isEmpty()
+	                      ? m_playlist.first().video
+	                      : m_corpusPath;
 	QString const sock = QString::fromStdString(
 		m_disc.sock_for_video(claim.toStdString()));
 	if (sock.isEmpty())
@@ -381,6 +390,77 @@ agenda::id MainWin::offerFacts(QString const &srt)
 	return key;
 }
 
+// Re-derive everything the corpus defines: the playlist and the
+// id registry, then the facts pipeline -- leaf offers, the
+// abstraction pyramid, the topic dive scans.  Runs after any corpus
+// mutation, a loaded file or an on-the-spot adoption; the transcript
+// cache and the facts plan dedupe, so re-derivation is idempotent
+// and pending work from an older shape simply finishes into the
+// cache.  (The Videos menu rebuilds itself on show.)
+void MainWin::rebuildCorpus()
+{
+	m_playlist.clear();
+	QDir const dir = QFileInfo(m_corpusPath).absoluteDir();
+	auto const resolve = [&dir](std::string const &p) {
+		QString const q = QString::fromStdString(p);
+		return q.isEmpty() || !QFileInfo(q).isRelative()
+		       ? q : dir.absoluteFilePath(q);
+	};
+	for (topics::video const &v : m_corpus.videos) {
+		PlayItem it{resolve(v.path), resolve(v.srt), {}};
+		it.id = videoId(it.video);
+		if (!it.id.isEmpty())
+			m_videosById.insert(it.id, it);
+		m_playlist << it;
+	}
+	// One leaf offer per srt not yet in the facts cache, then the
+	// pyramid over them in playlist order.  The transcript cache is
+	// shared with the tally and the exporter: nothing parses twice.
+	std::vector<agenda::id> leaves;
+	for (PlayItem const &it : m_playlist) {
+		agenda::id const key = offerFacts(srtOf(it));
+		if (key && std::ranges::find(leaves, key) == leaves.end())
+			leaves.push_back(key);
+	}
+	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
+	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
+	m_facts.corpus(std::move(nodes));
+	queueDives();
+	updateInfo();
+}
+
+// A video seen outside the playlist joins the corpus in memory: a
+// bare open founds an implicit playlist, later opens and drops
+// extend whatever is loaded.  The topic file on disk is never
+// touched -- export writes versions.
+void MainWin::adoptVideo(QString const &video, QString const &srt)
+{
+	if (playlistIndex(video) >= 0)
+		return;
+	m_corpus.videos.push_back(
+		{video.toStdString(), srt.toStdString(), {}});
+	rebuildCorpus();
+}
+
+// Enter kept a pattern: adopt it as an implicitly exported topic
+// and restage the dive scans.  Case-insensitivity folds into the
+// pattern as an inline flag, since topic files carry bare PCRE2;
+// adoption dedupes, so re-committing a known pattern is free.
+void MainWin::searchCommitted()
+{
+	if (m_playlist.isEmpty())
+		return;
+	QRegularExpression const re = m_search.effectivePattern();
+	if (!re.isValid() || re.pattern().isEmpty())
+		return;
+	std::string pat = re.pattern().toStdString();
+	if (re.patternOptions()
+	    & QRegularExpression::CaseInsensitiveOption)
+		pat = "(?i:" + pat + ")";
+	if (topics::adopt(m_corpus, pat))
+		queueDives();
+}
+
 // Stage the corpus topic dives: one scan per exported grouping,
 // chewed a video per tick.  Reopening a summarized corpus still
 // scans (a few ms per cell, spread out); Facts drops the finished
@@ -488,39 +568,12 @@ bool MainWin::loadPlaylist(QString const &path)
 
 	m_corpus = std::move(r.value);
 	m_corpusPath = path;
-	m_playlist.clear();
 	m_transcripts.clear();               // natural refresh point
 	m_facts.reset();
-	QDir const dir = QFileInfo(path).absoluteDir();
-	auto const resolve = [&dir](std::string const &p) {
-		QString const q = QString::fromStdString(p);
-		return q.isEmpty() || !QFileInfo(q).isRelative()
-		       ? q : dir.absoluteFilePath(q);
-	};
-	for (topics::video const &v : m_corpus.videos) {
-		PlayItem it{resolve(v.path), resolve(v.srt), {}};
-		it.id = videoId(it.video);
-		if (!it.id.isEmpty())
-			m_videosById.insert(it.id, it);
-		m_playlist << it;
-	}
+	rebuildCorpus();
 	statusBar()->showMessage(QStringLiteral(
 		"playlist: %1 videos, %2 topics")
 		.arg(m_playlist.size()).arg(m_corpus.topics.size()), 3000);
-	// Background factual summaries, one per srt not yet in the facts
-	// cache, then the abstraction pyramid over them in playlist
-	// order.  The transcript cache is shared with the tally and the
-	// exporter, so nothing gets parsed twice.
-	std::vector<agenda::id> leaves;
-	for (PlayItem const &it : m_playlist) {
-		agenda::id const key = offerFacts(srtOf(it));
-		if (key && std::ranges::find(leaves, key) == leaves.end())
-			leaves.push_back(key);
-	}
-	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
-	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
-	m_facts.corpus(std::move(nodes));
-	queueDives();
 	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
 		openPath(m_playlist.first().video, m_playlist.first().srt);
 
@@ -584,13 +637,37 @@ void MainWin::rebuildVideosMenu()
 // "incomplete".
 void MainWin::startExport()
 {
-	if (m_corpusPath.isEmpty()) {
+	if (m_playlist.isEmpty()) {
 		statusBar()->showMessage(QStringLiteral(
-			"no playlist loaded"), 2000);
+			"nothing to export"), 2000);
 		return;
 	}
+	writePlaylistVersion();
 	m_exportQueued = -1;
 	runExport(true);
+}
+
+// The corpus as it stands -- implicit adoptions included -- is part
+// of the exported artifact.  Versions land inside the export
+// directory, and the file a playlist was loaded from is never
+// written: loading a previously exported version gets a ".new"
+// sibling instead of an overwrite.
+void MainWin::writePlaylistVersion()
+{
+	QString const name = m_corpusPath.isEmpty()
+		? QStringLiteral("playlist.topics")
+		: QFileInfo(m_corpusPath).fileName();
+	QDir().mkpath(exportDir());
+	QString target = exportDir() + QLatin1Char('/') + name;
+	if (!m_corpusPath.isEmpty()
+	    && QFileInfo(target).canonicalFilePath()
+	       == QFileInfo(m_corpusPath).canonicalFilePath())
+		target += QStringLiteral(".new");
+	QFile f(target);
+	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		return;
+	std::string const text = topics::write(m_corpus);
+	f.write(text.data(), qint64(text.size()));
 }
 
 void MainWin::grabsIdle()
@@ -643,9 +720,14 @@ void MainWin::runExport(bool drained)
 		.arg(st.queued).arg(st.hits), 6000);
 }
 
+// Beside the topic file, or -- for an implicit corpus -- beside its
+// founding video.
 QString MainWin::exportDir() const
 {
-	QFileInfo const fi(m_corpusPath);
+	QString const base = !m_corpusPath.isEmpty() ? m_corpusPath
+	                   : m_playlist.isEmpty()    ? QString()
+	                   : m_playlist.first().video;
+	QFileInfo const fi(base);
 	return fi.absolutePath() + QLatin1Char('/')
 	     + fi.completeBaseName() + QStringLiteral("-export");
 }

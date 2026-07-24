@@ -92,12 +92,15 @@ private:
 	bool hopVideo(QRegularExpression const &re,
 	              bool backward) override;
 	void searchInfoChanged() override { updateInfo(); }
+	void searchCommitted() override;
 	void mpvSwitched(int index) override;
 	void updateInfo();
 	QString matchInfo(qsizetype at);
 	void recomputeTally();
 	void feedHeat();
 	bool showDoc(QString const &video, QString const &srt);
+	void rebuildCorpus();
+	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
 	void queueDives();
 	void diveStep();
@@ -110,6 +113,7 @@ private:
 	void grabProgress() override;
 	void startExport();
 	void runExport(bool drained);
+	void writePlaylistVersion();
 	QString exportDir() const;
 	void applyStep(trail_step const &s, bool undo);
 	bool applyVideoStep(trail_step const &s);
