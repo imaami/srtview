@@ -68,6 +68,7 @@ private:
 	// everything else is std.
 	struct DiveScan {
 		QRegularExpression      re;
+		std::string             pattern;  // expanded, for the journal
 		std::string             parts;    // excerpts, UTF-8
 		std::vector<agenda::id> deps;     // leaves of hit videos
 		agenda::id              id;       // hash of the pattern
@@ -103,6 +104,7 @@ private:
 	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
 	void queueDives();
+	void stageDive(std::string const &pattern, bool exported);
 	void diveStep();
 	void scanDiveVideo(DiveScan &s, PlayItem const &it);
 	void finishDive(DiveScan const &s);

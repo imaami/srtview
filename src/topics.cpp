@@ -402,9 +402,12 @@ std::string expand(doc const &d, topic const &t)
 	return out;
 }
 
-std::vector<export_item> export_plan(doc const &d)
+namespace {
+
+// A referenced topic is a component, not a grouping of its own;
+// the marking is shared by export_plan() and components().
+std::vector<char> mark_components(doc const &d)
 {
-	// A referenced topic is a component, not a grouping of its own.
 	std::vector<char> component(d.topics.size(), 0);
 	for (topic const &t : d.topics) {
 		for (std::string const &f : t.fragments) {
@@ -414,11 +417,29 @@ std::vector<export_item> export_plan(doc const &d)
 				          - d.topics.data())] = 1;
 		}
 	}
+	return component;
+}
+
+} // namespace
+
+std::vector<export_item> export_plan(doc const &d)
+{
+	std::vector<char> const component = mark_components(d);
 	std::vector<export_item> plan;
 	for (std::size_t i = 0; i < d.topics.size(); ++i)
 		if (!component[i])
 			plan.push_back(plan_one(d, d.topics[i]));
 	return plan;
+}
+
+std::vector<topic const *> components(doc const &d)
+{
+	std::vector<char> const component = mark_components(d);
+	std::vector<topic const *> out;
+	for (std::size_t i = 0; i < d.topics.size(); ++i)
+		if (component[i])
+			out.push_back(&d.topics[i]);
+	return out;
 }
 
 bool adopt(doc &d, std::string const &pattern)

@@ -470,16 +470,27 @@ void MainWin::queueDives()
 	m_diveScans.clear();
 	m_diveAt = 0;
 	m_diveTick.stop();
-	for (topics::export_item const &e : topics::export_plan(m_corpus)) {
-		DiveScan s;
-		s.re = QRegularExpression(QString::fromStdString(e.pattern));
-		if (!s.re.isValid())
-			continue;
-		s.id = diveId(e.pattern);
-		m_diveScans.push_back(std::move(s));
-	}
+	for (topics::export_item const &e : topics::export_plan(m_corpus))
+		stageDive(e.pattern, true);
+	// The supportive layer: referenced topics dive too, a band
+	// lower and unexported -- the nested regexes reveal semantic
+	// structure inside the tops, and the queue can lean on it.
+	for (topics::topic const *t : topics::components(m_corpus))
+		stageDive(topics::expand(m_corpus, *t), false);
 	if (!m_diveScans.empty())
 		m_diveTick.start();
+}
+
+void MainWin::stageDive(std::string const &pattern, bool exported)
+{
+	DiveScan s;
+	s.re = QRegularExpression(QString::fromStdString(pattern));
+	if (!s.re.isValid())
+		return;
+	s.id = diveId(pattern);
+	s.pattern = pattern;
+	s.exported = exported;
+	m_diveScans.push_back(std::move(s));
 }
 
 void MainWin::diveStep()
@@ -541,6 +552,7 @@ void MainWin::finishDive(DiveScan const &s)
 	t.id = s.id;
 	t.deps = s.deps;
 	t.keys = s.deps;
+	t.note = s.pattern;
 	t.what = agenda::kind::dive;
 	t.exported = s.exported;
 	if (m_rootId)

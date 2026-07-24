@@ -19,8 +19,11 @@ namespace {
 
 // The server holds 32k of context; leave room for the reply and the
 // reasoning that precedes it, and cut an oversized prompt body.
+// The token cap covers the reasoning too, and a hard subject can
+// spiral a thinking model: an exhausted budget means an empty reply
+// and a parked task, so the cap errs generous.
 constexpr std::size_t  kMaxText   = std::size_t{96} * 1024;
-constexpr std::int32_t kMaxTokens = 4096;
+constexpr std::int32_t kMaxTokens = 8192;
 constexpr std::int32_t kTimeoutS  = 3600;
 
 constexpr char kLeafPrompt[] =
@@ -45,11 +48,16 @@ constexpr char kDivePrompt[] =
 	"(the section may be absent), SUMMARIES holds condensed "
 	"summaries of the videos where a search pattern matched, and "
 	"MATCHES holds the matching subtitle excerpts grouped per "
-	"video under == headers. Explain in specific detail what the "
-	"matched material covers -- the concrete facts, claims, "
-	"decisions, numbers and names in it -- and then state what "
-	"distinguishes this material from the rest of the collection. "
-	"Plain text only; no preamble, no headings.";
+	"video under == headers. Describe the matched subject itself "
+	"in specific detail -- its facts, claims, decisions, numbers "
+	"and names, taken from MATCHES only; OVERVIEW and SUMMARIES "
+	"are background for interpretation, not sources of extra "
+	"facts. End with one sentence on how the subject stands apart "
+	"from the collection's other themes, or leave that closing "
+	"out if nothing sets it apart. Write about the subject, never "
+	"about the act of reviewing it -- no phrases like 'this "
+	"material', 'these excerpts', 'the matches show'. Plain text "
+	"only; no preamble, no headings.";
 
 // System prompt per task kind (leaf, node, dive).  The views wrap
 // NUL-terminated literals, so .data() satisfies the C API below.
@@ -65,10 +73,12 @@ constexpr char const *kKindName[] = {"leaf", "node", "dive"};
 
 // The path a reply belongs to travels as the task's user data,
 // heap-owned: exactly one callback per accepted task makes adoption
-// in deliver() the release.
+// in deliver() the release.  The journal line rides along, prepared
+// while the task is known.
 struct reply_ctx {
 	Facts      *self;
 	std::string path;
+	std::string line;
 	agenda::id  id;
 };
 
@@ -178,6 +188,40 @@ void add_section(std::string &to, std::string const &sec)
 	if (!to.empty())
 		to += "\n---\n";
 	to += sec;
+}
+
+// One provenance line per cache file, appended when the file is
+// created: the dedupe means a file completes once ever, so the
+// journal stays one creation-ordered line per artifact.  Human
+// eyes only; nothing reads it back.
+void journal(std::string const &dir, std::string const &line)
+{
+	std::ofstream out(dir + "/journal.txt",
+	                  std::ios::app | std::ios::binary);
+	out << line << '\n';
+}
+
+// The journal line for a task: kind (nodes with their tier), id,
+// the note (a dive's pattern), the supportive mark, and the inputs.
+std::string journal_line(agenda::task const &t)
+{
+	std::string line = kKindName[std::size_t(t.what)];
+	if (t.what == agenda::kind::node) {
+		line += '.';
+		line += std::to_string(t.tier);
+	}
+	line += ' ';
+	line += t.id.hex();
+	if (!t.note.empty())
+		line += " [" + t.note + ']';
+	if (!t.exported)
+		line += " (supportive)";
+	if (t.deps.empty())
+		return line;
+	line += " <-";
+	for (agenda::id const d : t.deps)
+		line += ' ' + d.hex();
+	return line;
 }
 
 } // namespace
@@ -301,7 +345,11 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 		static_cast<reply_ctx *>(ud));
 	bool const wrote = status == LLM_OK && size
 	                && store(ctx->path, text, size);
-	if (!wrote && debug())
+	if (wrote)
+		// m_dir never changes after construction; the worker
+		// reads it unlocked.
+		journal(ctx->self->m_dir, ctx->line);
+	else if (debug())
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
 		             ctx->id.hex().c_str(), llm_strerror(status));
 	ctx->self->completed(ctx->id, status, wrote);
@@ -355,7 +403,8 @@ bool Facts::submit(agenda::task const &t)
 	std::string const body = assemble(t);
 	if (body.empty())
 		return false;
-	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t), t.id};
+	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t),
+	                                         journal_line(t), t.id};
 	if (!ctx)
 		return false;
 	llm_task const ask = {

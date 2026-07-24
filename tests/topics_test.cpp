@@ -197,6 +197,18 @@ void testLexical()
 	      "bare-CR line endings");
 }
 
+void testComponents()
+{
+	auto const r = topics::parse(kSketch);
+	auto const c = topics::components(r.value);
+	check(c.size() == 1 && c[0]->name == "phone",
+	      "the referenced topic is the sole component");
+	auto d = r.value;
+	topics::adopt(d, "solo");
+	check(topics::components(d).size() == 1,
+	      "adopted topics are tops, never components");
+}
+
 void testAdopt()
 {
 	auto r = topics::parse(kSketch);
@@ -248,6 +260,7 @@ int main()
 	testExportPlan();
 	testErrors();
 	testLexical();
+	testComponents();
 	testAdopt();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	            g_fail, g_fail == 1 ? "" : "s");

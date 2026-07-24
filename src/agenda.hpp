@@ -70,6 +70,8 @@ struct task {
 	std::vector<agenda::id> refs{};    // optional context ids: read
 	                                   // at assembly when their
 	                                   // files exist, never awaited
+	std::string             note{};    // human journal text only:
+	                                   // no identity, no scheduling
 	kind                    what     = kind::leaf;
 	std::uint8_t            tier     = 0;
 	bool                    exported = true;

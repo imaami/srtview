@@ -120,6 +120,11 @@ struct export_item {
 // doc that came through parse().
 std::vector<export_item> export_plan(doc const &d);
 
+// The component topics -- referenced by another topic, so they form
+// no grouping of their own: the supportive structure inside the
+// exported tops.  Pointers into d, in topic order.
+std::vector<topic const *> components(doc const &d);
+
 // Adopts an on-the-spot search as an implicitly exported topic: the
 // pattern becomes a single-fragment topic under a generated
 // "adhocN" name, unless some topic already expands to the same
