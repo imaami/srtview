@@ -165,6 +165,9 @@ bool store(std::string const &path, char const *text, std::size_t n)
 		std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
 		out.write(text, std::streamsize(n));
 		out.put('\n');
+		// close() flushes: a full disk surfaces here, not in the
+		// destructor after the check.
+		out.close();
 		if (!out) {
 			std::remove(tmp.c_str());
 			return false;
@@ -249,6 +252,19 @@ Facts::~Facts()
 	// Joins the worker; queued tasks cancel through deliver(),
 	// which m_down keeps from advancing.
 	llm_destroy(&m_llm);
+}
+
+bool Facts::wants(agenda::id key) const
+{
+	if (!key)
+		return false;
+
+	std::lock_guard const lock(m_mtx);
+	if (!m_llm || m_plan.status(key) != agenda::plan::state::unknown)
+		return false;
+	std::error_code ec;
+	return !std::filesystem::exists(m_dir + '/' + key.hex() + ".txt",
+	                                ec);
 }
 
 void Facts::offer(agenda::id key, std::string const &utf8Text)
@@ -400,13 +416,17 @@ void Facts::advance()
 // m_mtx held.
 bool Facts::submit(agenda::task const &t)
 {
-	std::string const body = assemble(t);
-	if (body.empty())
-		return false;
+	// The context first: a leaf's snapshot is spent by assemble(),
+	// so nothing fallible may sit between spending it and the ask.
 	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t),
 	                                         journal_line(t), t.id};
 	if (!ctx)
 		return false;
+	std::string const body = assemble(t);
+	if (body.empty()) {
+		delete ctx;
+		return false;
+	}
 	llm_task const ask = {
 		.system      = kPromptOf[std::size_t(t.what)].data(),
 		.prompt      = body.c_str(),

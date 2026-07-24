@@ -130,7 +130,10 @@ std::vector<topic const *> components(doc const &d);
 // "adhocN" name, unless some topic already expands to the same
 // pattern.  Patterns containing the \{name:} reference shape are
 // refused: adopted text has not been through parse(), and expand()
-// must never meet an unvalidated reference.
+// must never meet an unvalidated reference.  Patterns with edge
+// whitespace are refused too: the file format strips it, which
+// would break the write()/parse() round-trip (a deliberate edge
+// space is written [ ] or \x20, per the format notes).
 bool adopt(doc &d, std::string const &pattern);
 
 // Canonical text form; parses back to an equal document.

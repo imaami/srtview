@@ -444,8 +444,13 @@ std::vector<topic const *> components(doc const &d)
 
 bool adopt(doc &d, std::string const &pattern)
 {
+	// Edge whitespace would not survive write()/parse() -- the
+	// file format strips it -- so adopting it would break the
+	// round-trip and orphan the pattern's dive id.  Refused, like
+	// references: stripping instead would change what it matches.
 	ref r;
-	if (pattern.empty() || next_ref(pattern, 0, r))
+	if (pattern.empty() || strip(pattern) != pattern
+	    || next_ref(pattern, 0, r))
 		return false;
 	for (topic const &t : d.topics)
 		if (expand(d, t) == pattern)

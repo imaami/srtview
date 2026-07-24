@@ -549,6 +549,7 @@ test_pace (void)
 	slot_init(&s2);
 	slot_init(&s3);
 	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
 	llm_pace(c, 250);
 	t0 = now_ms();
 	check(llm_ask(c, &(struct llm_task){ .prompt = "a" },
@@ -583,6 +584,7 @@ test_pace_destroy (void)
 	slot_init(&s1);
 	slot_init(&s2);
 	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
 	llm_pace(c, 5000);
 	check(llm_ask(c, &(struct llm_task){ .prompt = "a" },
 	              on_done, &s1) != 0, "first task queued");

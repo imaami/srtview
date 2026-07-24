@@ -232,6 +232,9 @@ void testAdopt()
 	      "(1|[Oo]ne)[Pp]lus)))"),
 	      "a pattern equal to a topic's expansion deduplicates");
 	check(!topics::adopt(d, ""), "the empty pattern is refused");
+	check(!topics::adopt(d, " foo") && !topics::adopt(d, "foo\t")
+	      && !topics::adopt(d, "foo "),
+	      "edge whitespace is refused: it cannot round-trip");
 	check(!topics::adopt(d, "x\\{phone:}y"),
 	      "reference syntax is refused unvalidated");
 	check(topics::adopt(d, "brace \\{2} escape"),

@@ -100,14 +100,14 @@ private:
 	void recomputeTally();
 	void feedHeat();
 	bool showDoc(QString const &video, QString const &srt);
-	void rebuildCorpus();
+	void rebuildCorpus(bool fresh);
 	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
-	void queueDives();
+	void queueDives(bool fresh);
 	void stageDive(std::string const &pattern, bool exported);
 	void diveStep();
 	void scanDiveVideo(DiveScan &s, PlayItem const &it);
-	void finishDive(DiveScan const &s);
+	void finishDive(DiveScan &s);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();

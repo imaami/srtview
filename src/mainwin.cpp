@@ -377,13 +377,15 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 // The facts cache is keyed by the srt file's own discovery identity
 // (its hex socket hash, rehydrated to bytes at this boundary): one
 // summary per unique srt however many entries share it.  The
-// rendered transcript (tags consumed) is what the model reads.  The
-// returned id feeds the corpus pyramid and the heat map.
+// rendered transcript (tags consumed) is what the model reads;
+// wants() gates the join, so re-derivations never materialize text
+// the executor would only discard.  The returned id feeds the
+// corpus pyramid and the heat map.
 agenda::id MainWin::offerFacts(QString const &srt)
 {
 	agenda::id const key = agenda::id::from_hex(
 		m_disc.id_for_video(srt.toStdString()));
-	if (key)
+	if (key && m_facts.wants(key))
 		m_facts.offer(key, exporter::load(m_transcripts, srt)
 		                   .lines.join(QLatin1Char('\n'))
 		                   .toStdString());
@@ -396,8 +398,10 @@ agenda::id MainWin::offerFacts(QString const &srt)
 // mutation, a loaded file or an on-the-spot adoption; the transcript
 // cache and the facts plan dedupe, so re-derivation is idempotent
 // and pending work from an older shape simply finishes into the
-// cache.  (The Videos menu rebuilds itself on show.)
-void MainWin::rebuildCorpus()
+// cache.  fresh means the corpus was replaced, not extended: dive
+// scans restart instead of merging.  (The Videos menu rebuilds
+// itself on show.)
+void MainWin::rebuildCorpus(bool fresh)
 {
 	m_playlist.clear();
 	QDir const dir = QFileInfo(m_corpusPath).absoluteDir();
@@ -425,7 +429,7 @@ void MainWin::rebuildCorpus()
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
-	queueDives();
+	queueDives(fresh);
 	updateInfo();
 }
 
@@ -439,7 +443,9 @@ void MainWin::adoptVideo(QString const &video, QString const &srt)
 		return;
 	m_corpus.videos.push_back(
 		{video.toStdString(), srt.toStdString(), {}});
-	rebuildCorpus();
+	// An extension, not a replacement: in-progress dive scans keep
+	// their cursors -- adoption only appends playlist entries.
+	rebuildCorpus(false);
 }
 
 // Enter kept a pattern: adopt it as an implicitly exported topic
@@ -457,19 +463,25 @@ void MainWin::searchCommitted()
 	if (re.patternOptions()
 	    & QRegularExpression::CaseInsensitiveOption)
 		pat = "(?i:" + pat + ")";
-	if (topics::adopt(m_corpus, pat))
-		queueDives();
+	if (!topics::adopt(m_corpus, pat))
+		return;
+	// Only the new pattern needs staging; a full restage would
+	// throw away every in-progress scan on each committed search.
+	stageDive(pat, true);
+	if (m_diveAt < m_diveScans.size())
+		m_diveTick.start();
 }
 
 // Stage the corpus topic dives: one scan per exported grouping,
 // chewed a video per tick.  Reopening a summarized corpus still
 // scans (a few ms per cell, spread out); Facts drops the finished
 // scan against its cache.
-void MainWin::queueDives()
+void MainWin::queueDives(bool fresh)
 {
-	m_diveScans.clear();
-	m_diveAt = 0;
-	m_diveTick.stop();
+	if (fresh) {
+		m_diveScans.clear();
+		m_diveAt = 0;
+	}
 	for (topics::export_item const &e : topics::export_plan(m_corpus))
 		stageDive(e.pattern, true);
 	// The supportive layer: referenced topics dive too, a band
@@ -477,10 +489,14 @@ void MainWin::queueDives()
 	// structure inside the tops, and the queue can lean on it.
 	for (topics::topic const *t : topics::components(m_corpus))
 		stageDive(topics::expand(m_corpus, *t), false);
-	if (!m_diveScans.empty())
+	if (m_diveAt < m_diveScans.size())
 		m_diveTick.start();
+	else
+		m_diveTick.stop();
 }
 
+// Already-staged ids are left alone, finished or in flight: a merge
+// restage must not reset a scan's progress.
 void MainWin::stageDive(std::string const &pattern, bool exported)
 {
 	DiveScan s;
@@ -488,6 +504,9 @@ void MainWin::stageDive(std::string const &pattern, bool exported)
 	if (!s.re.isValid())
 		return;
 	s.id = diveId(pattern);
+	for (DiveScan const &d : m_diveScans)
+		if (d.id == s.id)
+			return;
 	s.pattern = pattern;
 	s.exported = exported;
 	m_diveScans.push_back(std::move(s));
@@ -543,21 +562,24 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 
 // A finished scan becomes a dive task: deps gate on the hit videos'
 // leaf summaries, heat follows the same videos, and the pyramid
-// root rides along as optional overview context.
-void MainWin::finishDive(DiveScan const &s)
+// root rides along as optional overview context.  The scan entry
+// stays staged (its id blocks re-staging) but sheds its excerpts.
+void MainWin::finishDive(DiveScan &s)
 {
-	if (s.deps.empty())
-		return;
-	agenda::task t;
-	t.id = s.id;
-	t.deps = s.deps;
-	t.keys = s.deps;
-	t.note = s.pattern;
-	t.what = agenda::kind::dive;
-	t.exported = s.exported;
-	if (m_rootId)
-		t.refs.push_back(m_rootId);
-	m_facts.dive(std::move(t), s.parts);
+	if (!s.deps.empty()) {
+		agenda::task t;
+		t.id = s.id;
+		t.deps = s.deps;
+		t.keys = s.deps;
+		t.note = s.pattern;
+		t.what = agenda::kind::dive;
+		t.exported = s.exported;
+		if (m_rootId)
+			t.refs.push_back(m_rootId);
+		m_facts.dive(std::move(t), s.parts);
+	}
+	s.parts.clear();
+	s.parts.shrink_to_fit();
 }
 
 // A topic file: the corpus source of videos and composable regexes
@@ -582,7 +604,7 @@ bool MainWin::loadPlaylist(QString const &path)
 	m_corpusPath = path;
 	m_transcripts.clear();               // natural refresh point
 	m_facts.reset();
-	rebuildCorpus();
+	rebuildCorpus(true);
 	statusBar()->showMessage(QStringLiteral(
 		"playlist: %1 videos, %2 topics")
 		.arg(m_playlist.size()).arg(m_corpus.topics.size()), 3000);
@@ -676,10 +698,16 @@ void MainWin::writePlaylistVersion()
 	       == QFileInfo(m_corpusPath).canonicalFilePath())
 		target += QStringLiteral(".new");
 	QFile f(target);
-	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+		fail(QStringLiteral("%1: %2").arg(target,
+		                                  f.errorString()));
 		return;
+	}
 	std::string const text = topics::write(m_corpus);
-	f.write(text.data(), qint64(text.size()));
+	if (f.write(text.data(), qint64(text.size()))
+	    != qint64(text.size()))
+		fail(QStringLiteral("%1: %2").arg(target,
+		                                  f.errorString()));
 }
 
 void MainWin::grabsIdle()
@@ -806,8 +834,10 @@ void MainWin::updateInfo()
 	// others must still recompute and bias the queue.
 	if (!m_playlist.isEmpty()) {
 		QRegularExpression const re = m_search.effectivePattern();
-		QString const key = re.pattern()
-		                  + QString::number(int(re.patternOptions()));
+		// Options lead and a separator follows: appended to the
+		// pattern they could alias ("a"+12 vs "a1"+2).
+		QString const key = QString::number(int(re.patternOptions()))
+		                  + QLatin1Char('\n') + re.pattern();
 		if (key != m_tallyKey) {
 			m_tallyKey = key;
 			m_tallyTotal = -1;

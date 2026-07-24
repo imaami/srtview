@@ -411,13 +411,16 @@ low (char ch)
 	return ch >= 'A' && ch <= 'Z' ? (char)(ch + 32) : ch;
 }
 
-/* Case-insensitive prefix match; pfx must already be lowercase. */
+/* Case-insensitive prefix match; pfx must already be lowercase and
+ * measured by the caller (the literals below measure at compile
+ * time -- no strlen per offset).
+ */
 static bool
 ipfx (char const *s,
       size_t      n,
-      char const *pfx)
+      char const *pfx,
+      size_t      m)
 {
-	size_t m = strlen(pfx);
 	if (n < m)
 		return false;
 	for (size_t i = 0; i < m; ++i)
@@ -427,11 +430,13 @@ ipfx (char const *s,
 }
 
 static bool
-ihas (char const *s, size_t n, char const *sub)
+ihas (char const *s,
+      size_t      n,
+      char const *sub,
+      size_t      m)
 {
-	size_t m = strlen(sub);
 	for (size_t i = 0; i + m <= n; ++i)
-		if (ipfx(s + i, n - i, sub))
+		if (ipfx(s + i, n - i, sub, m))
 			return true;
 	return false;
 }
@@ -451,15 +456,19 @@ dec_after (char const *s, size_t n, size_t at)
 	return any ? v : SIZE_MAX;
 }
 
+#define LIT(s) s, sizeof s - 1
+
 static void
 header_line (char const *s, size_t n, size_t *cl, bool *chunked)
 {
-	if (ipfx(s, n, "content-length:"))
+	if (ipfx(s, n, LIT("content-length:")))
 		*cl = dec_after(s, n, 15);
-	else if (ipfx(s, n, "transfer-encoding:") &&
-	         ihas(s + 18, n - 18, "chunked"))
+	else if (ipfx(s, n, LIT("transfer-encoding:")) &&
+	         ihas(s + 18, n - 18, LIT("chunked")))
 		*chunked = true;
 }
+
+#undef LIT
 
 /* The status line falls through header_line unharmed: it matches
  * neither header name.
@@ -588,10 +597,15 @@ digest (struct llm_buf const *in, struct llm_buf *out)
 	char const *body = nullptr;
 	size_t n = 0;
 	int code = llm_http_parse(in->data, in->size, &dec, &body, &n);
-	struct llm_cur cur = { body, body + n };
-	int status = code < 0            ? LLM_ERR_PARSE
-	           : code / 100 == 2     ? extract_content(&cur, out)
-	           : extract_error(&cur, out);
+	int status = LLM_ERR_PARSE;
+	if (code >= 0) {
+		/* The cursor exists only over a parsed body: in C23
+		 * even nullptr + 0 is undefined pointer arithmetic.
+		 */
+		struct llm_cur cur = { body, body + n };
+		status = code / 100 == 2 ? extract_content(&cur, out)
+		                         : extract_error(&cur, out);
+	}
 	llm_buf_free(&dec);
 	return status;
 }
@@ -759,6 +773,10 @@ run_job (struct llm *c, struct llm_job *job)
 	pthread_mutex_lock(&c->mtx);
 	if (c->cancel)
 		status = LLM_ERR_CANCEL;
+	/* Unpublish before the callback runs and the job is freed: a
+	 * concurrent cancel of this id must find nothing to point at.
+	 */
+	c->active = nullptr;
 	pthread_mutex_unlock(&c->mtx);
 	if (status == LLM_OK || (status == LLM_ERR_HTTP && out.size))
 		finish(job, status, &out);
@@ -810,7 +828,6 @@ work (void *arg)
 		pthread_mutex_unlock(&c->mtx);
 		run_job(c, job);
 		pthread_mutex_lock(&c->mtx);
-		c->active = nullptr;
 		if (c->pace_ms > 0)
 			cool_down(c);
 	}
@@ -843,10 +860,16 @@ build_request (struct llm const *c, struct llm_task const *task,
 		ok = llm_buf_str(&body, opt);
 	}
 	if (ok && task->temperature >= 0.0) {
-		char opt[48];
-		snprintf(opt, sizeof opt, ",\"temperature\":%.6g",
-		         task->temperature);
-		ok = llm_buf_str(&body, opt);
+		char num[32];
+		snprintf(num, sizeof num, "%.6g", task->temperature);
+		/* A Qt host has run setlocale(LC_ALL, "") by now: a
+		 * comma-decimal locale would print "0,5", which is not
+		 * JSON.  Normalize the one character that varies.
+		 */
+		for (char *p = num; *p; ++p)
+			*p = *p == ',' ? '.' : *p;
+		ok = llm_buf_str(&body, ",\"temperature\":")
+		  && llm_buf_str(&body, num);
 	}
 	ok = ok && llm_buf_put(&body, "}", 1);
 	n = snprintf(head, sizeof head,

@@ -58,6 +58,11 @@ public:
 	Facts(Facts const &) = delete;
 	Facts &operator=(Facts const &) = delete;
 
+	// True when an offer for this id would be accepted: unknown to
+	// the plan and absent from the cache.  Lets callers skip
+	// materializing text the executor would only discard.
+	bool wants(agenda::id key) const;
+
 	// Leaf summary of one subtitle file: the id keys both the
 	// cache and the heat map; the text is snapshot here.  Ids the
 	// plan already knows and ids whose file exists are skipped.
