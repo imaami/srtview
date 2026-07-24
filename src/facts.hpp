@@ -58,10 +58,10 @@ public:
 	Facts(Facts const &) = delete;
 	Facts &operator=(Facts const &) = delete;
 
-	// Leaf summary of one subtitle file: id keys both the cache
-	// and the heat map; the text is snapshot here.  Ids the plan
-	// already knows and ids whose file exists are skipped.
-	void offer(std::string const &id, std::string const &utf8Text);
+	// Leaf summary of one subtitle file: the id keys both the
+	// cache and the heat map; the text is snapshot here.  Ids the
+	// plan already knows and ids whose file exists are skipped.
+	void offer(agenda::id key, std::string const &utf8Text);
 
 	// The corpus abstraction pyramid (agenda::pyramid output);
 	// nodes whose files exist are marked done instead of queued.
@@ -72,7 +72,7 @@ public:
 	// excerpts, snapshot here.  Cached dives are marked done.
 	void dive(agenda::task t, std::string const &utf8Excerpts);
 
-	void heat(std::string const &key, double add);
+	void heat(agenda::id key, double add);
 	void decay(double keep);
 
 	// New corpus: drops pending work, snapshots and heat.  A task
@@ -83,21 +83,21 @@ public:
 private:
 	static void deliver(void *ud, std::uint64_t task, int status,
 	                    char const *text, std::size_t size);
-	void completed(std::string const &id, int status, bool wrote);
+	void completed(agenda::id which, int status, bool wrote);
 	void advance();
 	bool submit(agenda::task const &t);
 	std::string assemble(agenda::task const &t);
 	std::string assemble_node(agenda::task const &t) const;
 	std::string assemble_dive(agenda::task const &t);
-	std::string spend_body(std::string const &id);
+	std::string spend_body(agenda::id which);
 	std::string path_of(agenda::task const &t) const;
 
 	mutable std::mutex m_mtx;
 	agenda::plan       m_plan;      // guarded by m_mtx
-	std::vector<std::pair<std::string, std::string>>
-	                   m_bodies;    // leaf snapshots, spent on submit
+	std::vector<std::pair<agenda::id, std::string>>
+	                   m_bodies;    // snapshots, spent on submit
 	std::string        m_dir;       // .../srtview/facts
-	std::string        m_inflight;  // id at the llm, or empty
+	agenda::id         m_inflight;  // id at the llm, or none
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;

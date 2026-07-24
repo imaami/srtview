@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -48,35 +49,42 @@ constexpr double kFocusHeat = 0.5;
 constexpr double kSearchHeat = 2.0;
 constexpr double kSearchKeep = 0.5;
 
-// Pyramid-node identity from ordered children, same alphabet as the
-// discovery ids (16 hex of BLAKE2b-256): two corpora sharing a
-// prefix of leaves share the prefix's summary files.
-std::string treeId(std::vector<std::string> const &kids)
+// The leading 8 bytes of a finished BLAKE2b-256 as a pipeline id.
+agenda::id takeId(QCryptographicHash &h)
+{
+	agenda::id out;
+	std::memcpy(out.b.data(), h.result().constData(), out.b.size());
+	return out;
+}
+
+// Pyramid-node identity from ordered children: two corpora sharing
+// a prefix of leaves share the prefix's summary files.  Children
+// are fixed-width raw ids, so no separator is needed.
+agenda::id treeId(std::vector<agenda::id> const &kids)
 {
 	QCryptographicHash h(QCryptographicHash::Blake2b_256);
 	h.addData(QByteArrayView("tree"));
-	for (std::string const &k : kids) {
-		h.addData(QByteArrayView("\n", 1));
-		h.addData(QByteArrayView(k.data(), qsizetype(k.size())));
-	}
-	return h.result().toHex().left(16).toStdString();
+	for (agenda::id const &k : kids)
+		h.addData(QByteArrayView(
+			reinterpret_cast<char const *>(k.b.data()),
+			qsizetype(k.b.size())));
+	return takeId(h);
 }
 
 // Dive identity is the expanded pattern's hash: editing a topic
 // re-dives it, and identical patterns share one cache file.
-std::string diveId(std::string const &pattern)
+agenda::id diveId(std::string const &pattern)
 {
 	QCryptographicHash h(QCryptographicHash::Blake2b_256);
-	h.addData(QByteArrayView("dive"));
-	h.addData(QByteArrayView("\n", 1));
+	h.addData(QByteArrayView("dive\n"));
 	h.addData(QByteArrayView(pattern.data(),
 	                         qsizetype(pattern.size())));
-	return h.result().toHex().left(16).toStdString();
+	return takeId(h);
 }
 
-// Excerpt budget per dive, in UTF-16 units: roughly half the llm
+// Excerpt budget per dive, in UTF-8 bytes: roughly half the llm
 // clip so the context sections keep their share of the window.
-constexpr qsizetype kDiveBudget = 48 * 1024;
+constexpr std::size_t kDiveBudget = std::size_t{48} * 1024;
 
 double zoomFactor(int steps)
 {
@@ -357,18 +365,20 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	return true;
 }
 
-// The facts cache is keyed by the srt file's own discovery identity:
-// one summary per unique srt however many entries share it.  The
+// The facts cache is keyed by the srt file's own discovery identity
+// (its hex socket hash, rehydrated to bytes at this boundary): one
+// summary per unique srt however many entries share it.  The
 // rendered transcript (tags consumed) is what the model reads.  The
 // returned id feeds the corpus pyramid and the heat map.
-std::string MainWin::offerFacts(QString const &srt)
+agenda::id MainWin::offerFacts(QString const &srt)
 {
-	std::string const id = m_disc.id_for_video(srt.toStdString());
-	if (!id.empty())
-		m_facts.offer(id, exporter::load(m_transcripts, srt)
-		                  .lines.join(QLatin1Char('\n'))
-		                  .toStdString());
-	return id;
+	agenda::id const key = agenda::id::from_hex(
+		m_disc.id_for_video(srt.toStdString()));
+	if (key)
+		m_facts.offer(key, exporter::load(m_transcripts, srt)
+		                   .lines.join(QLatin1Char('\n'))
+		                   .toStdString());
+	return key;
 }
 
 // Stage the corpus topic dives: one scan per exported grouping,
@@ -378,6 +388,7 @@ std::string MainWin::offerFacts(QString const &srt)
 void MainWin::queueDives()
 {
 	m_diveScans.clear();
+	m_diveAt = 0;
 	m_diveTick.stop();
 	for (topics::export_item const &e : topics::export_plan(m_corpus)) {
 		DiveScan s;
@@ -385,29 +396,28 @@ void MainWin::queueDives()
 		if (!s.re.isValid())
 			continue;
 		s.id = diveId(e.pattern);
-		m_diveScans << std::move(s);
+		m_diveScans.push_back(std::move(s));
 	}
-	if (!m_diveScans.isEmpty())
+	if (!m_diveScans.empty())
 		m_diveTick.start();
 }
 
 void MainWin::diveStep()
 {
-	if (m_diveScans.isEmpty() || m_playlist.isEmpty()) {
+	if (m_diveAt >= m_diveScans.size() || m_playlist.isEmpty()) {
 		m_diveScans.clear();
+		m_diveAt = 0;
 		m_diveTick.stop();
 		return;
 	}
-	DiveScan &s = m_diveScans.first();
-	if (s.video < m_playlist.size()) {
-		scanDiveVideo(s, m_playlist[s.video]);
-		++s.video;
+	DiveScan &s = m_diveScans[m_diveAt];
+	if (s.video >= std::size_t(m_playlist.size())) {
+		finishDive(s);
+		++m_diveAt;
 		return;
 	}
-	finishDive(s);
-	m_diveScans.removeFirst();
-	if (m_diveScans.isEmpty())
-		m_diveTick.stop();
+	scanDiveVideo(s, m_playlist[qsizetype(s.video)]);
+	++s.video;
 }
 
 // One (topic, video) cell: matched cue lines become an excerpt
@@ -419,20 +429,25 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 	if (s.parts.size() > kDiveBudget)
 		return;
 	QString const srt = srtOf(it);
-	QStringList hits;
+	std::string hits;
 	for (QString const &line :
 	     exporter::load(m_transcripts, srt).lines) {
-		if (s.re.match(line).hasMatch())
-			hits << line;
+		if (!s.re.match(line).hasMatch())
+			continue;
+		hits += line.toStdString();
+		hits += '\n';
 	}
-	if (hits.isEmpty())
+	if (hits.empty())
 		return;
-	std::string id = m_disc.id_for_video(srt.toStdString());
-	if (id.empty() || std::ranges::find(s.deps, id) != s.deps.end())
+	agenda::id const key = agenda::id::from_hex(
+		m_disc.id_for_video(srt.toStdString()));
+	if (!key || std::ranges::find(s.deps, key) != s.deps.end())
 		return;
-	s.deps.push_back(std::move(id));
-	s.parts += QStringLiteral("== %1\n%2\n")
-		.arg(QFileInfo(it.video).fileName(), hits.join(u'\n'));
+	s.deps.push_back(key);
+	s.parts += "== ";
+	s.parts += QFileInfo(it.video).fileName().toStdString();
+	s.parts += '\n';
+	s.parts += hits;
 }
 
 // A finished scan becomes a dive task: deps gate on the hit videos'
@@ -448,9 +463,9 @@ void MainWin::finishDive(DiveScan const &s)
 	t.keys = s.deps;
 	t.what = agenda::kind::dive;
 	t.exported = s.exported;
-	if (!m_rootId.empty())
+	if (m_rootId)
 		t.refs.push_back(m_rootId);
-	m_facts.dive(std::move(t), s.parts.toStdString());
+	m_facts.dive(std::move(t), s.parts);
 }
 
 // A topic file: the corpus source of videos and composable regexes
@@ -496,15 +511,14 @@ bool MainWin::loadPlaylist(QString const &path)
 	// cache, then the abstraction pyramid over them in playlist
 	// order.  The transcript cache is shared with the tally and the
 	// exporter, so nothing gets parsed twice.
-	std::vector<std::string> leaves;
+	std::vector<agenda::id> leaves;
 	for (PlayItem const &it : m_playlist) {
-		std::string id = offerFacts(srtOf(it));
-		if (!id.empty() && std::ranges::find(leaves, id)
-		                   == leaves.end())
-			leaves.push_back(std::move(id));
+		agenda::id const key = offerFacts(srtOf(it));
+		if (key && std::ranges::find(leaves, key) == leaves.end())
+			leaves.push_back(key);
 	}
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
-	m_rootId = nodes.empty() ? std::string() : nodes.back().id;
+	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
 	queueDives();
 	if (m_view.cueCount() == 0 && !m_playlist.isEmpty())
@@ -794,8 +808,8 @@ void MainWin::feedHeat()
 	for (qsizetype i = 0; i < m_tally.size(); ++i) {
 		if (!m_tally[i])
 			continue;
-		m_facts.heat(m_disc.id_for_video(
-		             	srtOf(m_playlist[i]).toStdString()),
+		m_facts.heat(agenda::id::from_hex(m_disc.id_for_video(
+		             	srtOf(m_playlist[i]).toStdString())),
 		             kSearchHeat * m_tally[i] / m_tallyTotal);
 	}
 }

@@ -31,9 +31,11 @@
 #ifndef SRTVIEW_SRC_AGENDA_HPP_
 #define SRTVIEW_SRC_AGENDA_HPP_
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -41,16 +43,36 @@ namespace agenda {
 
 enum class kind : std::uint8_t { leaf, node, dive };
 
+// Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,
+// kept binary in memory -- hex materializes only at the filesystem
+// and log boundary.  The all-zero id means "no id".
+struct id {
+	std::array<std::uint8_t, 8> b{};
+
+	constexpr bool operator==(id const &) const = default;
+
+	constexpr explicit operator bool() const
+	{
+		for (std::uint8_t const x : b)
+			if (x)
+				return true;
+		return false;
+	}
+
+	std::string hex() const;
+	static id from_hex(std::string_view s);
+};
+
 struct task {
-	std::string              id{};     // cache identity (hex)
-	std::vector<std::string> deps{};   // ids that must be done first
-	std::vector<std::string> keys{};   // heat keys: subtitle ids
-	std::vector<std::string> refs{};   // optional context ids: read
+	agenda::id              id{};      // cache identity
+	std::vector<agenda::id> deps{};    // must be done first
+	std::vector<agenda::id> keys{};    // heat keys: subtitle ids
+	std::vector<agenda::id> refs{};    // optional context ids: read
 	                                   // at assembly when their
 	                                   // files exist, never awaited
-	kind                     what     = kind::leaf;
-	std::uint8_t             tier     = 0;
-	bool                     exported = true;
+	kind                    what     = kind::leaf;
+	std::uint8_t            tier     = 0;
+	bool                    exported = true;
 
 	bool operator==(task const &) const = default;
 };
@@ -67,24 +89,24 @@ public:
 
 	// Marks an id done; unknown ids are remembered as done, which
 	// is how cache hits satisfy dependencies without a task.
-	void done(std::string const &id);
+	void done(id which);
 
 	// Parks an id for the session; its dependents stay blocked.
-	void fail(std::string const &id);
+	void fail(id which);
 
-	void heat(std::string const &key, double add);
+	void heat(id key, double add);
 	void decay(double keep);
 
-	// Highest-scoring ready task, marked running; empty when no
-	// pending task has all dependencies done.
-	std::string take();
+	// Highest-scoring ready task, marked running; the empty id
+	// when no pending task has all dependencies done.
+	id take();
 
 	// Drops every task and all heat; completions of tasks taken
 	// before the reset may still be reported and are remembered.
 	void reset();
 
-	task const *get(std::string const &id) const;
-	state status(std::string const &id) const;
+	task const *get(id which) const;
+	state status(id which) const;
 	std::size_t backlog() const;   // pending + running
 
 private:
@@ -95,7 +117,7 @@ private:
 
 	static constexpr std::size_t npos = std::size_t(-1);
 
-	std::size_t index_of(std::string const &id) const;
+	std::size_t index_of(id which) const;
 	bool ready(entry const &e) const;
 	double score(task const &t) const;
 	bool lift(std::vector<double> &eff) const;
@@ -103,11 +125,11 @@ private:
 
 	// Session scale is dozens to a few hundred tasks: linear scans,
 	// no hashed containers.
-	std::vector<entry>                          m_entries;
-	std::vector<std::pair<std::string, double>> m_heat;
+	std::vector<entry>                 m_entries;
+	std::vector<std::pair<id, double>> m_heat;
 };
 
-using combine_fn = std::string (*)(std::vector<std::string> const &);
+using combine_fn = id (*)(std::vector<id> const &);
 
 // The abstraction pyramid over ordered leaves as node tasks (the
 // leaves themselves are offered separately): pairs joined per level,
@@ -115,8 +137,8 @@ using combine_fn = std::string (*)(std::vector<std::string> const &);
 // the union of covered leaves, tier the level.  combine() names a
 // parent from its ordered children; same leaves, same names -- two
 // corpora sharing a prefix share the prefix's summaries.
-std::vector<task> pyramid(std::vector<std::string> const &leaves,
-                          combine_fn                      combine);
+std::vector<task> pyramid(std::vector<id> const &leaves,
+                          combine_fn             combine);
 
 } // namespace agenda
 

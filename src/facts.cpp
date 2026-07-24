@@ -51,8 +51,9 @@ constexpr char kDivePrompt[] =
 	"distinguishes this material from the rest of the collection. "
 	"Plain text only; no preamble, no headings.";
 
-// System prompt per task kind: leaf, node, dive.
-constexpr char const *kPromptOf[] = {
+// System prompt per task kind (leaf, node, dive).  The views wrap
+// NUL-terminated literals, so .data() satisfies the C API below.
+constexpr std::string_view kPromptOf[] = {
 	kLeafPrompt, kNodePrompt, kDivePrompt,
 };
 
@@ -67,8 +68,8 @@ constexpr char const *kKindName[] = {"leaf", "node", "dive"};
 // in deliver() the release.
 struct reply_ctx {
 	Facts      *self;
-	std::string id;
 	std::string path;
+	agenda::id  id;
 };
 
 bool debug()
@@ -206,23 +207,24 @@ Facts::~Facts()
 	llm_destroy(&m_llm);
 }
 
-void Facts::offer(std::string const &id, std::string const &utf8Text)
+void Facts::offer(agenda::id key, std::string const &utf8Text)
 {
-	if (id.empty() || utf8Text.empty())
+	if (!key || utf8Text.empty())
 		return;
 
 	std::lock_guard const lock(m_mtx);
-	if (!m_llm || m_plan.status(id) != agenda::plan::state::unknown)
+	if (!m_llm || m_plan.status(key) != agenda::plan::state::unknown)
 		return;
 	std::error_code ec;
-	if (std::filesystem::exists(m_dir + '/' + id + ".txt", ec)) {
+	if (std::filesystem::exists(m_dir + '/' + key.hex() + ".txt",
+	                            ec)) {
 		// A dependent of this cache hit may just have gone ready.
-		m_plan.done(id);
+		m_plan.done(key);
 		advance();
 		return;
 	}
-	m_plan.add({.id = id, .keys = {id}});
-	m_bodies.emplace_back(id, std::string(clip(utf8Text)));
+	m_plan.add({.id = key, .keys = {key}});
+	m_bodies.emplace_back(key, std::string(clip(utf8Text)));
 	advance();
 }
 
@@ -245,7 +247,7 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 
 void Facts::dive(agenda::task t, std::string const &utf8Excerpts)
 {
-	if (t.id.empty() || utf8Excerpts.empty())
+	if (!t.id || utf8Excerpts.empty())
 		return;
 
 	std::lock_guard const lock(m_mtx);
@@ -263,14 +265,14 @@ void Facts::dive(agenda::task t, std::string const &utf8Excerpts)
 	advance();
 }
 
-void Facts::heat(std::string const &key, double add)
+void Facts::heat(agenda::id key, double add)
 {
-	if (key.empty())
+	if (!key)
 		return;
 
 	if (debug())
 		std::fprintf(stderr, "srtview: facts: heat %s +%.3f\n",
-		             key.c_str(), add);
+		             key.hex().c_str(), add);
 	std::lock_guard const lock(m_mtx);
 	m_plan.heat(key, add);
 }
@@ -301,19 +303,19 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 	                && store(ctx->path, text, size);
 	if (!wrote && debug())
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
-		             ctx->id.c_str(), llm_strerror(status));
+		             ctx->id.hex().c_str(), llm_strerror(status));
 	ctx->self->completed(ctx->id, status, wrote);
 }
 
-void Facts::completed(std::string const &id, int status, bool wrote)
+void Facts::completed(agenda::id which, int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
-	if (m_inflight == id)
-		m_inflight.clear();
+	if (m_inflight == which)
+		m_inflight = {};
 	if (wrote)
-		m_plan.done(id);
+		m_plan.done(which);
 	else
-		m_plan.fail(id);
+		m_plan.fail(which);
 
 	// A cancelled task proves nothing about the server; anything
 	// answered, even an error, proves it is there.
@@ -334,16 +336,16 @@ void Facts::completed(std::string const &id, int status, bool wrote)
 // on.
 void Facts::advance()
 {
-	while (!m_down && !m_offline && m_llm && m_inflight.empty()) {
-		std::string const id = m_plan.take();
-		if (id.empty())
+	while (!m_down && !m_offline && m_llm && !m_inflight) {
+		agenda::id const next = m_plan.take();
+		if (!next)
 			return;
-		agenda::task const *t = m_plan.get(id);
+		agenda::task const *t = m_plan.get(next);
 		if (!t || !submit(*t)) {
-			m_plan.fail(id);
+			m_plan.fail(next);
 			continue;
 		}
-		m_inflight = id;
+		m_inflight = next;
 	}
 }
 
@@ -353,11 +355,11 @@ bool Facts::submit(agenda::task const &t)
 	std::string const body = assemble(t);
 	if (body.empty())
 		return false;
-	auto *ctx = new (std::nothrow) reply_ctx{this, t.id, path_of(t)};
+	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t), t.id};
 	if (!ctx)
 		return false;
 	llm_task const ask = {
-		.system      = kPromptOf[std::size_t(t.what)],
+		.system      = kPromptOf[std::size_t(t.what)].data(),
 		.prompt      = body.c_str(),
 		.max_tokens  = kMaxTokens,
 		.timeout_s   = kTimeoutS,
@@ -370,7 +372,7 @@ bool Facts::submit(agenda::task const &t)
 	if (debug())
 		std::fprintf(stderr, "srtview: facts: ask %s %s\n",
 		             kKindName[std::size_t(t.what)],
-		             t.id.c_str());
+		             t.id.hex().c_str());
 	return true;
 }
 
@@ -397,9 +399,9 @@ std::string Facts::assemble(agenda::task const &t)
 std::string Facts::assemble_node(agenda::task const &t) const
 {
 	std::string all;
-	for (std::string const &dep : t.deps) {
+	for (agenda::id const dep : t.deps) {
 		std::string const part =
-			slurp(m_dir + '/' + dep + ".txt");
+			slurp(m_dir + '/' + dep.hex() + ".txt");
 		if (part.empty())
 			return {};
 		if (!all.empty())
@@ -416,9 +418,9 @@ std::string Facts::assemble_node(agenda::task const &t) const
 std::string Facts::assemble_dive(agenda::task const &t)
 {
 	std::string over;
-	for (std::string const &ref : t.refs) {
+	for (agenda::id const ref : t.refs) {
 		std::string const part =
-			slurp(m_dir + '/' + ref + ".txt");
+			slurp(m_dir + '/' + ref.hex() + ".txt");
 		if (part.empty())
 			continue;
 		over += over.empty() ? "OVERVIEW\n" : "\n\n";
@@ -426,9 +428,9 @@ std::string Facts::assemble_dive(agenda::task const &t)
 	}
 
 	std::string sums;
-	for (std::string const &dep : t.deps) {
+	for (agenda::id const dep : t.deps) {
 		std::string const part =
-			slurp(m_dir + '/' + dep + ".txt");
+			slurp(m_dir + '/' + dep.hex() + ".txt");
 		if (part.empty())
 			return {};
 		sums += sums.empty() ? "SUMMARIES\n" : "\n\n";
@@ -445,11 +447,11 @@ std::string Facts::assemble_dive(agenda::task const &t)
 	return std::string(clip(all));
 }
 
-// m_mtx held.  Takes and erases the snapshot stored under id.
-std::string Facts::spend_body(std::string const &id)
+// m_mtx held.  Takes and erases the snapshot stored under the id.
+std::string Facts::spend_body(agenda::id which)
 {
 	for (std::size_t i = 0; i < m_bodies.size(); ++i) {
-		if (m_bodies[i].first != id)
+		if (m_bodies[i].first != which)
 			continue;
 		std::string spent = std::move(m_bodies[i].second);
 		m_bodies.erase(m_bodies.begin() + std::ptrdiff_t(i));
@@ -461,6 +463,6 @@ std::string Facts::spend_body(std::string const &id)
 std::string Facts::path_of(agenda::task const &t) const
 {
 	return t.what == agenda::kind::dive
-	       ? m_dir + "/dives/" + t.id + ".txt"
-	       : m_dir + '/' + t.id + ".txt";
+	       ? m_dir + "/dives/" + t.id.hex() + ".txt"
+	       : m_dir + '/' + t.id.hex() + ".txt";
 }

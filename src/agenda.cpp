@@ -23,7 +23,50 @@ constexpr std::size_t kLiftCap = 32;
 // Heat entries below this are noise; decay() sweeps them out.
 constexpr double kColdFloor = 1e-6;
 
+constexpr char kHexDig[] = "0123456789abcdef";
+
+// Hex digit values; -1 fills the invalid rest.
+constexpr auto kUnhex = [] {
+	std::array<signed char, 256> t{};
+	for (auto &x : t)
+		x = -1;
+	for (int c = '0'; c <= '9'; ++c)
+		t[std::size_t(c)] = char(c - '0');
+	for (int c = 'a'; c <= 'f'; ++c)
+		t[std::size_t(c)] = char(c - 'a' + 10);
+	for (int c = 'A'; c <= 'F'; ++c)
+		t[std::size_t(c)] = char(c - 'A' + 10);
+	return t;
+}();
+
 } // namespace
+
+std::string id::hex () const
+{
+	std::string s(2 * b.size(), '0');
+	for (std::size_t i = 0; i < b.size(); ++i) {
+		s[2 * i]     = kHexDig[b[i] >> 4];
+		s[2 * i + 1] = kHexDig[b[i] & 15];
+	}
+
+	return s;
+}
+
+id id::from_hex (std::string_view s)
+{
+	id out;
+	if (s.size() != 2 * out.b.size())
+		return {};
+	for (std::size_t i = 0; i < out.b.size(); ++i) {
+		int const hi = kUnhex[std::uint8_t(s[2 * i])];
+		int const lo = kUnhex[std::uint8_t(s[2 * i + 1])];
+		if (hi < 0 || lo < 0)
+			return {};
+		out.b[i] = std::uint8_t(hi << 4 | lo);
+	}
+
+	return out;
+}
 
 void plan::add (task t)
 {
@@ -33,25 +76,25 @@ void plan::add (task t)
 	m_entries.push_back({std::move(t), state::pending});
 }
 
-void plan::done (std::string const &id)
+void plan::done (id which)
 {
-	std::size_t const at = index_of(id);
+	std::size_t const at = index_of(which);
 	if (at == npos) {
-		m_entries.push_back({task{.id = id}, state::done});
+		m_entries.push_back({task{.id = which}, state::done});
 		return;
 	}
 
 	m_entries[at].s = state::done;
 }
 
-void plan::fail (std::string const &id)
+void plan::fail (id which)
 {
-	std::size_t const at = index_of(id);
+	std::size_t const at = index_of(which);
 	if (at != npos)
 		m_entries[at].s = state::parked;
 }
 
-void plan::heat (std::string const &key, double add)
+void plan::heat (id key, double add)
 {
 	for (auto &[k, w] : m_heat) {
 		if (k != key)
@@ -67,12 +110,12 @@ void plan::decay (double keep)
 {
 	for (auto &[k, w] : m_heat)
 		w *= keep;
-	std::erase_if(m_heat, [](std::pair<std::string, double> const &h) {
+	std::erase_if(m_heat, [](std::pair<id, double> const &h) {
 		return h.second < kColdFloor;
 	});
 }
 
-std::string plan::take ()
+id plan::take ()
 {
 	std::vector<double> own(m_entries.size());
 	for (std::size_t i = 0; i < m_entries.size(); ++i)
@@ -113,15 +156,15 @@ void plan::reset ()
 	m_heat.clear();
 }
 
-task const *plan::get (std::string const &id) const
+task const *plan::get (id which) const
 {
-	std::size_t const at = index_of(id);
+	std::size_t const at = index_of(which);
 	return at == npos ? nullptr : &m_entries[at].t;
 }
 
-plan::state plan::status (std::string const &id) const
+plan::state plan::status (id which) const
 {
-	std::size_t const at = index_of(id);
+	std::size_t const at = index_of(which);
 	return at == npos ? state::unknown : m_entries[at].s;
 }
 
@@ -134,10 +177,10 @@ std::size_t plan::backlog () const
 		}));
 }
 
-std::size_t plan::index_of (std::string const &id) const
+std::size_t plan::index_of (id which) const
 {
 	for (std::size_t i = 0; i < m_entries.size(); ++i)
-		if (m_entries[i].t.id == id)
+		if (m_entries[i].t.id == which)
 			return i;
 
 	return npos;
@@ -146,7 +189,7 @@ std::size_t plan::index_of (std::string const &id) const
 bool plan::ready (entry const &e) const
 {
 	return std::ranges::all_of(e.t.deps,
-		[this](std::string const &d) {
+		[this](id const d) {
 			std::size_t const at = index_of(d);
 			return at != npos
 			    && m_entries[at].s == state::done;
@@ -158,7 +201,7 @@ double plan::score (task const &t) const
 	double s = kKindBase[std::size_t(t.what)]
 	         - kTierStep * t.tier
 	         + (t.exported ? kExportEdge : 0.0);
-	for (std::string const &key : t.keys) {
+	for (id const &key : t.keys) {
 		for (auto const &[k, w] : m_heat) {
 			if (k != key)
 				continue;
@@ -189,7 +232,7 @@ bool plan::lift (std::vector<double> &eff) const
 bool plan::raise_deps (std::size_t at, std::vector<double> &eff) const
 {
 	bool changed = false;
-	for (std::string const &d : m_entries[at].t.deps) {
+	for (id const d : m_entries[at].t.deps) {
 		std::size_t const j = index_of(d);
 		if (j == npos || m_entries[j].s != state::pending
 		    || eff[j] >= eff[at])
@@ -201,18 +244,18 @@ bool plan::raise_deps (std::size_t at, std::vector<double> &eff) const
 	return changed;
 }
 
-std::vector<task> pyramid (std::vector<std::string> const &leaves,
-                           combine_fn                      combine)
+std::vector<task> pyramid (std::vector<id> const &leaves,
+                           combine_fn             combine)
 {
 	// Working item: a produced-or-carried id plus the leaves it
 	// covers, which become the parent's heat keys.
 	struct item {
-		std::string              id;
-		std::vector<std::string> keys;
+		id              v;
+		std::vector<id> keys;
 	};
 
 	std::vector<item> level;
-	for (std::string const &l : leaves)
+	for (id const l : leaves)
 		level.push_back({l, {l}});
 
 	std::vector<task> out;
@@ -221,12 +264,12 @@ std::vector<task> pyramid (std::vector<std::string> const &leaves,
 		for (std::size_t i = 0; i + 1 < level.size(); i += 2) {
 			item &a = level[i];
 			item &b = level[i + 1];
-			item joined{combine({a.id, b.id}), std::move(a.keys)};
+			item joined{combine({a.v, b.v}), std::move(a.keys)};
 			joined.keys.insert(joined.keys.end(),
 			                   b.keys.begin(), b.keys.end());
 			out.push_back({
-				.id   = joined.id,
-				.deps = {std::move(a.id), std::move(b.id)},
+				.id   = joined.v,
+				.deps = {a.v, b.v},
 				.keys = joined.keys,
 				.what = kind::node,
 				.tier = tier,

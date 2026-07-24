@@ -5,6 +5,7 @@
 #ifndef SRTVIEW_SRC_MAINWIN_HPP_
 #define SRTVIEW_SRC_MAINWIN_HPP_
 
+#include "agenda.hpp"
 #include "discovery.hpp"
 #include "exporter.hpp"
 #include "facts.hpp"
@@ -22,6 +23,10 @@
 #include <QLabel>
 #include <QMainWindow>
 #include <QRegularExpression>
+
+#include <cstddef>
+#include <string>
+#include <vector>
 
 class MainWin : public QMainWindow, private search_nav,
                 private grab_listener, private video_sync
@@ -58,14 +63,16 @@ private:
 
 	// One background topic scan toward a dive: the corpus hits of
 	// one expanded pattern, collected a video per timer tick so a
-	// corpus load never stalls the UI thread.
+	// corpus load never stalls the UI thread.  The matcher stays
+	// QRegularExpression -- it is the app's pattern dialect -- and
+	// everything else is std.
 	struct DiveScan {
-		QRegularExpression       re;
-		QString                  parts;    // excerpt sections
-		std::string              id;       // hash of the pattern
-		std::vector<std::string> deps;     // leaf ids of hit videos
-		qsizetype                video    = 0;
-		bool                     exported = true;
+		QRegularExpression      re;
+		std::string             parts;    // excerpts, UTF-8
+		std::vector<agenda::id> deps;     // leaves of hit videos
+		agenda::id              id;       // hash of the pattern
+		std::size_t             video    = 0;
+		bool                    exported = true;
 	};
 
 	// The four zoom domains, nested: captions and the search bar
@@ -91,7 +98,7 @@ private:
 	void recomputeTally();
 	void feedHeat();
 	bool showDoc(QString const &video, QString const &srt);
-	std::string offerFacts(QString const &srt);
+	agenda::id offerFacts(QString const &srt);
 	void queueDives();
 	void diveStep();
 	void scanDiveVideo(DiveScan &s, PlayItem const &it);
@@ -143,8 +150,9 @@ private:
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
 	QTimer                          m_diveTick;  // topic scan pump
-	QList<DiveScan>                 m_diveScans; // pending scans
-	std::string                     m_rootId;    // pyramid root
+	std::vector<DiveScan>           m_diveScans; // staged scans
+	std::size_t                     m_diveAt = 0;// scan cursor
+	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
 	QElapsedTimer                   m_exportTick;
