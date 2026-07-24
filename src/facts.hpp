@@ -24,6 +24,14 @@
 // R4: teardown raises m_down under the mutex before destroying the
 // client, and completions never advance past it.
 //
+// SRTVIEW_LLM=[host][:port] points the pipeline at another server;
+// the default is llama-server on 127.0.0.1:8080.  Three connect
+// refusals in a row latch the pipeline offline for the session --
+// nothing is written, so the next session simply retries.  Tasks
+// run with a quiet gap in between (SRTVIEW_LLM_PACE=<seconds>,
+// default 30, 0 disables): sustained generation is a full-power
+// burn, and the accelerator needs breathing room by default.
+//
 // Standard C++23 over the plain C llm client, no Qt.
 #ifndef SRTVIEW_SRC_FACTS_HPP_
 #define SRTVIEW_SRC_FACTS_HPP_
@@ -67,7 +75,7 @@ public:
 private:
 	static void deliver(void *ud, std::uint64_t task, int status,
 	                    char const *text, std::size_t size);
-	void completed(std::string const &id, bool ok);
+	void completed(std::string const &id, int status, bool wrote);
 	void advance();
 	bool submit(agenda::task const &t);
 	std::string assemble(agenda::task const &t);
@@ -80,6 +88,8 @@ private:
 	std::string        m_dir;       // .../srtview/facts
 	std::string        m_inflight;  // id at the llm, or empty
 	llm               *m_llm = nullptr;
+	int                m_refused = 0;   // consecutive connect fails
+	bool               m_offline = false;
 	bool               m_down = false;
 };
 

@@ -43,6 +43,11 @@ constexpr int    kZoomSpan = 12;
 // Focus bias on the facts queue: opening a video warms its leaf.
 constexpr double kFocusHeat = 0.5;
 
+// Search-tally bias: scale spreads a pattern's total weight across
+// its hit videos by share; keep is the fade per pattern change.
+constexpr double kSearchHeat = 2.0;
+constexpr double kSearchKeep = 0.5;
+
 // Pyramid-node identity from ordered children, same alphabet as the
 // discovery ids (16 hex of BLAKE2b-256): two corpora sharing a
 // prefix of leaves share the prefix's summary files.
@@ -660,7 +665,29 @@ void MainWin::recomputeTally()
 		}
 	}
 	m_tallyTotal = total;
+	feedHeat();
 	updateInfo();
+}
+
+// Search interest becomes queue bias: each recompute (one per
+// pattern change) fades what the previous pattern contributed and
+// adds the new tally's shares, so the background pipeline drifts
+// toward the videos the user's regex is lighting up -- and, through
+// priority inheritance in the agenda, so do the summaries built on
+// top of them.
+void MainWin::feedHeat()
+{
+	m_facts.decay(kSearchKeep);
+	if (m_tallyTotal <= 0)
+		return;
+
+	for (qsizetype i = 0; i < m_tally.size(); ++i) {
+		if (!m_tally[i])
+			continue;
+		m_facts.heat(m_disc.id_for_video(
+		             	srtOf(m_playlist[i]).toStdString()),
+		             kSearchHeat * m_tally[i] / m_tallyTotal);
+	}
 }
 
 // The focused widget names the zoom domain: the pattern field, the
@@ -1035,6 +1062,10 @@ void MainWin::closeFile()
 
 bool MainWin::fail(QString const &msg)
 {
+	// A refused open is a state flip: on the record even without
+	// SRTVIEW_DEBUG, and the only trace on a headless platform
+	// where the dialog blocks invisibly.
+	std::fprintf(stderr, "srtview: %s\n", qPrintable(msg));
 	QMessageBox::warning(this, QStringLiteral("srtview"), msg);
 	return false;
 }

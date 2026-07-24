@@ -39,6 +39,12 @@ constexpr char kNodePrompt[] =
 	"terms. Generalize where the sections agree and keep the "
 	"notable specifics. Plain text only; no preamble, no headings.";
 
+// Connect refusals in a row before the pipeline parks itself for
+// the session; anything else the server says resets the count.
+constexpr int kRefusalCap = 3;
+
+constexpr char const *kKindName[] = {"leaf", "node", "dive"};
+
 // The path a reply belongs to travels as the task's user data,
 // heap-owned: exactly one callback per accepted task makes adoption
 // in deliver() the release.
@@ -64,6 +70,51 @@ std::string cacheDir()
 		dir += "/.cache";
 	}
 	return dir + "/srtview/facts";
+}
+
+// SRTVIEW_LLM=[host][:port]; the last colon splits host from port,
+// so bare IPv6 literals are not handled (bracket-free by choice:
+// this is a loopback-adjacent knob, not a URL parser).
+struct endpoint {
+	std::string   host;
+	std::uint16_t port;
+};
+
+endpoint serverEnv()
+{
+	endpoint ep{};
+	char const *v = std::getenv("SRTVIEW_LLM");
+	if (!v || !*v)
+		return ep;
+
+	std::string_view s(v);
+	std::size_t const colon = s.rfind(':');
+	if (colon != std::string_view::npos) {
+		unsigned long const p =
+			std::strtoul(v + colon + 1, nullptr, 10);
+		if (p && p <= 65535)
+			ep.port = std::uint16_t(p);
+		s = s.substr(0, colon);
+	}
+	ep.host = s;
+	return ep;
+}
+
+// Generation is a sustained full-power burn on the accelerator, and
+// a corpus queues many in a row: the default gap gives the silicon
+// breathing room.  SRTVIEW_LLM_PACE=<seconds> widens it, 0 disables.
+constexpr std::int32_t kPaceDefaultS = 30;
+constexpr std::int32_t kPaceMaxS     = 3600;
+
+std::int32_t paceEnv()
+{
+	char const *v = std::getenv("SRTVIEW_LLM_PACE");
+	if (!v || !*v)
+		return kPaceDefaultS;
+
+	long const s = std::strtol(v, nullptr, 10);
+	return s <= 0 ? 0 : s > kPaceMaxS ? kPaceMaxS
+	                                  : std::int32_t(s);
 }
 
 // Never cut a UTF-8 sequence: back off continuation bytes.  Reading
@@ -109,8 +160,13 @@ Facts::Facts()
 {
 	std::error_code ec;
 	std::filesystem::create_directories(m_dir + "/dives", ec);
-	if (!ec)
-		m_llm = llm_create(nullptr, 0);
+	if (!ec) {
+		endpoint const ep = serverEnv();
+		m_llm = llm_create(ep.host.empty() ? nullptr
+		                                   : ep.host.c_str(),
+		                   ep.port);
+		llm_pace(m_llm, paceEnv() * 1000);
+	}
 }
 
 Facts::~Facts()
@@ -166,12 +222,18 @@ void Facts::heat(std::string const &key, double add)
 	if (key.empty())
 		return;
 
+	if (debug())
+		std::fprintf(stderr, "srtview: facts: heat %s +%.3f\n",
+		             key.c_str(), add);
 	std::lock_guard const lock(m_mtx);
 	m_plan.heat(key, add);
 }
 
 void Facts::decay(double keep)
 {
+	if (debug())
+		std::fprintf(stderr, "srtview: facts: decay %.3f\n",
+		             keep);
 	std::lock_guard const lock(m_mtx);
 	m_plan.decay(keep);
 }
@@ -189,23 +251,35 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 {
 	std::unique_ptr<reply_ctx> const ctx(
 		static_cast<reply_ctx *>(ud));
-	bool const ok = status == LLM_OK && size
-	             && store(ctx->path, text, size);
-	if (!ok && debug())
+	bool const wrote = status == LLM_OK && size
+	                && store(ctx->path, text, size);
+	if (!wrote && debug())
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
 		             ctx->id.c_str(), llm_strerror(status));
-	ctx->self->completed(ctx->id, ok);
+	ctx->self->completed(ctx->id, status, wrote);
 }
 
-void Facts::completed(std::string const &id, bool ok)
+void Facts::completed(std::string const &id, int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
 	if (m_inflight == id)
 		m_inflight.clear();
-	if (ok)
+	if (wrote)
 		m_plan.done(id);
 	else
 		m_plan.fail(id);
+
+	// A cancelled task proves nothing about the server; anything
+	// answered, even an error, proves it is there.
+	if (status == LLM_ERR_CONNECT)
+		++m_refused;
+	else if (status != LLM_ERR_CANCEL)
+		m_refused = 0;
+	if (!m_offline && m_refused >= kRefusalCap) {
+		m_offline = true;
+		std::fprintf(stderr, "srtview: facts: server "
+		             "unreachable, pipeline parked\n");
+	}
 	advance();
 }
 
@@ -214,7 +288,7 @@ void Facts::completed(std::string const &id, bool ok)
 // on.
 void Facts::advance()
 {
-	while (!m_down && m_llm && m_inflight.empty()) {
+	while (!m_down && !m_offline && m_llm && m_inflight.empty()) {
 		std::string const id = m_plan.take();
 		if (id.empty())
 			return;
@@ -248,6 +322,10 @@ bool Facts::submit(agenda::task const &t)
 		delete ctx;
 		return false;
 	}
+	if (debug())
+		std::fprintf(stderr, "srtview: facts: ask %s %s\n",
+		             kKindName[std::size_t(t.what)],
+		             t.id.c_str());
 	return true;
 }
 

@@ -74,19 +74,26 @@ void plan::decay (double keep)
 
 std::string plan::take ()
 {
-	std::vector<double> eff(m_entries.size());
+	std::vector<double> own(m_entries.size());
 	for (std::size_t i = 0; i < m_entries.size(); ++i)
-		eff[i] = m_entries[i].s == state::pending
+		own[i] = m_entries[i].s == state::pending
 		         ? score(m_entries[i].t)
 		         : 0.0;
+	std::vector<double> eff(own);
 	for (std::size_t pass = 0; pass < kLiftCap && lift(eff); ++pass)
 		;
 
+	// Inherited urgency forms the class, the task's own score
+	// orders within it.  On effective score alone, a hot aggregate
+	// (the pyramid root sums every leaf's heat) would flatten its
+	// whole subtree to one value and hand the order back to
+	// insertion, erasing exactly the distinctions the heat painted.
 	std::size_t best = npos;
 	for (std::size_t i = 0; i < m_entries.size(); ++i) {
 		if (m_entries[i].s != state::pending || !ready(m_entries[i]))
 			continue;
-		if (best == npos || eff[i] > eff[best])
+		if (best == npos || eff[i] > eff[best] ||
+		    (eff[i] == eff[best] && own[i] > own[best]))
 			best = i;
 	}
 	if (best == npos)

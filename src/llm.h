@@ -149,6 +149,21 @@ extern int
 llm_cancel (struct llm       *c,
             LLM_STD(uint64_t) id);
 
+/** @brief Sets a quiet gap between tasks.
+ *
+ * After a task completes, the worker idles @a ms milliseconds
+ * before starting the next -- breathing room for a thermally
+ * fragile accelerator behind the server.  The gap sits between
+ * tasks only, never delays the first, and cancellation or
+ * destruction cuts it short.
+ *
+ * @param c  The client.
+ * @param ms Gap in milliseconds; <= 0 for none (the default).
+ */
+extern void
+llm_pace (struct llm      *c,
+          LLM_STD(int32_t) ms);
+
 /** @brief A static description of a status code.
  *
  * @param status LLM_OK or an LLM_ERR_* code.

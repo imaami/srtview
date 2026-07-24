@@ -143,6 +143,18 @@ static void test_heat()
 	check(p.take() == "l1", "decay restores insertion order");
 }
 
+static void test_blend()
+{
+	agenda::plan p;
+	p.add({.id = "l1", .keys = {"v1"}});
+	p.add({.id = "l2", .keys = {"v2"}});
+	p.heat("v1", 2.0);
+	p.decay(0.5);                    // pattern change fades interest
+	p.heat("v2", 1.5);
+	check(p.take() == "l2", "fresh interest outranks faded");
+	check(p.take() == "l1", "faded interest still counts");
+}
+
 static void test_inheritance()
 {
 	agenda::plan p;
@@ -163,6 +175,40 @@ static void test_inheritance()
 	p.done("mid");
 	check(p.take() == "dive" && p.take() == "plain",
 	      "the hot task itself runs once ready");
+}
+
+// Regression, found live: the pyramid root sums every leaf's heat,
+// outscores each single leaf, and its lift then flattened all
+// leaves to one effective score -- insertion order, heat erased.
+// Own-score tie-breaking keeps the within-class order.
+static void test_aggregate_feedback()
+{
+	agenda::plan p;
+	char const *leaves[] = {"v1", "v2", "v3", "v4"};
+	for (char const *l : leaves)
+		p.add({.id = l, .keys = {l}});
+	for (auto const &t : agenda::pyramid({"v1", "v2", "v3", "v4"},
+	                                     glue))
+		p.add(t);
+	check(p.take() == "v1", "first leaf starts cold");
+	p.heat("v1", 0.5);
+	p.decay(0.5);                    // the fixture's exact feed
+	p.heat("v1", 0.222);
+	p.heat("v3", 0.889);
+	p.heat("v4", 0.889);
+	p.done("v1");
+	check(p.take() == "v3" && p.take() == "v4",
+	      "hot leaves precede the cold one despite the root's lift");
+	p.done("v3");
+	p.done("v4");
+	check(p.take() == "(v3+v4)",
+	      "the hot subtree's node outranks the cold leaf");
+	p.done("(v3+v4)");
+	check(p.take() == "v2", "the cold leaf runs when its turn comes");
+	p.done("v2");
+	check(p.take() == "(v1+v2)", "cold node follows");
+	p.done("(v1+v2)");
+	check(p.take() == "((v1+v2)+(v3+v4))", "root closes the corpus");
 }
 
 static void test_parking()
@@ -209,7 +255,9 @@ int main()
 	test_order_bands();
 	test_export_edge();
 	test_heat();
+	test_blend();
 	test_inheritance();
+	test_aggregate_feedback();
 	test_parking();
 	test_reset();
 	std::printf("%s\n", g_fail ? "FAILURES" : "all passed");

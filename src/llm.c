@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "list_priv.h"
@@ -707,6 +708,7 @@ struct llm {
 	struct llm_job  *active;  /* in flight, owned by the worker */
 	uint64_t         last_id;
 	int              fd;      /* in-flight socket, for cancellation */
+	int              pace_ms; /* quiet gap between tasks */
 	bool             cancel;  /* retire the active job */
 	bool             quit;
 	char            *host;
@@ -767,6 +769,28 @@ run_job (struct llm *c, struct llm_job *job)
 	free(job);
 }
 
+/* The quiet gap between tasks, mutex held: an absolute deadline on
+ * the condvar's (realtime) clock, quit cutting the wait short.
+ * Signals from new asks land as spurious wakeups; the queue is
+ * re-examined only once the gap has been served.
+ */
+static void
+cool_down (struct llm *c)
+{
+	struct timespec until;
+	clock_gettime(CLOCK_REALTIME, &until);
+	until.tv_sec += c->pace_ms / 1000;
+	until.tv_nsec += (long)(c->pace_ms % 1000) * 1000000L;
+	if (until.tv_nsec >= 1000000000L) {
+		++until.tv_sec;
+		until.tv_nsec -= 1000000000L;
+	}
+
+	while (!c->quit)
+		if (pthread_cond_timedwait(&c->cond, &c->mtx, &until))
+			return;
+}
+
 static void *
 work (void *arg)
 {
@@ -787,6 +811,8 @@ work (void *arg)
 		run_job(c, job);
 		pthread_mutex_lock(&c->mtx);
 		c->active = nullptr;
+		if (c->pace_ms > 0)
+			cool_down(c);
 	}
 	pthread_mutex_unlock(&c->mtx);
 	return nullptr;
@@ -952,6 +978,18 @@ llm_cancel (struct llm *c,
 	finish(job, LLM_ERR_CANCEL, nullptr);
 	free(job);
 	return 1;
+}
+
+void
+llm_pace (struct llm *c,
+          int32_t     ms)
+{
+	if (!c)
+		return;
+
+	pthread_mutex_lock(&c->mtx);
+	c->pace_ms = ms > 0 ? (int)ms : 0;
+	pthread_mutex_unlock(&c->mtx);
 }
 
 char const *

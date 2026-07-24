@@ -33,8 +33,15 @@
 //   c / P           play / pause (srtjump muscle memory)
 //
 // Env: SRTVIEW_MPV_ARGS -- extra mpv arguments (split on whitespace)
-//      SRTVIEW_DEBUG    -- log IPC traffic and player health to
-//                          stderr; state flips are logged always
+//      SRTVIEW_LLM      -- llama-server endpoint for the background
+//                          facts pipeline as [host][:port]; default
+//                          127.0.0.1:8080
+//      SRTVIEW_LLM_PACE -- quiet seconds between summarization
+//                          tasks (default 30, 0 disables): thermal
+//                          breathing room for the GPU
+//      SRTVIEW_DEBUG    -- log IPC traffic, player health and facts
+//                          pipeline tasks to stderr; state flips are
+//                          logged always
 //
 // Session state (last browsed directory, recent files) persists via
 // QSettings.  On WSLg (detected by its PulseAudio bridge socket),
@@ -78,7 +85,7 @@ int main(int argc, char **argv)
 	if (args.size() >= 3 && args[1] == QStringLiteral("--selftest"))
 		runSelftest(&w, args[2]);
 	else if (args.size() >= 2)
-		w.openPath(args[1]);
+		w.openAny(args[1]);
 
 	return app.exec();
 }

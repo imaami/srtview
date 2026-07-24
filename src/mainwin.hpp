@@ -76,6 +76,7 @@ private:
 	void updateInfo();
 	QString matchInfo(qsizetype at);
 	void recomputeTally();
+	void feedHeat();
 	bool showDoc(QString const &video, QString const &srt);
 	std::string offerFacts(QString const &srt);
 	qsizetype playlistIndex(QString const &video);

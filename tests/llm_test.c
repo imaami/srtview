@@ -252,12 +252,21 @@ fake_finish (struct fake *f)
 static pthread_mutex_t g_seq_mtx = PTHREAD_MUTEX_INITIALIZER;
 static int             g_seq;
 
+static long
+now_ms (void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
 struct slot {
 	pthread_mutex_t mtx;
 	pthread_cond_t  cond;
 	int             fired;
 	int             seq;
 	int             status;
+	long            done_ms;
 	uint64_t        id;
 	size_t          size;
 	char            text[4096];
@@ -283,6 +292,7 @@ on_done (void *ud, uint64_t id, int status, char const *text,
 	s->id = id;
 	s->seq = seq;
 	s->status = status;
+	s->done_ms = now_ms();
 	s->size = size < sizeof s->text - 1 ? size : sizeof s->text - 1;
 	if (text)
 		memcpy(s->text, text, s->size);
@@ -523,6 +533,72 @@ test_fifo (void)
 	llm_buf_free(&f.reqs);
 }
 
+static void
+test_pace (void)
+{
+	char resp[1024];
+	struct fake f;
+	struct slot s1, s2, s3;
+	struct llm *c;
+	long t0;
+	snprintf(resp, sizeof resp,
+	         "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
+	         strlen(REPLY_JSON), REPLY_JSON);
+	check(fake_start(&f, resp, 3), "paced fake up");
+	slot_init(&s1);
+	slot_init(&s2);
+	slot_init(&s3);
+	c = llm_create(nullptr, f.port);
+	llm_pace(c, 250);
+	t0 = now_ms();
+	check(llm_ask(c, &(struct llm_task){ .prompt = "a" },
+	              on_done, &s1) &&
+	      llm_ask(c, &(struct llm_task){ .prompt = "b" },
+	              on_done, &s2) &&
+	      llm_ask(c, &(struct llm_task){ .prompt = "c" },
+	              on_done, &s3), "three tasks queued");
+	check(slot_wait(&s3, 8000) && s3.status == LLM_OK,
+	      "paced tasks all complete");
+	check(s3.done_ms - t0 >= 400,
+	      "two quiet gaps kept the pace");
+	check(s1.done_ms <= s2.done_ms && s2.done_ms <= s3.done_ms,
+	      "pacing preserves order");
+	llm_destroy(&c);
+	fake_finish(&f);
+	llm_buf_free(&f.reqs);
+}
+
+static void
+test_pace_destroy (void)
+{
+	char resp[1024];
+	struct fake f;
+	struct slot s1, s2;
+	struct llm *c;
+	long t0;
+	snprintf(resp, sizeof resp,
+	         "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
+	         strlen(REPLY_JSON), REPLY_JSON);
+	check(fake_start(&f, resp, 1), "one-shot fake up");
+	slot_init(&s1);
+	slot_init(&s2);
+	c = llm_create(nullptr, f.port);
+	llm_pace(c, 5000);
+	check(llm_ask(c, &(struct llm_task){ .prompt = "a" },
+	              on_done, &s1) != 0, "first task queued");
+	check(slot_wait(&s1, 5000) && s1.status == LLM_OK,
+	      "first task completes");
+	check(llm_ask(c, &(struct llm_task){ .prompt = "b" },
+	              on_done, &s2) != 0, "second task queued into gap");
+	t0 = now_ms();
+	llm_destroy(&c);
+	check(now_ms() - t0 < 2000, "destroy cuts the gap short");
+	check(s2.fired && s2.status == LLM_ERR_CANCEL,
+	      "task queued during the gap cancels");
+	fake_finish(&f);
+	llm_buf_free(&f.reqs);
+}
+
 /* One real round-trip when a llama-server is up and opted into. */
 static void
 test_live (void)
@@ -570,6 +646,8 @@ main (void)
 	test_timeout();
 	test_cancel();
 	test_fifo();
+	test_pace();
+	test_pace_destroy();
 	test_live();
 	printf("%s\n", g_fail ? "FAILURES" : "all passed");
 	return g_fail ? 1 : 0;

@@ -24,6 +24,10 @@
 // everything.  Priority inherits through the graph: a hot blocked
 // task lifts its pending dependencies until the chain unblocks, so
 // searching a video pulls that video's whole pipeline forward.
+// Inheritance ties resolve by the tasks' own scores -- the lift
+// says how urgent a chain is, the own score who inside the chain
+// serves it best -- so an aggregate's heat never flattens the
+// ordering among its own inputs.
 #ifndef SRTVIEW_SRC_AGENDA_HPP_
 #define SRTVIEW_SRC_AGENDA_HPP_
 
