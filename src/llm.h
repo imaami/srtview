@@ -154,8 +154,9 @@ llm_cancel (struct llm       *c,
  * After a task completes, the worker idles @a ms milliseconds
  * before starting the next -- breathing room for a thermally
  * fragile accelerator behind the server.  The gap sits between
- * tasks only, never delays the first, and cancellation or
- * destruction cuts it short.
+ * tasks only, never delays the first, and llm_destroy() cuts it
+ * short.  Cancellation does not: a retired task changes nothing
+ * about the accelerator's need to breathe.
  *
  * @param c  The client.
  * @param ms Gap in milliseconds; <= 0 for none (the default).

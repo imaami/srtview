@@ -204,8 +204,8 @@ void testComponents()
 	check(c.size() == 1 && c[0]->name == "phone",
 	      "the referenced topic is the sole component");
 	auto d = r.value;
-	topics::adopt(d, "solo");
-	check(topics::components(d).size() == 1,
+	check(topics::adopt(d, "solo")
+	      && topics::components(d).size() == 1,
 	      "adopted topics are tops, never components");
 }
 

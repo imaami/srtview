@@ -148,12 +148,17 @@ std::int32_t paceEnv()
 // Never cut a UTF-8 sequence: back off continuation bytes.  Reading
 // text[n] at size() is the const string's terminator, not past-the-
 // end.
-std::string_view clip(std::string const &text)
+std::string_view clip_to(std::string const &text, std::size_t limit)
 {
-	std::size_t n = std::min(text.size(), kMaxText);
+	std::size_t n = std::min(text.size(), limit);
 	while (n && (static_cast<unsigned char>(text[n]) & 0xc0) == 0x80)
 		--n;
 	return {text.data(), n};
+}
+
+std::string_view clip(std::string const &text)
+{
+	return clip_to(text, kMaxText);
 }
 
 // Atomic cache write: all-or-nothing via .tmp and rename, so a
@@ -509,10 +514,18 @@ std::string Facts::assemble_dive(agenda::task const &t)
 	std::string const hits = spend_body(t.id);
 	if (hits.empty())
 		return {};
-	std::string all;
-	add_section(all, over);
-	add_section(all, sums);
-	add_section(all, "MATCHES\n" + hits);
+	// The excerpts are the sanctioned fact source: they claim the
+	// window first and the background context gets what remains,
+	// so clipping can only ever trim background -- never the one
+	// section the prompt tells the model to take facts from.  The
+	// 5 covers the "\n---\n" joint add_section() will spend.
+	std::string const m = "MATCHES\n" + hits;
+	std::string ctx;
+	add_section(ctx, over);
+	add_section(ctx, sums);
+	std::string all(clip_to(ctx, m.size() + 5 < kMaxText
+	                             ? kMaxText - m.size() - 5 : 0));
+	add_section(all, m);
 	return std::string(clip(all));
 }
 

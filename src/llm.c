@@ -729,7 +729,10 @@ struct llm {
 	char             port[6];
 };
 
-/* Deliver and release; text (when given) gains a terminator here. */
+/* Deliver and release; text (when given) gains a terminator here.
+ * A success that cannot afford even the terminator degrades to
+ * LLM_ERR_MEM: LLM_OK always carries text, as the header promises.
+ */
 static void
 finish (struct llm_job *job, int status, struct llm_buf *text)
 {
@@ -737,7 +740,9 @@ finish (struct llm_job *job, int status, struct llm_buf *text)
 		job->done(job->ud, job->id, status, text->data,
 		          text->size - 1);
 	else
-		job->done(job->ud, job->id, status, nullptr, 0);
+		job->done(job->ud, job->id,
+		          status == LLM_OK ? LLM_ERR_MEM : status,
+		          nullptr, 0);
 	llm_buf_free(&job->req);
 }
 
@@ -861,15 +866,18 @@ build_request (struct llm const *c, struct llm_task const *task,
 	}
 	if (ok && task->temperature >= 0.0) {
 		char num[32];
-		snprintf(num, sizeof num, "%.6g", task->temperature);
+		int len = snprintf(num, sizeof num, "%.6g",
+		                   task->temperature);
 		/* A Qt host has run setlocale(LC_ALL, "") by now: a
 		 * comma-decimal locale would print "0,5", which is not
 		 * JSON.  Normalize the one character that varies.
 		 */
 		for (char *p = num; *p; ++p)
 			*p = *p == ',' ? '.' : *p;
-		ok = llm_buf_str(&body, ",\"temperature\":")
-		  && llm_buf_str(&body, num);
+		ok = len > 0 && (size_t)len < sizeof num
+		  && llm_buf_put(&body, ",\"temperature\":",
+		                 sizeof ",\"temperature\":" - 1)
+		  && llm_buf_put(&body, num, (size_t)len);
 	}
 	ok = ok && llm_buf_put(&body, "}", 1);
 	n = snprintf(head, sizeof head,

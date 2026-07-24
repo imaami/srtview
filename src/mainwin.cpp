@@ -53,7 +53,8 @@ constexpr double kSearchKeep = 0.5;
 agenda::id takeId(QCryptographicHash &h)
 {
 	agenda::id out;
-	std::memcpy(out.b.data(), h.result().constData(), out.b.size());
+	static_assert(sizeof out.b <= 32, "id exceeds BLAKE2b-256");
+	std::memcpy(out.b.data(), h.result().constData(), sizeof out.b);
 	return out;
 }
 
@@ -441,8 +442,15 @@ void MainWin::adoptVideo(QString const &video, QString const &srt)
 {
 	if (playlistIndex(video) >= 0)
 		return;
+	// Anchored before storing: a relative command-line path would
+	// otherwise re-resolve against the topic file's directory
+	// instead of the directory the caller meant.
 	m_corpus.videos.push_back(
-		{video.toStdString(), srt.toStdString(), {}});
+		{QFileInfo(video).absoluteFilePath().toStdString(),
+		 srt.isEmpty() ? std::string()
+		               : QFileInfo(srt).absoluteFilePath()
+		                               .toStdString(),
+		 {}});
 	// An extension, not a replacement: in-progress dive scans keep
 	// their cursors -- adoption only appends playlist entries.
 	rebuildCorpus(false);
@@ -531,12 +539,13 @@ void MainWin::diveStep()
 }
 
 // One (topic, video) cell: matched cue lines become an excerpt
-// section and the video's leaf a dependency.  Past the budget a
-// video is dropped whole -- section and dependency both -- so the
-// dive never cites a video it did not quote.
+// section and the video's leaf a dependency.  The budget binds per
+// append: an oversized catch is cut at a line boundary, and a video
+// none of whose lines fit is dropped whole, section and dependency
+// both -- the dive never cites a video it did not quote.
 void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 {
-	if (s.parts.size() > kDiveBudget)
+	if (s.parts.size() >= kDiveBudget)
 		return;
 	QString const srt = srtOf(it);
 	std::string hits;
@@ -553,10 +562,21 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 		m_disc.id_for_video(srt.toStdString()));
 	if (!key || std::ranges::find(s.deps, key) != s.deps.end())
 		return;
+	std::string head = "== ";
+	head += QFileInfo(it.video).fileName().toStdString();
+	head += '\n';
+	std::size_t const room = kDiveBudget - s.parts.size();
+	if (head.size() >= room)
+		return;
+	if (hits.size() > room - head.size()) {
+		std::size_t const cut =
+			hits.rfind('\n', room - head.size() - 1);
+		if (cut == std::string::npos)
+			return;
+		hits.resize(cut + 1);
+	}
 	s.deps.push_back(key);
-	s.parts += "== ";
-	s.parts += QFileInfo(it.video).fileName().toStdString();
-	s.parts += '\n';
+	s.parts += head;
 	s.parts += hits;
 }
 

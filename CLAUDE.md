@@ -62,7 +62,7 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 
 - Prefer standard, modern C23 and later. Claims about a "true C" of years past are the "golden age" delusion of C programming. The C language is by definition what the current standard says.
 - Use `int` only if needed. "`int` by default" coding often necessitates more integer conversions which translate to costly sign extension instructions.
-- Trace your call chains to see if you're e.g. calling `strlen()` effectively multiple times over the same input. If need a C string's length more than once, measure it once and pass it down.
+- Trace your call chains to see if you're e.g. calling `strlen()` effectively multiple times over the same input. If you need a C string's length more than once, measure it once and pass it down.
 - Stay aware of the program flow. Are you repeating some task more than once when you could just use a variable? Fix it.
 - Use helper macros when it's justified and reasonable, but undefine macros that don't need to be exposed ASAP. Typically this means defining something above a function and undefining it below.
 - If you call `strlen()` inside a loop condition or on a string literal, you must spend a full day downtown pushing a baby stroller full of boiled cabbage.
@@ -78,7 +78,7 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 
 - Qt is mainly for the UI, and even there only when necessary. Prefer standard, modern C++23 (and later) unless it incurs a heavy penalty.
 - Using Qt for something does _not_ mean you must _only_ use Qt for that thing. Use standard C++ even in UI code.
-- Minimize the need to type-convert between `std`; err on the side of `std`. Convert to C++ as early as possible. For example, if the last of a chain of function calls writes to a socket, don't carry a Qt type all the way through.
+- Minimize the need to type-convert between `std` and Qt types; err on the side of `std`. Convert to C++ as early as possible. For example, if the last of a chain of function calls writes to a socket, don't carry a Qt type all the way through.
 
 ### Readability
 

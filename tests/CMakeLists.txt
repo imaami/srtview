@@ -52,3 +52,4 @@ target_compile_options(llm_tests PRIVATE -Wall -Wextra)
 target_link_libraries(llm_tests PRIVATE Threads::Threads)
 
 add_test(NAME llm_tests COMMAND llm_tests)
+set_tests_properties(llm_tests PROPERTIES TIMEOUT 120)
