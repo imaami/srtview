@@ -136,9 +136,10 @@ enum {
 };
 
 static unsigned char const kClass[256] = {
-	[' ']  = CWS | CSEP, ['\t'] = CWS | CSEP,
-	['\n'] = CWS | CSEP, ['\r'] = CWS | CSEP,
-	[',']  = CSEP, [']'] = CSEP, ['}'] = CSEP, ['"'] = CSEP,
+	[' ' ] = CSEP | CWS, ['\t'] = CSEP | CWS,
+	['\n'] = CSEP | CWS, ['\r'] = CSEP | CWS,
+	[',' ] = CSEP,       [']' ] = CSEP,
+	['}' ] = CSEP,       ['"' ] = CSEP,
 };
 
 static void
@@ -152,16 +153,16 @@ ws (struct llm_cur *c)
 static bool
 skip_str (struct llm_cur *c)
 {
-	if (c->p >= c->end || *c->p != '"')
-		return false;
-	for (++c->p; c->p < c->end; ++c->p) {
-		if (*c->p == '\\') {
-			++c->p;
-			continue;
-		}
-		if (*c->p == '"') {
-			++c->p;
-			return true;
+	if (c->p < c->end && *c->p == '"') {
+		while (++c->p < c->end) {
+			if (*c->p == '\\') {
+				++c->p;
+				continue;
+			}
+			if (*c->p == '"') {
+				++c->p;
+				return true;
+			}
 		}
 	}
 	return false;
@@ -176,21 +177,25 @@ skip_value (struct llm_cur *c)
 		ws(c);
 		if (c->p >= c->end)
 			return false;
+
 		switch (*c->p) {
 		case '"':
 			if (!skip_str(c))
 				return false;
 			break;
+
 		case '{': case '[':
 			if (++depth > 64)
 				return false;
 			++c->p;
 			break;
+
 		case '}': case ']':
 			if (!depth--)
 				return false;
 			++c->p;
 			break;
+
 		case ',': case ':':
 			if (!depth)
 				return false;
@@ -206,6 +211,7 @@ skip_value (struct llm_cur *c)
 		}
 		}
 	} while (depth);
+
 	return true;
 }
 
@@ -237,7 +243,7 @@ llm_json_get (struct llm_cur *c,
 		++c->p;
 		ws(c);
 		if ((size_t)(kend - kstart) == klen &&
-		    !memcmp(kstart, key, klen))
+		    !__builtin_memcmp(kstart, key, klen))
 			return true;
 		if (!skip_value(c))
 			return false;
@@ -287,7 +293,8 @@ hex4 (char const *p)
 }
 
 static bool
-put_utf8 (struct llm_buf *out, uint32_t cp)
+put_utf8 (struct llm_buf *out,
+          uint32_t        cp)
 {
 	static unsigned char const kLead[] = { 0x00, 0xc0, 0xe0, 0xf0 };
 	size_t n = (cp >= 0x80) + (cp >= 0x800) + (cp >= 0x10000);
@@ -302,14 +309,14 @@ put_utf8 (struct llm_buf *out, uint32_t cp)
 
 /* \uXXXX after the cursor (past the "\u"), surrogate pairs joined. */
 static bool
-unescape_u (struct llm_cur *c, struct llm_buf *out)
+unescape_u (struct llm_cur *c,
+            struct llm_buf *out)
 {
-	uint32_t cp;
 	int v;
 	if (c->end - c->p < 4 || (v = hex4(c->p)) < 0)
 		return false;
 	c->p += 4;
-	cp = (uint32_t)v;
+	uint32_t cp = (uint32_t)v;
 	if (cp >= 0xdc00 && cp <= 0xdfff)
 		return false;
 	if (cp >= 0xd800 && cp <= 0xdbff) {
@@ -332,12 +339,12 @@ static char const kUnesc[256] = {
 
 /* One escape sequence at the cursor (at the backslash). */
 static bool
-unescape (struct llm_cur *c, struct llm_buf *out)
+unescape (struct llm_cur *c,
+          struct llm_buf *out)
 {
-	char ch;
 	if (c->end - c->p < 2)
 		return false;
-	ch = c->p[1];
+	char ch = c->p[1];
 	c->p += 2;
 	if (ch == 'u')
 		return unescape_u(c, out);
@@ -371,10 +378,11 @@ llm_json_str (struct llm_cur *c,
 /* ---- HTTP response parsing ------------------------------------- */
 
 static size_t
-hdr_end (char const *raw, size_t size)
+hdr_end (char const *raw,
+         size_t      size)
 {
 	for (size_t i = 0; i + 3 < size; ++i)
-		if (!memcmp(raw + i, "\r\n\r\n", 4))
+		if (!__builtin_memcmp(raw + i, "\r\n\r\n", 4))
 			return i + 4;
 	return 0;
 }
@@ -404,7 +412,9 @@ low (char ch)
 
 /* Case-insensitive prefix match; pfx must already be lowercase. */
 static bool
-ipfx (char const *s, size_t n, char const *pfx)
+ipfx (char const *s,
+      size_t      n,
+      char const *pfx)
 {
 	size_t m = strlen(pfx);
 	if (n < m)
@@ -430,8 +440,7 @@ dec_after (char const *s, size_t n, size_t at)
 {
 	size_t v = 0;
 	bool any = false;
-	while (at < n && s[at] == ' ')
-		++at;
+	for (; at < n && s[at] == ' '; ++at);
 	for (; at < n && s[at] >= '0' && s[at] <= '9'; ++at) {
 		if (v > (SIZE_MAX - 9) / 10)
 			return SIZE_MAX;
