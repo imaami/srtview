@@ -27,7 +27,7 @@ disclaimer()
 		echo "can't fetch gh account owner" >&2
 		user='the owner of this GitHub account'
 	}
-	printf '(Comment written by %s with permission from %s)\n\n' \
+	printf '(Comment written by %s with permission from %s)\n' \
 	       "${CLAUDE_MODEL:-Claude Code}" "$user"
 }
 
@@ -71,7 +71,7 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
 reply()
 {
 	[[ $1 && $2 ]] || fail "usage: reply <thread-id> <body>"
-	gh api graphql -f tid="$1" -f body="$(disclaimer)$2" -f query='
+	gh api graphql -f tid="$1" -f body="$(disclaimer)"$'\n\n'"$2" -f query='
 mutation($tid:ID!,$body:String!){
   addPullRequestReviewThreadReply(
     input:{pullRequestReviewThreadId:$tid,body:$body})
@@ -96,7 +96,7 @@ unresolve() { setres unresolve "$1"; }
 comment()
 {
 	[[ $1 ]] || fail 'usage: comment <body>'
-	gh pr comment --body "$(disclaimer)$1" || fail "pr comment"
+	gh pr comment --body "$(disclaimer)"$'\n\n'"$1" || fail "pr comment"
 }
 
 case "$1" in
