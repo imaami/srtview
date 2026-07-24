@@ -137,6 +137,11 @@ static void test_states()
 	check(p.status(tid("x")) == agenda::plan::state::done,
 	      "re-adding a done id leaves it done");
 	check(p.backlog() == 0, "done tasks leave the backlog");
+
+	agenda::task a{.id = tid("t")};
+	agenda::task b{.id = tid("t")};
+	b.note = "journal";
+	check(a == b, "note is journal text, not identity");
 }
 
 static void test_order_bands()

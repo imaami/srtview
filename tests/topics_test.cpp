@@ -235,6 +235,9 @@ void testAdopt()
 	check(!topics::adopt(d, " foo") && !topics::adopt(d, "foo\t")
 	      && !topics::adopt(d, "foo "),
 	      "edge whitespace is refused: it cannot round-trip");
+	check(!topics::adopt(d, "foo\nbar")
+	      && !topics::adopt(d, "foo\rbar"),
+	      "interior line breaks are refused for the same reason");
 	check(!topics::adopt(d, "x\\{phone:}y"),
 	      "reference syntax is refused unvalidated");
 	check(topics::adopt(d, "brace \\{2} escape"),

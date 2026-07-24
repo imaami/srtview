@@ -90,14 +90,18 @@ agenda::id focusId(agenda::id a, agenda::id b)
 	return takeId(h);
 }
 
-bool sharesKey(std::vector<agenda::id> const &a,
-               std::vector<agenda::id> const &b)
+std::size_t sharedKeys(std::vector<agenda::id> const &a,
+                       std::vector<agenda::id> const &b)
 {
+	std::size_t n = 0;
 	for (agenda::id const k : a)
-		if (std::ranges::find(b, k) != b.end())
-			return true;
-	return false;
+		n += std::ranges::find(b, k) != b.end();
+	return n;
 }
+
+// Focus fan-out per new dive: the all-pairs plan is quadratic and
+// would mostly buy paced NONEs from weakly related pairs.
+constexpr std::size_t kFocusFan = 3;
 
 // Dive identity is the expanded pattern's hash: editing a topic
 // re-dives it, and identical patterns share one cache file.
@@ -249,7 +253,11 @@ MainWin::MainWin()
 	m_tallyLag.setInterval(300);
 	connect(&m_tallyLag, &QTimer::timeout,
 	        this, [this] { recomputeTally(); });
-	m_diveTick.setInterval(0);
+	// Nonzero, so the scan leaves real idle between cells: a zero
+	// timer re-fires as fast as the loop drains, and semantic
+	// background work has no latency constraint worth a warm
+	// chassis.
+	m_diveTick.setInterval(1);
 	connect(&m_diveTick, &QTimer::timeout,
 	        this, [this] { diveStep(); });
 	// The harvest pump: completed focuses drop REGEX hypotheses
@@ -659,11 +667,29 @@ void MainWin::pairFocus(DiveScan const &s)
 {
 	if (s.generated)
 		return;
-	std::vector<agenda::task> staged;
-	for (FinishedDive const &o : m_dives) {
-		if (sharesKey(o.keys, s.deps))
-			staged.push_back(makeFocus(o, s));
+	// Overlap-ranked, capped: at most kFocusFan partners per new
+	// dive, the shared-hit-video count as the relatedness prior
+	// and recency breaking ties.  Old dives may still accumulate
+	// pairs as later ones pick them, so the total stays linear.
+	struct pick {
+		std::size_t at;
+		std::size_t overlap;
+	};
+	std::vector<pick> best;
+	for (std::size_t i = 0; i < m_dives.size(); ++i) {
+		std::size_t const n = sharedKeys(m_dives[i].keys, s.deps);
+		if (n)
+			best.push_back({i, n});
 	}
+	std::ranges::sort(best, [](pick const &a, pick const &b) {
+		return a.overlap != b.overlap ? a.overlap > b.overlap
+		                              : a.at > b.at;
+	});
+	if (best.size() > kFocusFan)
+		best.resize(kFocusFan);
+	std::vector<agenda::task> staged;
+	for (pick const &p : best)
+		staged.push_back(makeFocus(m_dives[p.at], s));
 	m_dives.push_back({s.id, s.deps, s.pattern});
 	if (!staged.empty())
 		m_facts.corpus(std::move(staged));

@@ -83,7 +83,7 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 ### Readability
 
 - Tabs indent, spaces align (C, C++, CMake): continuation lines of a declaration or argument list are tab-indented to the statement's level, then space-padded into column alignment. Do not "fix" space-aligned continuations into tabs.
-- Place angle bracketed include statements above double-quoted ones. Separate these into groups by placing an empty line in between the two.
+- Place angle-bracketed include statements above double-quoted ones. Separate these into groups by placing an empty line in between the two.
 - A separating empty line is only mandatory between `<>` and `""` groups, but it is also allowed within these two groups at your discretion.
 - Sort grouped includes - those not separated by empty lines - by header name in the C locale. Ignore whitespace so that e.g. `#include` and `# include` sort equal.
 - C core uses Doxygen `/** */` for API documentation (file headers, structs, public functions); internal implementation notes and test commentary are plain `/* */`. C++ uses `//` header-comment style.

@@ -1038,7 +1038,8 @@ llm_strerror (int status)
 		[-LLM_ERR_PARSE]   = "malformed reply",
 		[-LLM_ERR_CANCEL]  = "cancelled",
 	};
-	size_t i = (size_t)-status;
+	/* Negate after converting: -INT_MIN is signed overflow. */
+	size_t i = (size_t)0 - (size_t)status;
 	return status <= 0 && i < sizeof msg / sizeof *msg
 	       ? msg[i]
 	       : "unknown";

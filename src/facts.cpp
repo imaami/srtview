@@ -287,6 +287,12 @@ Facts::Facts()
 		                                   : ep.host.c_str(),
 		                   ep.port);
 		llm_pace(m_llm, paceEnv() * 1000);
+	} else {
+		// The same class of state flip the offline latch logs:
+		// a pipeline that will never run must say so once.
+		std::fprintf(stderr, "srtview: facts: %s: %s, pipeline "
+		             "disabled\n", m_dir.c_str(),
+		             ec.message().c_str());
 	}
 }
 

@@ -444,12 +444,14 @@ std::vector<topic const *> components(doc const &d)
 
 bool adopt(doc &d, std::string const &pattern, char const *stem)
 {
-	// Edge whitespace would not survive write()/parse() -- the
-	// file format strips it -- so adopting it would break the
-	// round-trip and orphan the pattern's dive id.  Refused, like
-	// references: stripping instead would change what it matches.
+	// Edge whitespace and interior line breaks would not survive
+	// write()/parse() -- the format strips edges and splits lines
+	// -- so adopting either would break the round-trip and orphan
+	// the pattern's dive id.  Refused, like references: rewriting
+	// instead would change what the pattern matches.
 	ref r;
 	if (pattern.empty() || strip(pattern) != pattern
+	    || pattern.find_first_of("\r\n") != std::string::npos
 	    || next_ref(pattern, 0, r))
 		return false;
 	for (topic const &t : d.topics)

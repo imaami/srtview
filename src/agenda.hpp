@@ -81,7 +81,14 @@ struct task {
 	std::uint8_t            tier     = 0;
 	bool                    exported = true;
 
-	bool operator==(task const &) const = default;
+	// note stays out of equality, exactly as its comment promises:
+	// journal text is not identity.
+	bool operator==(task const &o) const
+	{
+		return id == o.id && deps == o.deps && keys == o.keys
+		    && refs == o.refs && what == o.what
+		    && tier == o.tier && exported == o.exported;
+	}
 };
 
 class plan {
