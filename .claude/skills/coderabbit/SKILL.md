@@ -37,6 +37,10 @@ trail. Never force-push in this workflow; rewriting published history
 orphans the review anchors. Never use git commands not on the allowed
 list.
 
+`cr.sh comment` and `cr.sh reply` prepend a disclaimer line above the
+comment clarifying Claude's authorship of the text and the permission
+from the account owner to post it.
+
 ## Phase 3 — after push.
 CodeRabbit incrementally re-reviews new commits. Run cr.sh fetch once
 more; REPORT any new findings but do not act on them — they belong to

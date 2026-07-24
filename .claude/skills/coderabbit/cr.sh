@@ -20,6 +20,17 @@ ctx()
 		fail "no PR for current branch: $pr"
 }
 
+disclaimer()
+{
+	local user
+	user='@'$(gh api user -q '.login') || {
+		echo "can't fetch gh account owner" >&2
+		user='the owner of this GitHub account'
+	}
+	printf '(Comment written by %s with permission from %s)\n\n' \
+	       "${CLAUDE_MODEL:-Claude Code}" "$user"
+}
+
 fetch()
 {
 	ctx
@@ -60,7 +71,7 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
 reply()
 {
 	[[ $1 && $2 ]] || fail "usage: reply <thread-id> <body>"
-	gh api graphql -f tid="$1" -f body="$2" -f query='
+	gh api graphql -f tid="$1" -f body="$(disclaimer)$2" -f query='
 mutation($tid:ID!,$body:String!){
   addPullRequestReviewThreadReply(
     input:{pullRequestReviewThreadId:$tid,body:$body})
@@ -79,12 +90,16 @@ mutation(\$tid:ID!){ ${1}ReviewThread(input:{threadId:\$tid})
 		fail "$1 $2"
 }
 
-case $1 in
-fetch)     fetch ;;
-reply)     reply "$2" "$3" ;;
-resolve)   setres resolve "$2" ;;
-unresolve) setres unresolve "$2" ;;
-comment)   [[ $2 ]] || fail "usage: comment <body>"
-           gh pr comment --body "$2" || fail "pr comment" ;;
+resolve() { setres resolve "$1"; }
+unresolve() { setres unresolve "$1"; }
+
+comment()
+{
+	[[ $1 ]] || fail 'usage: comment <body>'
+	gh pr comment --body "$(disclaimer)$1" || fail "pr comment"
+}
+
+case "$1" in
+comment|fetch|reply|resolve|unresolve) "$@" ;;
 *) fail "usage: fetch | reply <tid> <body> | resolve <tid> | unresolve <tid> | comment <body>" ;;
 esac
