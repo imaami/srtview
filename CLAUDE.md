@@ -48,17 +48,47 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 
 ## Conventions
 
-- Tabs indent, spaces align (C, C++, CMake): continuation lines of a declaration or argument list are tab-indented to the statement's level, then space-padded into column alignment. Do not "fix" space-aligned continuations into tabs.
-- Angle bracketed (system) include statements come first, then the double-quoted (local) include statements. Don't worry about this in particular, though, just fix these opportunistically and make sure to do it this way in new files.
-- C core uses Doxygen `/** */` for API documentation (file headers, structs, public functions); internal implementation notes and test commentary are plain `/* */`. C++ uses `//` header-comment style.
+### Approach and attitude
+
+- It's better to delete than to add LoC, within reason. If it doesn't hurt performance or grow binary size, a red diff is better than a green one.
+- Elegance and performance often correlate. Trust your sense of beauty but verify your sense of trust.
+- All code is bad, everywhere, always. Never trust a single line you read or write.
+- All code is bad, everywhere, always; coders are not. Finding a bug is a happy and inclusive event.
+- Undefined Behavior is a wrathful cosmic force. "It's not UB if it works" is exactly what your bugs want you to believe.
+- Use compile-time features when reasonable; template metaprogramming in C++, and `_Generic`, `typeof`, `sizeof`, etc. in C.
+- Use some time during every programming task to think of optimizations and code deletions that can be done naturally on the side.
+
+### C
+
+- Prefer standard, modern C23 and later. Claims about a "true C" of years past are the "golden age" delusion of C programming. The C language is by definition what the current standard says.
+- Use `int` only if needed. "`int` by default" coding often necessitates more integer conversions which translate to costly sign extension instructions.
+- Trace your call chains to see if you're e.g. calling `strlen()` effectively multiple times over the same input. If need a C string's length more than once, measure it once and pass it down.
+- Stay aware of the program flow. Are you repeating some task more than once when you could just use a variable? Fix it.
+- Use helper macros when it's justified and reasonable, but undefine macros that don't need to be exposed ASAP. Typically this means defining something above a function and undefining it below.
+- If you call `strlen()` inside a loop condition or on a string literal, you must spend a full day downtown pushing a baby stroller full of boiled cabbage.
 - Exposed C APIs (headers consumed across the C/C++ boundary, e.g. `fundo.h`) use `int` for booleans, documented as 1/0 in the Doxygen comment — no `bool`/`_Bool` in signatures. C and C++ `bool` match only by platform-ABI convention, and the C core must stay ABI-safe under pre-C23 builds with polyfill macros. `bool` is fine in internal headers and header-inline helpers (`cutil.h`), which are never linked across the boundary.
-- Don't use `int` everywhere by default, or without a good reason each time. You'll know that this is a problem if you see integrals being cast from `int` to `std:size_t` (or similar) and back at every turn. If you don't need negative values, don't pick a signed type, and follow the conventions of modern `std` (and C23) interfaces.
-- Prefer standard, modern, non-Qt C++ as much as possible. Make full use of C++23 and `constexpr` STL types. The only situation where Qt is preferred is one where not doing so would incur a heavy performance penalty.
-- Prefer standard, modern C23 and ignore misinformed ideas about "portable" C code. The latest standard is *the* actual C language.
-- When writing C code, treat Undefined Behavior like a jealous spirit you don't want to piss off. In C jargon "it works, can't be UB" means "I added Heisenbugs because the old ones need company".
-- Given a substantial amount of code, high-quality `std`-only C++ often performs better than an equivalent Qt implementation. The apparent cost of converting a small block of Qt to standard C++ is sometimes a local minimum; there may well be a deeper valley of decreased energy expenditure behind an immediate upwards slope.
-- When a conversion between an `std` and a Qt type is necessary, try to do it as close to the Qt side as possible. For example, if the final function call in a chain of calls writes data to a socket, don't carry a Qt type all the way through but shed it early on.
-- On average it's always better to delete code than add more. Of course that's not an absolute truth, but keep it in mind. As long as performance doesn't suffer and output binary size doesn't explode, a red diff is better than a green one.
-- Avoid dynamic dispatch in C++ like a moderately inconvenient plague. Ten extra milliseconds at runtime is worse than ten extra minutes during build.
-- `.gitignore` must stay sorted in the C locale (`LC_ALL=C sort`) — see AGENTS.md for the pre-commit check to run after `git add`.
+
+### C++
+
+- Prefer C++23 and later. Follow the type conventions of modern `std` interfaces. Make full use of `constexpr` STL types.
+- If there are upfront costs in converting _some_ Qt to idiomatic C++, see if it's really a "local minimum" obscuring a deeper valley of decreased energy expenditure, reachable by going the whole way.
+- Avoid dynamic dispatch in C++. Ten extra milliseconds at runtime is worse than ten minutes lost during build.
+
+### Qt
+
+- Qt is mainly for the UI, and even there only when necessary. Prefer standard, modern C++23 (and later) unless it incurs a heavy penalty.
+- Using Qt for something does _not_ mean you must _only_ use Qt for that thing. Use standard C++ even in UI code.
+- Minimize the need to type-convert between `std`; err on the side of `std`. Convert to C++ as early as possible. For example, if the last of a chain of function calls writes to a socket, don't carry a Qt type all the way through.
+
+### Readability
+
+- Tabs indent, spaces align (C, C++, CMake): continuation lines of a declaration or argument list are tab-indented to the statement's level, then space-padded into column alignment. Do not "fix" space-aligned continuations into tabs.
+- Place angle bracketed include statements above double-quoted ones. Separate these into groups by placing an empty line in between the two.
+- A separating empty line is only mandatory between `<>` and `""` groups, but it is also allowed within these two groups at your discretion.
+- Sort grouped includes - those not separated by empty lines - by header name in the C locale. Ignore whitespace so that e.g. `#include` and `# include` sort equal.
+- C core uses Doxygen `/** */` for API documentation (file headers, structs, public functions); internal implementation notes and test commentary are plain `/* */`. C++ uses `//` header-comment style.
+
+### Repository structure
+
 - Untracked files (check `git status`) are arbitrary local temporaries, not part of the repo — only work with repository content.
+- `.gitignore` must stay sorted in the C locale (`LC_ALL=C sort`) — see AGENTS.md for the pre-commit check to run after `git add`.
