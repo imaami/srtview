@@ -62,10 +62,12 @@ public:
 	Facts(Facts const &) = delete;
 	Facts &operator=(Facts const &) = delete;
 
-	// True when an offer for this id would be accepted: unknown to
-	// the plan and absent from the cache.  Lets callers skip
-	// materializing text the executor would only discard.
-	bool wants(agenda::id key) const;
+	// Resolves what the cache already answers: an id whose file
+	// exists is marked done -- dependents of a cached leaf must
+	// unblock even though no offer will follow -- and false says
+	// no transcript text is needed.  True means the caller should
+	// follow up with offer() and the materialized text.
+	bool settle(agenda::id key);
 
 	// Leaf summary of one subtitle file: the id keys both the
 	// cache and the heat map; the text is snapshot here.  Ids the

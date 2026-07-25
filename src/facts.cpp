@@ -307,7 +307,7 @@ Facts::~Facts()
 	llm_destroy(&m_llm);
 }
 
-bool Facts::wants(agenda::id key) const
+bool Facts::settle(agenda::id key)
 {
 	if (!key)
 		return false;
@@ -316,8 +316,16 @@ bool Facts::wants(agenda::id key) const
 	if (!m_llm || m_plan.status(key) != agenda::plan::state::unknown)
 		return false;
 	std::error_code ec;
-	return !std::filesystem::exists(m_dir + '/' + key.hex() + ".txt",
-	                                ec);
+	if (std::filesystem::exists(m_dir + '/' + key.hex() + ".txt",
+	                            ec)) {
+		// The bookkeeping half that must never be skipped: a
+		// dependent of this cache hit may just have gone ready.
+		m_plan.done(key);
+		advance();
+		return false;
+	}
+
+	return true;
 }
 
 void Facts::offer(agenda::id key, std::string const &utf8Text)

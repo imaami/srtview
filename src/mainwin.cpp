@@ -421,14 +421,15 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 // (its hex socket hash, rehydrated to bytes at this boundary): one
 // summary per unique srt however many entries share it.  The
 // rendered transcript (tags consumed) is what the model reads;
-// wants() gates the join, so re-derivations never materialize text
-// the executor would only discard.  The returned id feeds the
-// corpus pyramid and the heat map.
+// settle() both registers cache hits as done -- new dives depend on
+// cached leaves, so the plan must know them -- and gates the join,
+// so re-derivations never materialize text the executor would only
+// discard.  The returned id feeds the pyramid and the heat map.
 agenda::id MainWin::offerFacts(QString const &srt)
 {
 	agenda::id const key = agenda::id::from_hex(
 		m_disc.id_for_video(srt.toStdString()));
-	if (key && m_facts.wants(key))
+	if (m_facts.settle(key))
 		m_facts.offer(key, exporter::load(m_transcripts, srt)
 		                   .lines.join(QLatin1Char('\n'))
 		                   .toStdString());
