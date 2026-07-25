@@ -91,8 +91,12 @@ void plan::done (id which)
 void plan::fail (id which)
 {
 	std::size_t const at = index_of(which);
-	if (at != npos)
-		m_entries[at].s = state::parked;
+	if (at == npos) {
+		m_entries.push_back({task{.id = which}, state::parked});
+		return;
+	}
+
+	m_entries[at].s = state::parked;
 }
 
 void plan::heat (id key, double add)

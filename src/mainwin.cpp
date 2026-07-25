@@ -602,6 +602,7 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 {
 	if (s.parts.size() >= kDiveBudget)
 		return;
+	std::size_t const room = kDiveBudget - s.parts.size();
 	QString const srt = srtOf(it);
 	std::string hits;
 	for (QString const &line :
@@ -610,6 +611,10 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 			continue;
 		hits += line.toStdString();
 		hits += '\n';
+		// Enough for any final cut: past the room, the trim
+		// below only ever shrinks -- no point holding more.
+		if (hits.size() >= room)
+			break;
 	}
 	if (hits.empty())
 		return;
@@ -620,7 +625,6 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 	std::string head = "== ";
 	head += QFileInfo(it.video).fileName().toStdString();
 	head += '\n';
-	std::size_t const room = kDiveBudget - s.parts.size();
 	if (head.size() >= room)
 		return;
 	if (hits.size() > room - head.size()) {
@@ -753,7 +757,12 @@ void MainWin::harvestOne(QString const &file)
 	if (pat.empty() || !QRegularExpression(
 	                    	QString::fromStdString(pat)).isValid())
 		return;
-	topics::adopt(m_corpus, pat, "focus");
+	// adopt() is the gate: a refusal, or a collision with a topic
+	// the corpus already carries (user-authored ones included),
+	// must neither demote that topic to generated nor stage a
+	// dangling dive for a pattern outside the corpus.
+	if (!topics::adopt(m_corpus, pat, "focus"))
+		return;
 	m_generated.insert(pat);
 	stageDive(pat, false, true);
 }

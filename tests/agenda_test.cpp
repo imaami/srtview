@@ -271,6 +271,12 @@ static void test_parking()
 	p.done(b);
 	check(!p.take() && p.backlog() == 1,
 	      "a parked child blocks its parent for the session");
+
+	p.fail(tid("ghost"));            // e.g. reported after a reset
+	p.add({.id = tid("ghost")});
+	check(p.status(tid("ghost")) == agenda::plan::state::parked
+	      && !p.take(),
+	      "a failure reported before add stays parked");
 }
 
 static void test_reset()

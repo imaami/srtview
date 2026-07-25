@@ -106,6 +106,9 @@ public:
 	void done(id which);
 
 	// Parks an id for the session; its dependents stay blocked.
+	// Unknown ids are remembered as parked -- a failure reported
+	// after a reset must not be forgotten into a same-session
+	// retry (the mirror of done()'s tombstones).
 	void fail(id which);
 
 	void heat(id key, double add);
