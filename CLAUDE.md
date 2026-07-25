@@ -50,13 +50,13 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 
 ### Approach and attitude
 
-- It's better to delete than to add LoC, within reason. If it doesn't hurt performance or grow binary size, a red diff is better than a green one.
-- Elegance and performance often correlate. Trust your sense of beauty but verify your sense of trust.
-- All code is bad, everywhere, always. Never trust a single line you read or write.
+- Use some time during every task to optimize, simplify, and harden.
+- It's better to delete than to add LoC. Given equal performance and binary size, a red diff beats a green one.
+- Elegance and performance often correlate. Trust your sense of beauty. Verify your sense of trust.
+- All code is bad, everywhere, always. Never trust code you read _or_ write.
 - All code is bad, everywhere, always; coders are not. Finding a bug is a happy and inclusive event.
-- Undefined Behavior is a wrathful cosmic force. "It's not UB if it works" is exactly what your bugs want you to believe.
-- Use compile-time features when reasonable; template metaprogramming in C++, and `_Generic`, `typeof`, `sizeof`, etc. in C.
-- Use some time during every programming task to think of optimizations and code deletions that can be done naturally on the side.
+- Undefined Behavior is a wrathful cosmic force. "It's not UB if it works" is what your bugs want you to believe.
+- Use compile-time features to your advantage; template metaprogramming in C++, and `_Generic`, `typeof`, `sizeof`, etc. in C.
 
 ### C
 
@@ -67,6 +67,13 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 - Use helper macros when it's justified and reasonable, but undefine macros that don't need to be exposed ASAP. Typically this means defining something above a function and undefining it below.
 - If you call `strlen()` inside a loop condition or on a string literal, you must spend a full day downtown pushing a baby stroller full of boiled cabbage.
 - Exposed C APIs (headers consumed across the C/C++ boundary, e.g. `fundo.h`) use `int` for booleans, documented as 1/0 in the Doxygen comment — no `bool`/`_Bool` in signatures. C and C++ `bool` match only by platform-ABI convention, and the C core must stay ABI-safe under pre-C23 builds with polyfill macros. `bool` is fine in internal headers and header-inline helpers (`cutil.h`), which are never linked across the boundary.
+- Arrange struct members so that implicit padding is minimal. Wider types first, narrower towards the end, grouped by width.
+- Be mindful of width guarantees. Given 3 struct members, an `int64_t`, a `long`, and an `int32_t`, `long` goes between the fixed-width types as it could be either. Remember the corner cases; e.g. `int` is only _required_ to be 16 bits.
+- If a struct has trailing padding, and the last member is an integer type or `bool`, change the the type such that it occupies the padding, unless it introduces more complexity (such as additional casts downstream).
+- Prefer RAII-like variable use. Initialize variables at declaration time whenever possible, but avoid initializing with a useless value.
+- Don't declare variables at the top of a function out of habit. It's no longer idiomatic but vestigial. Declare where it's possible to initialize usefully.
+- Scope variables as narrowly as possible.
+- Use anonymous structs and unions to combat nesting hell as needed.
 
 ### C++
 
