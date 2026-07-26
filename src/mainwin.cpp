@@ -132,6 +132,24 @@ agenda::id diveId(std::string const &pattern)
 // clip so the context sections keep their share of the window.
 constexpr std::size_t kDiveBudget = std::size_t{48} * 1024;
 
+// Per-side slice of a dive's excerpts fed to a probe: calibration
+// for the variant sweep, not coverage, so the head of the catch is
+// enough and two sides fit beside the pair's prose.
+constexpr std::size_t kProbeSample = std::size_t{16} * 1024;
+
+// The head of an excerpt block, cut at a line boundary; excerpt
+// lines are newline-terminated, so a no-fit only happens when the
+// first line alone overflows the slice.
+std::string_view sampleOf(std::string const &parts)
+{
+	if (parts.size() <= kProbeSample)
+		return parts;
+	std::size_t const cut = parts.rfind('\n', kProbeSample);
+	return cut == std::string::npos
+	       ? std::string_view()
+	       : std::string_view(parts.data(), cut + 1);
+}
+
 // The payload of a REGEX: line: [from, end) with blanks trimmed off
 // the front and trailing controls off the back.
 std::string regexPayload(std::string const &text, std::size_t from,
@@ -745,15 +763,19 @@ void MainWin::pairFocus(DiveScan const &s)
 		best.resize(kFocusFan);
 	for (pick const &p : best)
 		stageProbe(m_dives[p.at], s);
-	m_dives.push_back({s.id, s.deps, s.pattern});
+	// Copied before finishDive() sheds the scan's excerpts: the
+	// record grounds the probes of future partners.
+	m_dives.push_back({s.id, s.deps, s.pattern, s.parts});
 }
 
 // One pair's opening move.  An existing focus file ends the pair's
 // story -- the one-shot era's artifacts included -- and a pending
 // record means the story is already moving; otherwise the probe is
 // staged (a cached reply asks nothing) and a record starts tracking
-// the chain.  The probe depends on the two dive files, so "at least
-// two dives" still falls out of dependency gating.
+// the chain.  The ask carries a TRANSCRIPT sample of both sides'
+// matched lines -- raw speech-to-text to ground the variant sweep.
+// The probe depends on the two dive files, so "at least two dives"
+// still falls out of dependency gating.
 void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
 {
 	agenda::id const fid = focusId(a.id, b.id);
@@ -773,7 +795,10 @@ void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
 		if (std::ranges::find(w.keys, k) == w.keys.end())
 			w.keys.push_back(k);
 	w.note = a.pattern + " ~ " + b.pattern;
-	m_facts.corpus({probeTask(w, w.probe)});
+	w.raw = "TRANSCRIPT\n";
+	w.raw += sampleOf(a.parts);
+	w.raw += sampleOf(b.parts);
+	m_facts.offer(probeTask(w, w.probe), w.raw);
 	m_focusWork.push_back(std::move(w));
 }
 
@@ -841,14 +866,15 @@ bool MainWin::pumpProbe(PendingFocus &w)
 
 // The one corrected attempt: at temperature zero a bare re-ask is a
 // re-run, so the retry exists only because FEEDBACK changes the
-// prompt.  A second failure retires the pair -- false, like the
-// pump's.
+// prompt; the TRANSCRIPT sample rides along again so the evidence
+// stays in view.  A second failure retires the pair -- false, like
+// the pump's.
 bool MainWin::retryProbe(PendingFocus &w, std::string const &feedback)
 {
 	if (w.retry)
 		return false;
 	w.retry = probeId(w.deps[0], w.deps[1], true);
-	m_facts.offer(probeTask(w, w.retry), feedback);
+	m_facts.offer(probeTask(w, w.retry), w.raw + "\n---\n" + feedback);
 	return true;
 }
 
@@ -882,8 +908,10 @@ bool MainWin::finishProbe(DiveScan const &s, PendingFocus &w)
 		return retryProbe(w,
 			"FEEDBACK\nYour regex\n  " + s.pattern
 			+ "\nis valid but matched nothing in the "
-			"collection's subtitles. Broaden the variants, or "
-			"reply NONE.");
+			"collection's subtitles. Broaden the variants: "
+			"loosen separators and word joints, allow "
+			"sound-alike respellings and optional inflections "
+			"-- or reply NONE.");
 	}
 	agenda::task t;
 	t.id = w.focus;

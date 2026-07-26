@@ -79,18 +79,24 @@ private:
 	};
 
 	// A finished first-generation dive, kept for pairing: two that
-	// share a hit video stage a probe over their cache files.
+	// share a hit video stage a probe over their cache files.  The
+	// matched lines ride along to ground the pair's probe in raw
+	// transcript; scans re-run every session, so retention costs
+	// memory only, at most kDiveBudget each.
 	struct FinishedDive {
 		agenda::id              id;
 		std::vector<agenda::id> keys;
 		std::string             pattern;
+		std::string             parts;    // raw matched lines
 	};
 
 	// A dive pair awaiting its interactive focus: the probe asks
 	// what to search, the app runs the search, the write turns the
-	// evidence into prose.  One feedback retry covers a missing,
-	// invalid or matchless regex; cache files gate every step, so
-	// records rebuild from them each session.
+	// evidence into prose.  The probe's ask carries a TRANSCRIPT
+	// sample of both dives' matched lines, kept here so a retry
+	// re-sends the same evidence.  One feedback retry covers a
+	// missing, invalid or matchless regex; cache files gate every
+	// step, so records rebuild from them each session.
 	struct PendingFocus {
 		agenda::id              probe;    // the staged ask
 		agenda::id              retry;    // corrected ask, or none
@@ -98,6 +104,7 @@ private:
 		std::vector<agenda::id> deps;     // the two dive ids
 		std::vector<agenda::id> keys;     // union of pair keys
 		std::string             note;     // "apat ~ bpat"
+		std::string             raw;      // TRANSCRIPT section
 		bool                    scanning = false;
 	};
 

@@ -11,8 +11,9 @@
 // videos they came from (deps, guaranteed) and the corpus overview
 // (refs, attached only if already in the cache); a *probe* reads a
 // pair of finished dives (deps) and either refuses (NONE) or names
-// a regex worth searching, an optional snapshot carrying feedback
-// on an earlier attempt; a *focus* writes the pair's common thread
+// a regex worth searching, its snapshot a raw sample of the pair's
+// matched lines plus feedback on an earlier attempt; a *focus*
+// writes the pair's common thread
 // from the excerpts that search actually found (the snapshot),
 // stored under a machine-written REGEX head the UI layer harvests
 // back into the corpus.  The probe-search-write chain is the UI
@@ -79,18 +80,18 @@ public:
 	// plan already knows and ids whose file exists are skipped.
 	void offer(agenda::id key, std::string const &utf8Text);
 
-	// Body-less tasks whose inputs are cache files: pyramid nodes
-	// and dive-pair probes.  Tasks whose files exist are marked
-	// done instead of queued.
+	// Body-less tasks whose inputs are cache files: pyramid
+	// nodes.  Tasks whose files exist are marked done instead of
+	// queued.
 	void corpus(std::vector<agenda::task> nodes);
 
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
 
 	// A caller-built task with a snapshot: a dive's matched
-	// excerpts, a probe retry's feedback, a focus write's searched
-	// evidence.  The caller sets the kind; cached tasks are marked
-	// done.
+	// excerpts, a probe's transcript sample (plus feedback on a
+	// retry), a focus write's searched evidence.  The caller sets
+	// the kind; cached tasks are marked done.
 	void offer(agenda::task t, std::string const &snapshot);
 
 	void heat(agenda::id key, double add);

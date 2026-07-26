@@ -79,9 +79,10 @@ constexpr char kFocusPrompt[] =
 	"themes share, concretely -- its facts, names and numbers, "
 	"taken from MATCHES only -- sharpening toward what is most "
 	"distinctive about it; do not average the themes into "
-	"generality. Where MATCHES spell one term several ways, use "
-	"the likely correct form and name it once as the intended "
-	"word behind the variants. If the excerpts show no genuine "
+	"generality. Where MATCHES spell one term several ways, never "
+	"adopt a mangled spelling as the term: write the likely "
+	"correct form and name it once as the intended word behind "
+	"the variants. If the excerpts show no genuine "
 	"shared thread, reply with the single word NONE. "
 	SUBJECT_STANCE "Plain text only; no preamble, no headings.";
 
@@ -91,24 +92,40 @@ constexpr char kProbePrompt[] =
 	"The user message holds sections separated by lines of three "
 	"dashes. FIRST and SECOND each describe one searched theme "
 	"from the same video collection, and each may open with a "
-	"PATTERN line naming the regex that found it. A FEEDBACK "
-	"section, when present, reports what became of your previous "
-	"attempt; correct accordingly. Judge whether the two themes "
-	"genuinely touch. If they do not, reply with the single word "
-	"NONE. If they do, propose one search to run over the "
-	"collection's subtitle text to gather concrete evidence of "
-	"the shared thread. The subtitles are machine transcriptions "
-	"of speech: one spoken word or name may appear under several "
-	"wrong spellings -- sound-alikes, split or joined words, "
-	"mangled names. Consider which distinct words across the two "
-	"themes are plausibly one intended word and what its correct "
-	"form is, and shape the search as an alternation covering "
-	"that form and every observed or plausible variant, the way "
-	"h(er|im) collapses two readings into one path. You may note "
-	"your reasoning briefly, but end with exactly one line of "
-	"this form: REGEX: followed by one PCRE2 regular expression, "
-	"case-insensitive via (?i:...) where sensible, no delimiters "
-	"or flags outside the pattern.";
+	"PATTERN line naming the regex that found it. TRANSCRIPT "
+	"holds raw subtitle lines those patterns matched, grouped per "
+	"video under == headers. A FEEDBACK section, when present, "
+	"reports what became of your previous attempt; correct "
+	"accordingly. Judge whether the two themes genuinely touch. "
+	"If they do not, reply with the single word NONE. If they do, "
+	"propose one search to run over the collection's subtitle "
+	"text to gather concrete evidence of the shared thread. The "
+	"subtitles are machine transcriptions of speech, and "
+	"TRANSCRIPT shows how the transcriber mangles this "
+	"collection's terms: one spoken word or name may surface as "
+	"sound-alike respellings written the way the language spells "
+	"those sounds, as split or joined compounds, as acronyms or "
+	"letter names heard as words, or as a wrong homophone -- a "
+	"word from FIRST and a word from SECOND may even be one "
+	"intended word under two manglings. For each term your search "
+	"leans on -- the thread's own names and terms first, not just "
+	"the PATTERN words -- list in your notes its intended form "
+	"and every transcription of it you observe or can plausibly "
+	"expect, and fold each list into one alternation, the way "
+	"h(er|im) collapses two readings into one path. A plausible "
+	"variant belongs even when TRANSCRIPT does not show it -- "
+	"the search is how you find out -- and a term with no "
+	"plausible variants "
+	"stays literal. Choose only terms that carry the shared "
+	"thread, and join their alternations with | into one flat "
+	"pattern: a subtitle line counts as evidence when it touches "
+	"any one term, so never demand two terms in one line and "
+	"never use lookaheads. A simple pattern is a good answer: "
+	"when unsure, prefer a plain union of a few terms over "
+	"elaborate structure. Note your working briefly, then end with "
+	"exactly one line of this form: REGEX: followed by one PCRE2 "
+	"regular expression, case-insensitive via (?i:...) where "
+	"sensible, no delimiters or flags outside the pattern.";
 
 // System prompt per task kind (leaf, node, dive, focus, probe).
 // The views wrap NUL-terminated literals, so .data() satisfies the
@@ -590,8 +607,10 @@ std::string Facts::pair_sections(agenda::task const &t) const
 	return all;
 }
 
-// The probe reads the pair bare, plus whatever FEEDBACK section the
-// caller snapshot after an earlier attempt went wrong.
+// The probe reads the pair plus the caller's snapshot: a raw
+// TRANSCRIPT sample of both dives' matched lines, joined by a
+// FEEDBACK tail on a retry.  The snapshot sits last, so clipping
+// trims the sample before it ever touches the prose.
 std::string Facts::assemble_probe(agenda::task const &t)
 {
 	std::string all = pair_sections(t);
