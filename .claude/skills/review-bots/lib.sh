@@ -8,6 +8,8 @@
 # gojq with no --arg plumbing; the shell splices $BOT into the
 # program text instead.
 
+# shellcheck shell=bash
+
 fail() { printf '%s: %s\n' "${0##*/}" "$*" >&2; exit 1; }
 
 ctx()
