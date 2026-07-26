@@ -74,6 +74,17 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 - Don't declare variables at the top of a function out of habit. It's no longer idiomatic but vestigial. Declare where it's possible to initialize usefully.
 - Scope variables as narrowly as possible.
 - Use anonymous structs and unions to combat nesting hell as needed.
+- Practically nothing should be a `typedef`. The few exceptions when `typedef` is genuinely defensible are:
+  - implementing opaque handle types in APIs (for example when library instantiation returns an instance pointer);
+  - uniform interface semantics for C and C++ users of an API (`typedef struct Foo Foo` lets C code pretend `struct` is implicit);
+  - `unsigned _BitInt()` because aligning it vertically with much shorter type names is awful, and/or you need to type it often:
+    ```c
+    // this is kind of ok. regrettably.
+    typedef unsigned _BitInt(48) u48_type;
+    ```
+- Structs and unions with a tag but no type alias are great despite being somewhat more verbose to type:
+  - they make it possible to have RAII initializer functions that return by value and are named like the tag;
+  - an alias can be a `struct`, `union`, or a number of other things, but a tag tells the type semantics immediately.
 
 ### C++
 

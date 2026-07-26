@@ -23,16 +23,26 @@ reviews:
         space-aligned continuations as mixed indentation. House
         style prefers lookup tables and switch dispatch over
         if/else chains, and at most two nesting levels via guard
-        clauses.
+        clauses. Practically nothing is typedef'd: policy allows
+        typedef only for opaque API handles, for typedef struct
+        Foo Foo on C/C++-shared APIs, and for unwieldy unsigned
+        _BitInt(N) widths; tagged struct/union names without
+        aliases are the default -- do not suggest adding typedefs.
+        C23 features (typeof, constexpr, nullptr, _BitInt) are
+        intended; do not flag them as portability concerns.
     - path: "src/**/*.{cpp,hpp}"
       instructions: >-
         C++23. Qt appears only at the UI boundary; core modules
-        (srt, topics, decoder, discovery) are std-only and must
-        stay that way. Prefer compile-time dispatch (templates,
-        CRTP behind non-template bases) over virtual functions and
-        std::function. East const. Deletion bias: prefer
-        suggestions that shrink the diff and the binary. Same
-        tabs-indent, spaces-align convention as the C code.
+        (srt, topics, decoder, discovery, agenda, facts) are
+        std-only and must stay that way. Prefer compile-time
+        dispatch (templates, CRTP behind non-template bases) over
+        virtual functions and std::function. East const. Deletion
+        bias: prefer suggestions that shrink the diff and the
+        binary. Same tabs-indent, spaces-align convention as the C
+        code. The constexpr LLM prompt literals in facts.cpp are
+        deliberate compiled-in text, their exact wording tuned
+        against live models; do not propose externalizing them or
+        editing their phrasing for style.
     - path: "tests/**"
       instructions: >-
         Test code is exempt from the production style rules by
@@ -67,6 +77,18 @@ reviews:
         CMAKE_RUNTIME_OUTPUT_DIRECTORY; LTO flags come from
         cmake/compiler.cmake through CMAKE_USER_MAKE_RULES_OVERRIDE.
         Do not suggest restructuring either mechanism.
+    - path: "{build.sh,srtjump/srtjump,.claude/skills/**/*.sh}"
+      instructions: >-
+        Bash by choice, tabs for indentation; do not suggest
+        POSIX-sh portability rewrites. Entry-point scripts pair
+        with sourcing-only libraries: a lib script deliberately has
+        no shebang, is not executable, and contains only function
+        definitions -- never flag the missing shebang, "unused"
+        functions, or variables (e.g. BOT) that the sourcing entry
+        point assigns. gh api --jq filters splice shell variables
+        into the jq program text because gojq has no --arg
+        plumbing; the spliced values are repo-controlled constants,
+        not user input.
   tools:
     # clang-tidy's default checks (readability-identifier-length,
     # braces-around-statements, init-variables) contradict the
