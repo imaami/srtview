@@ -26,6 +26,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <utility>
 
 namespace {
@@ -73,14 +75,16 @@ agenda::id treeId(std::vector<agenda::id> const &kids)
 	return takeId(h);
 }
 
-// Focus identity from the unordered dive pair, sorted so the same
-// two dives name the same focus whichever finished first.
-agenda::id focusId(agenda::id a, agenda::id b)
+// Pair identities from the unordered dive pair, sorted so the same
+// two dives name the same artifacts whichever finished first: the
+// focus is the written thread, the probe the ask for what to search
+// toward it, and the probe's one retry is salted apart.
+agenda::id pairId(std::string_view tag, agenda::id a, agenda::id b)
 {
 	if (b.b < a.b)
 		std::swap(a, b);
 	QCryptographicHash h(QCryptographicHash::Blake2b_256);
-	h.addData(QByteArrayView("focus"));
+	h.addData(QByteArrayView(tag.data(), qsizetype(tag.size())));
 	h.addData(QByteArrayView(
 		reinterpret_cast<char const *>(a.b.data()),
 		qsizetype(a.b.size())));
@@ -88,6 +92,16 @@ agenda::id focusId(agenda::id a, agenda::id b)
 		reinterpret_cast<char const *>(b.b.data()),
 		qsizetype(b.b.size())));
 	return takeId(h);
+}
+
+agenda::id focusId(agenda::id a, agenda::id b)
+{
+	return pairId("focus", a, b);
+}
+
+agenda::id probeId(agenda::id a, agenda::id b, bool retry)
+{
+	return pairId(retry ? "probe!" : "probe", a, b);
 }
 
 std::size_t sharedKeys(std::vector<agenda::id> const &a,
@@ -117,6 +131,33 @@ agenda::id diveId(std::string const &pattern)
 // Excerpt budget per dive, in UTF-8 bytes: roughly half the llm
 // clip so the context sections keep their share of the window.
 constexpr std::size_t kDiveBudget = std::size_t{48} * 1024;
+
+// The payload of a REGEX: line: [from, end) with blanks trimmed off
+// the front and trailing controls off the back.
+std::string regexPayload(std::string const &text, std::size_t from,
+                         std::size_t end)
+{
+	while (from < end && (text[from] == ' ' || text[from] == '\t'))
+		++from;
+	while (end > from
+	       && static_cast<unsigned char>(text[end - 1]) <= 0x20)
+		--end;
+	return text.substr(from, end - from);
+}
+
+// The last line-anchored REGEX: line of a reply -- the probe prompt
+// allows working notes above the answer, and the one-shot focus
+// files closed with it.
+std::string regexLine(std::string const &text)
+{
+	std::size_t const at = text.rfind("REGEX:");
+	if (at == std::string::npos || (at && text[at - 1] != '\n'))
+		return {};
+	std::size_t end = text.find('\n', at + 6);
+	if (end == std::string::npos)
+		end = text.size();
+	return regexPayload(text, at + 6, end);
+}
 
 double zoomFactor(int steps)
 {
@@ -260,12 +301,13 @@ MainWin::MainWin()
 	m_diveTick.setInterval(1);
 	connect(&m_diveTick, &QTimer::timeout,
 	        this, [this] { diveStep(); });
-	// The harvest pump: completed focuses drop REGEX hypotheses
-	// into the cache, and every tick folds new ones back into the
-	// corpus as generated topics.
+	// The probe and harvest pumps share a slow tick: answered
+	// probes advance their focus chains (search, retry, write),
+	// and completed focuses fold their REGEX hypotheses back into
+	// the corpus as generated topics.
 	m_focusTick.setInterval(10000);
 	connect(&m_focusTick, &QTimer::timeout,
-	        this, [this] { harvestFocus(); });
+	        this, [this] { pumpProbes(); harvestFocus(); });
 	m_focusTick.start();
 
 	repairMenuPalette(menuBar());
@@ -449,6 +491,7 @@ void MainWin::rebuildCorpus(bool fresh)
 {
 	if (fresh) {
 		m_dives.clear();
+		m_focusWork.clear();
 		m_generated.clear();
 		m_harvested.clear();
 	}
@@ -644,9 +687,16 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 // leaf summaries, heat follows the same videos, and the pyramid
 // root rides along as optional overview context.  The scan entry
 // stays staged (its id blocks re-staging) but sheds its excerpts.
+// A scan a pending focus record claims is that record's search, not
+// a dive: it routes to finishProbe() instead.
 void MainWin::finishDive(DiveScan &s)
 {
-	if (!s.deps.empty()) {
+	std::size_t const at = focusWorkOf(s.id);
+	if (at < m_focusWork.size()) {
+		if (!finishProbe(s, m_focusWork[at]))
+			m_focusWork.erase(m_focusWork.begin()
+			                  + std::ptrdiff_t(at));
+	} else if (!s.deps.empty()) {
 		agenda::task t;
 		t.id = s.id;
 		t.deps = s.deps;
@@ -656,7 +706,7 @@ void MainWin::finishDive(DiveScan &s)
 		t.exported = s.exported;
 		if (m_rootId)
 			t.refs.push_back(m_rootId);
-		m_facts.dive(std::move(t), s.parts);
+		m_facts.offer(std::move(t), s.parts);
 		pairFocus(s);
 	}
 	s.parts.clear();
@@ -664,10 +714,11 @@ void MainWin::finishDive(DiveScan &s)
 }
 
 // The focus trigger: a finished first-generation dive pairs with
-// every earlier one sharing a hit video.  Each pair's focus depends
-// on the two dive files, so the agenda holds it until both exist --
-// "at least two dives" falls out of dependency gating.  Generated
-// dives never pair: recursion stops one hop past the hypothesis.
+// every earlier one sharing a hit video.  A pair no longer asks for
+// its focus outright: it opens with a probe -- what would you
+// search? -- and the pump chains the search and the write behind
+// it.  Generated dives never pair: recursion stops one hop past the
+// hypothesis.
 void MainWin::pairFocus(DiveScan const &s)
 {
 	if (s.generated)
@@ -692,28 +743,165 @@ void MainWin::pairFocus(DiveScan const &s)
 	});
 	if (best.size() > kFocusFan)
 		best.resize(kFocusFan);
-	std::vector<agenda::task> staged;
 	for (pick const &p : best)
-		staged.push_back(makeFocus(m_dives[p.at], s));
+		stageProbe(m_dives[p.at], s);
 	m_dives.push_back({s.id, s.deps, s.pattern});
-	if (!staged.empty())
-		m_facts.corpus(std::move(staged));
 }
 
-agenda::task MainWin::makeFocus(FinishedDive const &a,
-                                DiveScan const &b) const
+// One pair's opening move.  An existing focus file ends the pair's
+// story -- the one-shot era's artifacts included -- and a pending
+// record means the story is already moving; otherwise the probe is
+// staged (a cached reply asks nothing) and a record starts tracking
+// the chain.  The probe depends on the two dive files, so "at least
+// two dives" still falls out of dependency gating.
+void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
+{
+	agenda::id const fid = focusId(a.id, b.id);
+	for (PendingFocus const &w : m_focusWork)
+		if (w.focus == fid)
+			return;
+	std::error_code ec;
+	if (std::filesystem::exists(m_facts.dir() + "/focus/"
+	                            + fid.hex() + ".txt", ec))
+		return;
+	PendingFocus w;
+	w.probe = probeId(a.id, b.id, false);
+	w.focus = fid;
+	w.deps = {a.id, b.id};
+	w.keys = a.keys;
+	for (agenda::id const k : b.deps)
+		if (std::ranges::find(w.keys, k) == w.keys.end())
+			w.keys.push_back(k);
+	w.note = a.pattern + " ~ " + b.pattern;
+	m_facts.corpus({probeTask(w, w.probe)});
+	m_focusWork.push_back(std::move(w));
+}
+
+// The ask itself: probe and retry share everything but the id.
+agenda::task MainWin::probeTask(PendingFocus const &w,
+                                agenda::id ask) const
 {
 	agenda::task t;
-	t.id = focusId(a.id, b.id);
-	t.deps = {a.id, b.id};
-	t.keys = a.keys;
-	for (agenda::id const k : b.deps)
-		if (std::ranges::find(t.keys, k) == t.keys.end())
-			t.keys.push_back(k);
-	t.note = a.pattern + " ~ " + b.pattern;
-	t.what = agenda::kind::focus;
+	t.id = ask;
+	t.deps = w.deps;
+	t.keys = w.keys;
+	t.note = w.note;
+	t.what = agenda::kind::probe;
 	t.exported = false;
 	return t;
+}
+
+// The probe pump, the interactive half of a focus.  Each record
+// waits on its ask's cache file: NONE retires the pair, a missing
+// or broken REGEX line earns one corrected attempt with the failure
+// as FEEDBACK, and a valid regex becomes a corpus search routed
+// back to the record when it completes.  Cache files gate every
+// step, so a chain interrupted by shutdown resumes where it stood.
+void MainWin::pumpProbes()
+{
+	for (std::size_t i = 0; i < m_focusWork.size();) {
+		if (pumpProbe(m_focusWork[i]))
+			++i;
+		else
+			m_focusWork.erase(m_focusWork.begin()
+			                  + std::ptrdiff_t(i));
+	}
+}
+
+// False retires the record.
+bool MainWin::pumpProbe(PendingFocus &w)
+{
+	if (w.scanning)
+		return true;
+	QFile f(QString::fromStdString(
+		m_facts.dir() + "/probe/"
+		+ (w.retry ? w.retry : w.probe).hex() + ".txt"));
+	if (!f.open(QIODevice::ReadOnly))
+		return true;   // unanswered; waiting is free
+	std::string const text = f.readAll().toStdString();
+	if (text.starts_with("NONE"))
+		return false;
+	std::string const pat = regexLine(text);
+	if (pat.empty())
+		return retryProbe(w,
+			"FEEDBACK\nYour reply did not end with a REGEX: "
+			"line. Reply with exactly one line of the form "
+			"REGEX: <pattern>, or NONE.");
+	QRegularExpression const re(QString::fromStdString(pat));
+	if (!re.isValid())
+		return retryProbe(w,
+			"FEEDBACK\nYour regex\n  " + pat
+			+ "\nis not valid PCRE2: "
+			+ re.errorString().toStdString()
+			+ ". Reply with a corrected REGEX: line, or NONE.");
+	w.scanning = true;
+	stageFocusScan(w.focus, pat, re);
+	return true;
+}
+
+// The one corrected attempt: at temperature zero a bare re-ask is a
+// re-run, so the retry exists only because FEEDBACK changes the
+// prompt.  A second failure retires the pair -- false, like the
+// pump's.
+bool MainWin::retryProbe(PendingFocus &w, std::string const &feedback)
+{
+	if (w.retry)
+		return false;
+	w.retry = probeId(w.deps[0], w.deps[1], true);
+	m_facts.offer(probeTask(w, w.retry), feedback);
+	return true;
+}
+
+// The probe's validated hypothesis becomes a corpus search staged
+// under the write task's id; finishDive() routes it back through
+// the pending record.  No m_diveScans dedupe here: the record's
+// scanning latch is the guard, and a zero-match retry legitimately
+// stages the same id again with a broader pattern.
+void MainWin::stageFocusScan(agenda::id id, std::string const &pattern,
+                             QRegularExpression const &re)
+{
+	DiveScan s;
+	s.re = re;
+	s.id = id;
+	s.pattern = pattern;
+	s.exported = false;
+	s.generated = true;
+	m_diveScans.push_back(std::move(s));
+	m_diveTick.start();
+}
+
+// The searched evidence stages the write: the pair's dives ride as
+// FIRST/SECOND deps, the excerpts as the snapshot, and the regex as
+// the note the REGEX head and the journal carry.  An empty search
+// is the probe's failure to answer for -- one broadening retry,
+// then the pair retires.  False retires the record.
+bool MainWin::finishProbe(DiveScan const &s, PendingFocus &w)
+{
+	if (s.parts.empty()) {
+		w.scanning = false;
+		return retryProbe(w,
+			"FEEDBACK\nYour regex\n  " + s.pattern
+			+ "\nis valid but matched nothing in the "
+			"collection's subtitles. Broaden the variants, or "
+			"reply NONE.");
+	}
+	agenda::task t;
+	t.id = w.focus;
+	t.deps = w.deps;
+	t.keys = w.keys;
+	t.note = s.pattern;
+	t.what = agenda::kind::focus;
+	t.exported = false;
+	m_facts.offer(std::move(t), s.parts);
+	return false;
+}
+
+std::size_t MainWin::focusWorkOf(agenda::id id) const
+{
+	for (std::size_t i = 0; i < m_focusWork.size(); ++i)
+		if (m_focusWork[i].focus == id)
+			return i;
+	return m_focusWork.size();
 }
 
 // Harvest completed focuses: NONE verdicts and malformed regex
@@ -742,19 +930,25 @@ void MainWin::harvestOne(QString const &file)
 	std::string const text = f.readAll().toStdString();
 	if (text.starts_with("NONE"))
 		return;
-	std::size_t const at = text.rfind("REGEX:");
-	if (at == std::string::npos || (at && text[at - 1] != '\n'))
-		return;
-	std::size_t from = at + 6;
-	std::size_t end = text.find('\n', from);
-	if (end == std::string::npos)
-		end = text.size();
-	while (from < end && (text[from] == ' ' || text[from] == '\t'))
-		++from;
-	while (end > from
-	       && static_cast<unsigned char>(text[end - 1]) <= 0x20)
-		--end;
-	std::string const pat = text.substr(from, end - from);
+	std::string pat;
+	if (text.starts_with("REGEX:")) {
+		// The interactive shape: a machine-written head names the
+		// searched regex and prose follows -- unless the model saw
+		// the evidence and still judged the thread hollow, which
+		// buries the hypothesis with it.
+		std::size_t nl = text.find('\n');
+		if (nl == std::string::npos)
+			nl = text.size();
+		pat = regexPayload(text, 6, nl);
+		std::size_t body = nl;
+		while (body < text.size() && text[body] == '\n')
+			++body;
+		if (text.compare(body, 4, "NONE") == 0)
+			return;
+	} else {
+		// The one-shot shape closed with the line instead.
+		pat = regexLine(text);
+	}
 	if (pat.empty() || !QRegularExpression(
 	                    	QString::fromStdString(pat)).isValid())
 		return;

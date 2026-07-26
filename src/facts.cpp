@@ -26,12 +26,23 @@ constexpr std::size_t  kMaxText   = std::size_t{96} * 1024;
 constexpr std::int32_t kMaxTokens = 8192;
 constexpr std::int32_t kTimeoutS  = 3600;
 
+// The shared stance rule: the observed failure is sentences opening
+// with "This ...", "The topic ...", "The thread ..." however firmly
+// the individual prompts forbid meta-commentary.
+#define SUBJECT_STANCE \
+	"Write about the subject, never about the act of reviewing " \
+	"it: open every sentence with the subject's own people, " \
+	"systems, terms and claims -- never with 'This', 'The " \
+	"topic', 'The thread' or any phrase pointing at the material " \
+	"or the search. "
+
 constexpr char kLeafPrompt[] =
 	"The user message is the complete subtitle text of one video. "
 	"Write a condensed description of its factual content: the "
 	"subjects covered, claims and decisions made, and the names, "
-	"numbers and terms that appear. Plain text only; no preamble, "
-	"no headings, no remarks about the subtitles themselves.";
+	"numbers and terms that appear. " SUBJECT_STANCE "Plain text "
+	"only; no preamble, no headings, no remarks about the "
+	"subtitles themselves.";
 
 constexpr char kNodePrompt[] =
 	"Each section of the user message, separated by a line "
@@ -40,7 +51,8 @@ constexpr char kNodePrompt[] =
 	"into a single higher-level summary that preserves the "
 	"load-bearing facts: subjects, decisions, names, numbers and "
 	"terms. Generalize where the sections agree and keep the "
-	"notable specifics. Plain text only; no preamble, no headings.";
+	"notable specifics. " SUBJECT_STANCE "Plain text only; no "
+	"preamble, no headings.";
 
 constexpr char kDivePrompt[] =
 	"The user message holds labeled sections separated by lines of "
@@ -54,41 +66,62 @@ constexpr char kDivePrompt[] =
 	"are background for interpretation, not sources of extra "
 	"facts. End with one sentence on how the subject stands apart "
 	"from the collection's other themes, or leave that closing "
-	"out if nothing sets it apart. Write about the subject, never "
-	"about the act of reviewing it -- no phrases like 'this "
-	"material', 'these excerpts', 'the matches show'. Plain text "
+	"out if nothing sets it apart. " SUBJECT_STANCE "Plain text "
 	"only; no preamble, no headings.";
 
 constexpr char kFocusPrompt[] =
-	"The user message holds two sections separated by a line of "
-	"three dashes, FIRST and SECOND: each describes one searched "
-	"theme from the same video collection, and each may open with "
-	"a PATTERN line naming the regex that found it. Judge whether "
-	"the two themes genuinely touch. If they do not, reply with "
-	"the single word NONE. If they do, describe the shared thread "
-	"itself concretely -- its facts, names and numbers -- "
-	"sharpening toward what is most distinctive about it; do not "
-	"average the themes into generality. Then end with one line "
-	"of exactly this form: REGEX: followed by one PCRE2 regular "
-	"expression that traces the thread through subtitle text -- "
-	"typically an alternation collecting the spellings, "
-	"mistranscriptions and near-synonymous phrasings under which "
-	"it appears, case-insensitive via (?i:...) where sensible, no "
-	"delimiters or flags outside the pattern. Write about the "
-	"subject, never about the act of reviewing it. Plain text; no "
-	"headings besides that final REGEX line.";
+	"The user message holds sections separated by lines of three "
+	"dashes: FIRST and SECOND each describe one searched theme "
+	"from the same video collection, each may open with a PATTERN "
+	"line naming the regex that found it, and MATCHES holds the "
+	"subtitle excerpts found by the search you asked for, grouped "
+	"per video under == headers. Describe the thread the two "
+	"themes share, concretely -- its facts, names and numbers, "
+	"taken from MATCHES only -- sharpening toward what is most "
+	"distinctive about it; do not average the themes into "
+	"generality. Where MATCHES spell one term several ways, use "
+	"the likely correct form and name it once as the intended "
+	"word behind the variants. If the excerpts show no genuine "
+	"shared thread, reply with the single word NONE. "
+	SUBJECT_STANCE "Plain text only; no preamble, no headings.";
 
-// System prompt per task kind (leaf, node, dive, focus).  The
-// views wrap NUL-terminated literals, so .data() satisfies the C
-// API below.
+#undef SUBJECT_STANCE
+
+constexpr char kProbePrompt[] =
+	"The user message holds sections separated by lines of three "
+	"dashes. FIRST and SECOND each describe one searched theme "
+	"from the same video collection, and each may open with a "
+	"PATTERN line naming the regex that found it. A FEEDBACK "
+	"section, when present, reports what became of your previous "
+	"attempt; correct accordingly. Judge whether the two themes "
+	"genuinely touch. If they do not, reply with the single word "
+	"NONE. If they do, propose one search to run over the "
+	"collection's subtitle text to gather concrete evidence of "
+	"the shared thread. The subtitles are machine transcriptions "
+	"of speech: one spoken word or name may appear under several "
+	"wrong spellings -- sound-alikes, split or joined words, "
+	"mangled names. Consider which distinct words across the two "
+	"themes are plausibly one intended word and what its correct "
+	"form is, and shape the search as an alternation covering "
+	"that form and every observed or plausible variant, the way "
+	"h(er|im) collapses two readings into one path. You may note "
+	"your reasoning briefly, but end with exactly one line of "
+	"this form: REGEX: followed by one PCRE2 regular expression, "
+	"case-insensitive via (?i:...) where sensible, no delimiters "
+	"or flags outside the pattern.";
+
+// System prompt per task kind (leaf, node, dive, focus, probe).
+// The views wrap NUL-terminated literals, so .data() satisfies the
+// C API below.
 constexpr std::string_view kPromptOf[] = {
 	kLeafPrompt, kNodePrompt, kDivePrompt, kFocusPrompt,
+	kProbePrompt,
 };
 
 // Cache subdirectory per task kind: leaves and nodes share the
 // flat root so any dependency reads at facts/<id>.txt.
 constexpr std::string_view kSubdir[] = {
-	"/", "/", "/dives/", "/focus/",
+	"/", "/", "/dives/", "/focus/", "/probe/",
 };
 
 // Connect refusals in a row before the pipeline parks itself for
@@ -96,7 +129,7 @@ constexpr std::string_view kSubdir[] = {
 constexpr int kRefusalCap = 3;
 
 constexpr char const *kKindName[] = {"leaf", "node", "dive",
-                                     "focus"};
+                                     "focus", "probe"};
 
 // The path a reply belongs to travels as the task's user data,
 // heap-owned: exactly one callback per accepted task makes adoption
@@ -110,14 +143,20 @@ struct reply_ctx {
 	agenda::id  id;
 };
 
-// A dive file opens with its regex: the focus assembly downstream
-// wants the prose and the pattern both, and human readers get the
-// same favor.
-std::string dive_head(agenda::task const &t)
+// A dive file opens with its regex and a focus file with the regex
+// whose search fed it: assembly and harvest downstream want the
+// prose and the pattern both, and human readers get the same favor.
+// Kinds with an empty prefix carry no head.
+constexpr std::string_view kHeadPfx[] = {
+	"", "", "PATTERN ", "REGEX: ", "",
+};
+
+std::string head_of(agenda::task const &t)
 {
-	return t.what == agenda::kind::dive && !t.note.empty()
-	       ? "PATTERN " + t.note + "\n\n"
-	       : std::string();
+	std::string_view const pfx = kHeadPfx[std::size_t(t.what)];
+	return pfx.empty() || t.note.empty()
+	       ? std::string()
+	       : std::string(pfx) + t.note + "\n\n";
 }
 
 bool debug()
@@ -281,6 +320,8 @@ Facts::Facts()
 	std::filesystem::create_directories(m_dir + "/dives", ec);
 	if (!ec)
 		std::filesystem::create_directories(m_dir + "/focus", ec);
+	if (!ec)
+		std::filesystem::create_directories(m_dir + "/probe", ec);
 	if (!ec) {
 		endpoint const ep = serverEnv();
 		m_llm = llm_create(ep.host.empty() ? nullptr
@@ -366,22 +407,21 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 	advance();
 }
 
-void Facts::dive(agenda::task t, std::string const &utf8Excerpts)
+void Facts::offer(agenda::task t, std::string const &snapshot)
 {
-	if (!t.id || utf8Excerpts.empty())
+	if (!t.id || snapshot.empty())
 		return;
 
 	std::lock_guard const lock(m_mtx);
 	if (!m_llm || m_plan.status(t.id) != agenda::plan::state::unknown)
 		return;
-	t.what = agenda::kind::dive;
 	std::error_code ec;
 	if (std::filesystem::exists(path_of(t), ec)) {
 		m_plan.done(t.id);
 		advance();
 		return;
 	}
-	m_bodies.emplace_back(t.id, std::string(clip(utf8Excerpts)));
+	m_bodies.emplace_back(t.id, std::string(clip(snapshot)));
 	m_plan.add(std::move(t));
 	advance();
 }
@@ -481,7 +521,7 @@ bool Facts::submit(agenda::task const &t)
 	// so nothing fallible may sit between spending it and the ask.
 	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t),
 	                                         journal_line(t),
-	                                         dive_head(t), t.id};
+	                                         head_of(t), t.id};
 	if (!ctx)
 		return false;
 	std::string const body = assemble(t);
@@ -525,6 +565,9 @@ std::string Facts::assemble(agenda::task const &t)
 
 	case agenda::kind::focus:
 		return assemble_focus(t);
+
+	case agenda::kind::probe:
+		return assemble_probe(t);
 	}
 
 	return {};
@@ -533,7 +576,7 @@ std::string Facts::assemble(agenda::task const &t)
 // FIRST and SECOND are the pair's finished dives, read whole: their
 // PATTERN heads travel along, so the model sees both the prose and
 // the regexes whose threads it is asked to join or refuse.
-std::string Facts::assemble_focus(agenda::task const &t) const
+std::string Facts::pair_sections(agenda::task const &t) const
 {
 	std::string all;
 	for (agenda::id const dep : t.deps) {
@@ -544,6 +587,36 @@ std::string Facts::assemble_focus(agenda::task const &t) const
 		all += all.empty() ? "FIRST\n" : "\n---\nSECOND\n";
 		all += part;
 	}
+	return all;
+}
+
+// The probe reads the pair bare, plus whatever FEEDBACK section the
+// caller snapshot after an earlier attempt went wrong.
+std::string Facts::assemble_probe(agenda::task const &t)
+{
+	std::string all = pair_sections(t);
+	if (all.empty())
+		return {};
+	add_section(all, spend_body(t.id));
+	return std::string(clip(all));
+}
+
+// The write pairs the dives with the excerpts the probe's search
+// found (the snapshot, required).  MATCHES is the sanctioned fact
+// source, so it claims the window first, exactly as in a dive; the
+// 5 covers the "\n---\n" joint add_section() will spend.
+std::string Facts::assemble_focus(agenda::task const &t)
+{
+	std::string const pair = pair_sections(t);
+	if (pair.empty())
+		return {};
+	std::string const hits = spend_body(t.id);
+	if (hits.empty())
+		return {};
+	std::string const m = "MATCHES\n" + hits;
+	std::string all(clip_to(pair, m.size() + 5 < kMaxText
+	                              ? kMaxText - m.size() - 5 : 0));
+	add_section(all, m);
 	return std::string(clip(all));
 }
 

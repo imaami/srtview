@@ -10,10 +10,12 @@ namespace {
 
 // Score anatomy, mirrored in the header comment: kinds set the
 // neighborhood (leaf, node, dive a unit apart, focus half a band
-// under dives), tiers order within a kind, the export edge floats
-// a topic over its supportive components, and heat (unbounded)
-// moves everything across those bands.
-constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5};
+// under dives, probe a notch under focus: evidence already gathered
+// turns into prose before new inquiries open), tiers order within a
+// kind, the export edge floats a topic over its supportive
+// components, and heat (unbounded) moves everything across those
+// bands.
+constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45};
 constexpr double kTierStep    = 1.0 / 32.0;
 constexpr double kExportEdge  = 1.0 / 4.0;
 

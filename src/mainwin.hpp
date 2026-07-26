@@ -79,11 +79,26 @@ private:
 	};
 
 	// A finished first-generation dive, kept for pairing: two that
-	// share a hit video stage a focus over their cache files.
+	// share a hit video stage a probe over their cache files.
 	struct FinishedDive {
 		agenda::id              id;
 		std::vector<agenda::id> keys;
 		std::string             pattern;
+	};
+
+	// A dive pair awaiting its interactive focus: the probe asks
+	// what to search, the app runs the search, the write turns the
+	// evidence into prose.  One feedback retry covers a missing,
+	// invalid or matchless regex; cache files gate every step, so
+	// records rebuild from them each session.
+	struct PendingFocus {
+		agenda::id              probe;    // the staged ask
+		agenda::id              retry;    // corrected ask, or none
+		agenda::id              focus;    // write task / pair id
+		std::vector<agenda::id> deps;     // the two dive ids
+		std::vector<agenda::id> keys;     // union of pair keys
+		std::string             note;     // "apat ~ bpat"
+		bool                    scanning = false;
 	};
 
 	// The four zoom domains, nested: captions and the search bar
@@ -120,8 +135,16 @@ private:
 	void scanDiveVideo(DiveScan &s, PlayItem const &it);
 	void finishDive(DiveScan &s);
 	void pairFocus(DiveScan const &s);
-	agenda::task makeFocus(FinishedDive const &a,
-	                       DiveScan const &b) const;
+	void stageProbe(FinishedDive const &a, DiveScan const &b);
+	agenda::task probeTask(PendingFocus const &w,
+	                       agenda::id ask) const;
+	void pumpProbes();
+	bool pumpProbe(PendingFocus &w);
+	bool retryProbe(PendingFocus &w, std::string const &feedback);
+	void stageFocusScan(agenda::id id, std::string const &pattern,
+	                    QRegularExpression const &re);
+	bool finishProbe(DiveScan const &s, PendingFocus &w);
+	std::size_t focusWorkOf(agenda::id id) const;
 	void harvestFocus();
 	void harvestOne(QString const &file);
 	qsizetype playlistIndex(QString const &video);
@@ -176,6 +199,7 @@ private:
 	std::vector<DiveScan>           m_diveScans; // staged scans
 	std::size_t                     m_diveAt = 0;// scan cursor
 	std::vector<FinishedDive>       m_dives;     // for pairing
+	std::vector<PendingFocus>       m_focusWork; // probe chains
 	std::set<std::string>           m_generated; // harvested regexes
 	std::set<std::string>           m_harvested; // focus files seen
 	agenda::id                      m_rootId;    // pyramid root

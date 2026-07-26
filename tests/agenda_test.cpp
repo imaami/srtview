@@ -147,6 +147,7 @@ static void test_states()
 static void test_order_bands()
 {
 	agenda::plan p;
+	p.add({.id = tid("p1"), .what = agenda::kind::probe});
 	p.add({.id = tid("f1"), .what = agenda::kind::focus});
 	p.add({.id = tid("d1"), .what = agenda::kind::dive});
 	p.add({.id = tid("n1"), .what = agenda::kind::node, .tier = 2});
@@ -158,7 +159,10 @@ static void test_order_bands()
 	check(p.take() == tid("n2") && p.take() == tid("n1"),
 	      "lower tier first within a kind");
 	check(p.take() == tid("d1"), "dives after nodes");
-	check(p.take() == tid("f1"), "focuses last, all else equal");
+	check(p.take() == tid("f1"), "focuses after dives");
+	check(p.take() == tid("p1"),
+	      "probes last: gathered evidence writes before new "
+	      "inquiries open");
 }
 
 static void test_export_edge()

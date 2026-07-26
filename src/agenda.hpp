@@ -43,10 +43,13 @@ namespace agenda {
 
 // A *leaf* summarizes one subtitle file; a *node* merges child
 // summaries (the pyramid, generalizing upward); a *dive* details
-// one search pattern's matched material; a *focus* takes two
-// finished dives and either refuses or sharpens their common
-// thread -- prose plus a hypothesized regex that re-collects it.
-enum class kind : std::uint8_t { leaf, node, dive, focus };
+// one search pattern's matched material; a *probe* reads two
+// finished dives and either refuses or hypothesizes a regex worth
+// searching; a *focus* writes the pair's common thread from the
+// evidence that search actually found.  The probe-search-write
+// chain is the executor's caller's to run: a probe's reply names a
+// search, not a dependency the scheduler could gate on.
+enum class kind : std::uint8_t { leaf, node, dive, focus, probe };
 
 // Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,
 // kept binary in memory -- hex materializes only at the filesystem
