@@ -1,15 +1,14 @@
-#!/usr/bin/env bash
-# CodeRabbit PR plumbing — deterministic only; judgment lives in SKILL.md
-# usage: cr.sh fetch
-#        cr.sh reply <thread-id> <body>
-#        cr.sh resolve <thread-id> | unresolve <thread-id>
-#        cr.sh comment <body>
+# lib.sh -- shared PR plumbing for the review-bot entry points.
+# For sourcing only: no shebang, no top-level statements, functions
+# only.  The sourcing entry point sets BOT to the reviewer's login
+# prefix, lowercase, then calls main.  Logins vary by surface --
+# GraphQL says "coderabbitai" / "copilot-pull-request-reviewer",
+# REST reviews append "[bot]", REST inline comments say "Copilot" --
+# so every filter case-folds and prefix-matches.  gh api --jq is
+# gojq with no --arg plumbing; the shell splices $BOT into the
+# program text instead.
 
-# gh api --jq is gojq with no --arg plumbing, so the bot name is
-# inlined below.  GraphQL reports the login as "coderabbitai", REST
-# as "coderabbitai[bot]"; both match with startswith.
-
-fail() { printf 'cr.sh: %s\n' "$*" >&2; exit 1; }
+fail() { printf '%s: %s\n' "${0##*/}" "$*" >&2; exit 1; }
 
 ctx()
 {
@@ -47,7 +46,8 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
         comments(first:50){ nodes{ author{login} body url }}}}}}}' \
 		--jq '
 .data.repository.pullRequest.reviewThreads.nodes[]
-| select(.comments.nodes[0].author.login|startswith("coderabbitai"))
+| select(.comments.nodes[0].author.login
+         | ascii_downcase | startswith("'"$BOT"'"))
 | {source:"inline", thread:.id, resolved:.isResolved,
    outdated:.isOutdated, path, line,
    url:.comments.nodes[0].url,
@@ -56,12 +56,14 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
 		fail "inline fetch (graphql)"
 
 	reviews=$(gh api "repos/$owner/$name/pulls/$pr/reviews" --paginate \
-		--jq '.[]|select(.user.login|startswith("coderabbitai"))
+		--jq '.[]|select(.user.login
+		                 | ascii_downcase | startswith("'"$BOT"'"))
 		      |{source:"review",id,state,body}') ||
 		fail "reviews fetch"
 
 	issues=$(gh api "repos/$owner/$name/issues/$pr/comments" --paginate \
-		--jq '.[]|select(.user.login|startswith("coderabbitai"))
+		--jq '.[]|select(.user.login
+		                 | ascii_downcase | startswith("'"$BOT"'"))
 		      |{source:"issue",id,url:.html_url,body}') ||
 		fail "issue comments fetch"
 
@@ -99,7 +101,10 @@ comment()
 	gh pr comment --body "$(disclaimer)"$'\n\n'"$1" || fail "pr comment"
 }
 
-case "$1" in
-comment|fetch|reply|resolve|unresolve) "$@" ;;
-*) fail "usage: fetch | reply <tid> <body> | resolve <tid> | unresolve <tid> | comment <body>" ;;
-esac
+main()
+{
+	case "$1" in
+	comment|fetch|reply|resolve|unresolve) "$@" ;;
+	*) fail "usage: fetch | reply <tid> <body> | resolve <tid> | unresolve <tid> | comment <body>" ;;
+	esac
+}
