@@ -1,32 +1,39 @@
 /** @file
  *
- * llm implementation: a private worker drains a FIFO of prepared
- * HTTP requests, one blocking round-trip per task.  The request is
- * built whole on the asking thread (fail fast, nothing to copy
- * later); the worker dials, sends, reads to EOF (Connection: close),
- * parses and extracts, then reports through the callback.
- * Cancellation shuts the in-flight socket down from outside, which
- * pops the worker out of poll/recv.
+ * llm implementation: libcurl transfers driven by an epoll event
+ * loop on a private worker thread.  The request body is built whole
+ * on the asking thread (fail fast, nothing to copy later); the
+ * worker owns every libcurl object and the loop itself, so no lock
+ * guards them -- the mutex covers only the queue and the flags that
+ * cross the thread boundary.  curl's multi-socket machinery maps
+ * onto the loop with two bridges: CURLMOPT_SOCKETFUNCTION turns
+ * socket interest into loop watches, CURLMOPT_TIMERFUNCTION arms a
+ * timerfd.  An eventfd carries ask/cancel/destroy wakeups in from
+ * other threads, and a second timerfd serves the pace gap.  One
+ * transfer runs at a time (llama-server serves a single slot by
+ * default); the multi's connection cache keeps the server
+ * connection warm between tasks.
  *
- * Constraints: plain C23 + POSIX (sockets, pthread).  No Qt, no C++;
- * the C++ layer consumes llm.h only.
+ * Constraints: plain C23 + POSIX + libcurl + Linux epoll.  No Qt,
+ * no C++; the C++ layer consumes llm.h only.
  */
+#include <curl/curl.h>
 #include <errno.h>
-#include <netdb.h>
-#include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <time.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 
 #include "list_priv.h"
 #include "llm_priv.h"
+#include "loop.h"
 
-static constexpr int    kConnectMs = 5000;
+static constexpr long   kConnectMs = 5000;
 static constexpr size_t kMaxReply  = (size_t)1 << 26;
 
 /* ---- growable buffer ------------------------------------------- */
@@ -376,188 +383,6 @@ llm_json_str (struct llm_cur *c,
 	return true;
 }
 
-/* ---- HTTP response parsing ------------------------------------- */
-
-static size_t
-hdr_end (char const *raw,
-         size_t      size)
-{
-	for (size_t i = 0; i + 3 < size; ++i)
-		if (!__builtin_memcmp(raw + i, "\r\n\r\n", 4))
-			return i + 4;
-	return 0;
-}
-
-static int
-status_code (char const *raw, size_t n)
-{
-	size_t i = 0;
-	int code = 0;
-	while (i < n && raw[i] != ' ' && raw[i] != '\r')
-		++i;
-	if (i >= n || raw[i] != ' ')
-		return 0;
-	for (++i; i < n && raw[i] >= '0' && raw[i] <= '9'; ++i) {
-		if (code > 99)
-			return 0;
-		code = code * 10 + (raw[i] - '0');
-	}
-	return code;
-}
-
-static char
-low (char ch)
-{
-	return ch >= 'A' && ch <= 'Z' ? (char)(ch + 32) : ch;
-}
-
-/* Case-insensitive prefix match; pfx must already be lowercase and
- * measured by the caller (the literals below measure at compile
- * time -- no strlen per offset).
- */
-static bool
-ipfx (char const *s,
-      size_t      n,
-      char const *pfx,
-      size_t      m)
-{
-	if (n < m)
-		return false;
-	for (size_t i = 0; i < m; ++i)
-		if (low(s[i]) != pfx[i])
-			return false;
-	return true;
-}
-
-static bool
-ihas (char const *s,
-      size_t      n,
-      char const *sub,
-      size_t      m)
-{
-	for (size_t i = 0; i + m <= n; ++i)
-		if (ipfx(s + i, n - i, sub, m))
-			return true;
-	return false;
-}
-
-static size_t
-dec_after (char const *s, size_t n, size_t at)
-{
-	size_t v = 0;
-	bool any = false;
-	for (; at < n && s[at] == ' '; ++at);
-	for (; at < n && s[at] >= '0' && s[at] <= '9'; ++at) {
-		if (v > (SIZE_MAX - 9) / 10)
-			return SIZE_MAX;
-		v = v * 10 + (size_t)(s[at] - '0');
-		any = true;
-	}
-	return any ? v : SIZE_MAX;
-}
-
-#define LIT(s) s, sizeof s - 1
-
-static void
-header_line (char const *s, size_t n, size_t *cl, bool *chunked)
-{
-	if (ipfx(s, n, LIT("content-length:")))
-		*cl = dec_after(s, n, 15);
-	else if (ipfx(s, n, LIT("transfer-encoding:")) &&
-	         ihas(s + 18, n - 18, LIT("chunked")))
-		*chunked = true;
-}
-
-#undef LIT
-
-/* The status line falls through header_line unharmed: it matches
- * neither header name.
- */
-static void
-scan_headers (char const *raw, size_t n, size_t *cl, bool *chunked)
-{
-	size_t i = 0;
-	while (i + 1 < n) {
-		size_t j = i;
-		while (j + 1 < n && !(raw[j] == '\r' && raw[j + 1] == '\n'))
-			++j;
-		if (j > i)
-			header_line(raw + i, j - i, cl, chunked);
-		i = j + 2;
-	}
-}
-
-static bool
-dechunk (char const *p, char const *end, struct llm_buf *out)
-{
-	for (;;) {
-		size_t n = 0;
-		bool any = false;
-		int d;
-		while (p < end && (d = hexval(*p)) >= 0) {
-			if (n > SIZE_MAX >> 4)
-				return false;
-			n = n << 4 | (size_t)d;
-			++p;
-			any = true;
-		}
-		if (!any)
-			return false;
-		while (p < end && *p != '\n')
-			++p;
-		if (p >= end)
-			return false;
-		++p;
-		if (!n)
-			return true;    /* final chunk; trailers ignored */
-		if ((size_t)(end - p) < n || !llm_buf_put(out, p, n))
-			return false;
-		p += n;
-		if (p < end && *p == '\r')
-			++p;
-		if (p >= end || *p != '\n')
-			return false;
-		++p;
-	}
-}
-
-int
-llm_http_parse (char const     *raw,
-                size_t          size,
-                struct llm_buf *dec,
-                char const    **body,
-                size_t         *body_size)
-{
-	size_t cl = SIZE_MAX;
-	bool chunked = false;
-	size_t split;
-	int code;
-	if (size < 13 || memcmp(raw, "HTTP/", 5))
-		return LLM_ERR_PARSE;
-	split = hdr_end(raw, size);
-	if (!split)
-		return LLM_ERR_PARSE;
-	code = status_code(raw, split);
-	if (code < 100)
-		return LLM_ERR_PARSE;
-	scan_headers(raw, split, &cl, &chunked);
-	if (chunked) {
-		if (!dechunk(raw + split, raw + size, dec))
-			return LLM_ERR_PARSE;
-		*body = dec->data ? dec->data : "";
-		*body_size = dec->size;
-		return code;
-	}
-	*body = raw + split;
-	*body_size = size - split;
-	if (cl == SIZE_MAX)
-		return code;    /* close-delimited */
-	if (cl > *body_size)
-		return LLM_ERR_PARSE;   /* connection died mid-body */
-	*body_size = cl;
-	return code;
-}
-
 /* ---- reply digestion ------------------------------------------- */
 
 static int
@@ -590,143 +415,50 @@ extract_error (struct llm_cur *cur, struct llm_buf *out)
 	return LLM_ERR_HTTP;
 }
 
-static int
-digest (struct llm_buf const *in, struct llm_buf *out)
-{
-	struct llm_buf dec = {};
-	char const *body = nullptr;
-	size_t n = 0;
-	int code = llm_http_parse(in->data, in->size, &dec, &body, &n);
-	int status = LLM_ERR_PARSE;
-	if (code >= 0) {
-		/* The cursor exists only over a parsed body: in C23
-		 * even nullptr + 0 is undefined pointer arithmetic.
-		 */
-		struct llm_cur cur = { body, body + n };
-		status = code / 100 == 2 ? extract_content(&cur, out)
-		                         : extract_error(&cur, out);
-	}
-	llm_buf_free(&dec);
-	return status;
-}
-
-/* ---- sockets ---------------------------------------------------- */
-
-/* Poll one condition, EINTR retried; > 0 ready, 0 timeout, < 0 error. */
-static int
-await (int fd, short events, int ms)
-{
-	struct pollfd pf = { .fd = fd, .events = events };
-	int r;
-	do
-		r = poll(&pf, 1, ms);
-	while (r < 0 && errno == EINTR);
-	return r;
-}
-
-static int
-dial_one (struct addrinfo const *ai)
-{
-	int fd = socket(ai->ai_family,
-	                ai->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
-	                ai->ai_protocol);
-	if (fd < 0)
-		return -1;
-	if (!connect(fd, ai->ai_addr, ai->ai_addrlen))
-		return fd;
-	if (errno == EINPROGRESS && await(fd, POLLOUT, kConnectMs) > 0) {
-		int err = 0;
-		socklen_t len = sizeof err;
-		if (!getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) &&
-		    !err)
-			return fd;
-	}
-	close(fd);
-	return -1;
-}
-
-static int
-dial (char const *host, char const *port)
-{
-	struct addrinfo hints = {
-		.ai_family   = AF_UNSPEC,
-		.ai_socktype = SOCK_STREAM,
-	};
-	struct addrinfo *info = nullptr;
-	int fd = -1;
-	if (getaddrinfo(host, port, &hints, &info))
-		return -1;
-	for (struct addrinfo *ai = info; ai && fd < 0; ai = ai->ai_next)
-		fd = dial_one(ai);
-	freeaddrinfo(info);
-	return fd;
-}
-
-static int
-send_all (int fd, char const *data, size_t n, int ms)
-{
-	while (n) {
-		ssize_t w;
-		if (await(fd, POLLOUT, ms) <= 0)
-			return LLM_ERR_SEND;
-		w = send(fd, data, n, MSG_NOSIGNAL);
-		if (w < 0 && (errno == EAGAIN || errno == EINTR))
-			continue;
-		if (w <= 0)
-			return LLM_ERR_SEND;
-		data += (size_t)w;
-		n -= (size_t)w;
-	}
-	return 0;
-}
-
-static int
-recv_all (int fd, struct llm_buf *in, int ms)
-{
-	for (;;) {
-		char tmp[16384];
-		ssize_t r;
-		int p = await(fd, POLLIN, ms);
-		if (!p)
-			return LLM_ERR_TIMEOUT;
-		if (p < 0)
-			return LLM_ERR_RECV;
-		r = recv(fd, tmp, sizeof tmp, 0);
-		if (!r)
-			return 0;
-		if (r < 0 && (errno == EAGAIN || errno == EINTR))
-			continue;
-		if (r < 0 || in->size + (size_t)r > kMaxReply)
-			return LLM_ERR_RECV;
-		if (!llm_buf_put(in, tmp, (size_t)r))
-			return LLM_ERR_MEM;
-	}
-}
-
 /* ---- the client ------------------------------------------------- */
 
 struct llm_job {
 	struct list     link;
-	uint64_t        id;
+	CURL           *easy;     /* on the wire; worker-owned */
 	llm_done_fn     done;
 	void           *ud;
-	int             timeout_ms;
-	struct llm_buf  req;    /* the full request, headers + body */
+	uint64_t        id;
+	struct llm_buf  body;     /* the request JSON */
+	struct llm_buf  in;       /* reply bytes as curl delivers them */
+	int32_t         timeout_s;
+	bool            overflow; /* reply cap tripped in write_cb() */
 };
 
 struct llm {
-	pthread_mutex_t  mtx;
-	pthread_cond_t   cond;
-	pthread_t        worker;
-	struct list      queue;   /* pending llm_job links */
-	struct llm_job  *active;  /* in flight, owned by the worker */
-	uint64_t         last_id;
-	int              fd;      /* in-flight socket, for cancellation */
-	int              pace_ms; /* quiet gap between tasks */
-	bool             cancel;  /* retire the active job */
-	bool             quit;
-	char            *host;
-	char             port[6];
+	pthread_mutex_t    mtx;     /* guards the shared block below */
+	pthread_t          worker;
+	struct list        queue;   /* pending llm_job links */
+	struct llm_job    *active;  /* in flight, owned by the worker */
+	uint64_t           last_id;
+	int32_t            pace_ms; /* quiet gap between tasks */
+	bool               cancel;  /* retire the active job */
+	bool               quit;
+	/* Worker-private from here down: the loop and every libcurl
+	 * object are touched by the worker thread alone.  The fds stay
+	 * here because loop_unwatch() wipes its ref's copy.
+	 */
+	bool               pacing;  /* the gap timer is armed */
+	int                wakefd;  /* eventfd: ask/cancel/destroy */
+	int                ktfd;    /* timerfd: curl's schedule */
+	int                ptfd;    /* timerfd: the pace gap */
+	struct loop        loop;
+	struct loop_ref    wake;
+	struct loop_ref    ktimer;
+	struct loop_ref    ptimer;
+	CURLM             *multi;
+	struct curl_slist *hdrs;
+	char              *url;
+};
+
+/* One watched curl socket; curl_multi_assign() carries it. */
+struct llm_sock {
+	struct loop_ref  ref;
+	struct llm      *c;
 };
 
 /* Deliver and release; text (when given) gains a terminator here.
@@ -743,126 +475,424 @@ finish (struct llm_job *job, int status, struct llm_buf *text)
 		job->done(job->ud, job->id,
 		          status == LLM_OK ? LLM_ERR_MEM : status,
 		          nullptr, 0);
-	llm_buf_free(&job->req);
+	llm_buf_free(&job->body);
 }
 
-static int
-round_trip (struct llm *c, struct llm_job *job,
-            struct llm_buf *in, struct llm_buf *out)
-{
-	int fd = dial(c->host, c->port);
-	int status;
-	if (fd < 0)
-		return LLM_ERR_CONNECT;
-	pthread_mutex_lock(&c->mtx);
-	c->fd = fd;
-	status = c->cancel ? LLM_ERR_CANCEL : 0;
-	pthread_mutex_unlock(&c->mtx);
-	if (!status)
-		status = send_all(fd, job->req.data, job->req.size,
-		                  job->timeout_ms);
-	if (!status)
-		status = recv_all(fd, in, job->timeout_ms);
-	pthread_mutex_lock(&c->mtx);
-	c->fd = -1;
-	pthread_mutex_unlock(&c->mtx);
-	close(fd);
-	return status ? status : digest(in, out);
-}
-
+/* Extraction plus delivery for a job that concluded on the wire. */
 static void
-run_job (struct llm *c, struct llm_job *job)
+conclude (struct llm_job *job, int status)
 {
-	struct llm_buf in = {}, out = {};
-	int status = round_trip(c, job, &in, &out);
-	pthread_mutex_lock(&c->mtx);
-	if (c->cancel)
-		status = LLM_ERR_CANCEL;
-	/* Unpublish before the callback runs and the job is freed: a
-	 * concurrent cancel of this id must find nothing to point at.
+	struct llm_buf out = {};
+	/* The cursor exists only over delivered bytes: in C23 even
+	 * nullptr + 0 is undefined pointer arithmetic.
 	 */
-	c->active = nullptr;
-	pthread_mutex_unlock(&c->mtx);
+	char const *base = job->in.data ? job->in.data : "";
+	struct llm_cur cur = { base, base + job->in.size };
+	if (status == LLM_OK)
+		status = extract_content(&cur, &out);
+	else if (status == LLM_ERR_HTTP)
+		status = extract_error(&cur, &out);
 	if (status == LLM_OK || (status == LLM_ERR_HTTP && out.size))
 		finish(job, status, &out);
 	else
 		finish(job, status, nullptr);
-	llm_buf_free(&in);
+	llm_buf_free(&job->in);
 	llm_buf_free(&out);
 	free(job);
 }
 
-/* The quiet gap between tasks, mutex held: an absolute deadline on
- * the condvar's (realtime) clock, quit cutting the wait short.
- * Signals from new asks land as spurious wakeups; the queue is
- * re-examined only once the gap has been served.
- */
-static void
-cool_down (struct llm *c)
+/* curl's verdict to the callback contract. */
+static int
+verdict (CURLcode r, long code, curl_off_t dialed, bool overflow)
 {
-	struct timespec until;
-	clock_gettime(CLOCK_REALTIME, &until);
-	until.tv_sec += c->pace_ms / 1000;
-	until.tv_nsec += (long)(c->pace_ms % 1000) * 1000000L;
-	if (until.tv_nsec >= 1000000000L) {
-		++until.tv_sec;
-		until.tv_nsec -= 1000000000L;
-	}
+	switch (r) {
+	case CURLE_OK:
+		return code / 100 == 2 ? LLM_OK : LLM_ERR_HTTP;
 
-	while (!c->quit)
-		if (pthread_cond_timedwait(&c->cond, &c->mtx, &until))
-			return;
+	case CURLE_COULDNT_RESOLVE_HOST:
+	case CURLE_COULDNT_RESOLVE_PROXY:
+	case CURLE_COULDNT_CONNECT:
+		return LLM_ERR_CONNECT;
+
+	case CURLE_OPERATION_TIMEDOUT:
+		/* Idle silence after a completed dial is the task
+		 * timeout; a dial that never completed is the server
+		 * being unreachable, exactly as a refusal would be.
+		 */
+		return dialed ? LLM_ERR_TIMEOUT : LLM_ERR_CONNECT;
+
+	case CURLE_SEND_ERROR:
+		return LLM_ERR_SEND;
+
+	case CURLE_WRITE_ERROR:
+		/* Our own write_cb balked: at the reply cap by policy,
+		 * otherwise on allocation failure.
+		 */
+		return overflow ? LLM_ERR_RECV : LLM_ERR_MEM;
+
+	case CURLE_OUT_OF_MEMORY:
+		return LLM_ERR_MEM;
+
+	default:
+		return LLM_ERR_RECV;
+	}
 }
 
-static void *
-work (void *arg)
+static size_t
+write_cb (char *data, size_t size, size_t n, void *ud)
 {
-	struct llm *c = arg;
+	struct llm_job *job = ud;
+	size_t total = size * n;
+	if (job->in.size + total > kMaxReply) {
+		job->overflow = true;
+		return 0;
+	}
+	return llm_buf_put(&job->in, data, total) ? total : 0;
+}
+
+/* Arm a timerfd; ms < 0 disarms.  curl's "fire now" is 0, but a
+ * zeroed it_value would disarm a timerfd, so now becomes one
+ * nanosecond.
+ */
+static void
+arm (int tfd, long ms)
+{
+	struct itimerspec its = {};
+	if (ms > 0) {
+		its.it_value.tv_sec = ms / 1000;
+		its.it_value.tv_nsec = (ms % 1000) * 1000000L;
+	} else if (ms == 0)
+		its.it_value.tv_nsec = 1;
+	(void)timerfd_settime(tfd, 0, &its, nullptr);
+}
+
+/* Clear an eventfd or timerfd; both read as one uint64_t. */
+static void
+drain (int fd)
+{
+	uint64_t n;
+	while (read(fd, &n, sizeof n) < 0 && errno == EINTR) {}
+}
+
+static void
+post (int evfd)
+{
+	uint64_t one = 1;
+	while (write(evfd, &one, sizeof one) < 0 && errno == EINTR) {}
+}
+
+/* CURLMOPT_TIMERFUNCTION: curl schedules itself through a timerfd. */
+static int
+timer_cb (CURLM *multi, long ms, void *ud)
+{
+	struct llm *c = ud;
+	(void)multi;
+	arm(c->ktfd, ms);
+	return 0;
+}
+
+static void on_sock (struct loop *loop, struct loop_ref *ref,
+                     uint32_t events);
+
+/* CURLMOPT_SOCKETFUNCTION: curl's socket interest becomes a loop
+ * watch.  Only curl_multi_assign() may be called back into curl
+ * from here.
+ */
+static int
+sock_cb (CURL *easy, curl_socket_t fd, int what, void *ud, void *sp)
+{
+	static uint32_t const kEv[] = {
+		[CURL_POLL_IN]    = EPOLLIN,
+		[CURL_POLL_OUT]   = EPOLLOUT,
+		[CURL_POLL_INOUT] = EPOLLIN | EPOLLOUT,
+	};
+	struct llm *c = ud;
+	struct llm_sock *s = sp;
+	(void)easy;
+	if (what == CURL_POLL_REMOVE) {
+		if (s) {
+			loop_unwatch(&c->loop, &s->ref);
+			free(s);
+			curl_multi_assign(c->multi, fd, nullptr);
+		}
+		return 0;
+	}
+	if (s)
+		return loop_modify(&c->loop, &s->ref, kEv[what]) ? -1 : 0;
+	s = calloc(1, sizeof *s);
+	if (!s)
+		return -1;
+	s->c = c;
+	if (loop_watch(&c->loop, &s->ref, fd, kEv[what], on_sock)) {
+		free(s);
+		return -1;
+	}
+	curl_multi_assign(c->multi, fd, s);
+	return 0;
+}
+
+static void start_next (struct llm *c);
+
+/* The gap or the next task, after a job left the wire (finished,
+ * failed or cancelled -- a retired task changes nothing about the
+ * accelerator's need to breathe).  On quit the pending wakeup exits
+ * the loop instead.
+ */
+static void
+after_job (struct llm *c)
+{
+	int32_t gap;
+	bool quit;
 	pthread_mutex_lock(&c->mtx);
-	while (!c->quit) {
-		struct list *n = list_head(&c->queue);
-		struct llm_job *job;
-		if (!n) {
-			pthread_cond_wait(&c->cond, &c->mtx);
+	gap = c->pace_ms;
+	quit = c->quit;
+	pthread_mutex_unlock(&c->mtx);
+	if (quit)
+		return;
+	if (gap > 0) {
+		c->pacing = true;
+		arm(c->ptfd, gap);
+	} else {
+		start_next(c);
+	}
+}
+
+/* Harvest every transfer curl reports done.  The easy handle is
+ * torn down before the callback: the connection cache survives in
+ * the multi, the handle does not need to.
+ */
+static void
+reap (struct llm *c)
+{
+	CURLMsg *m;
+	int left;
+	while ((m = curl_multi_info_read(c->multi, &left))) {
+		struct llm_job *job = nullptr;
+		long code = 0;
+		curl_off_t dialed = 0;
+		bool cancelled;
+		if (m->msg != CURLMSG_DONE)
 			continue;
+		CURLcode r = m->data.result;
+		CURL *easy = m->easy_handle;
+		curl_easy_getinfo(easy, CURLINFO_PRIVATE, &job);
+		curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
+		curl_easy_getinfo(easy, CURLINFO_CONNECT_TIME_T, &dialed);
+		curl_multi_remove_handle(c->multi, easy);
+		curl_easy_cleanup(easy);
+		job->easy = nullptr;
+		/* Unpublish before the callback runs and the job is
+		 * freed: a concurrent cancel of this id must find
+		 * nothing to point at.
+		 */
+		pthread_mutex_lock(&c->mtx);
+		cancelled = c->cancel;
+		c->cancel = false;
+		c->active = nullptr;
+		pthread_mutex_unlock(&c->mtx);
+		conclude(job, cancelled
+		              ? LLM_ERR_CANCEL
+		              : verdict(r, code, dialed, job->overflow));
+		after_job(c);
+	}
+}
+
+/* Put one job on the wire; false means it never got there. */
+static bool
+launch (struct llm *c, struct llm_job *job)
+{
+	CURL *e = curl_easy_init();
+	if (!e)
+		return false;
+	bool ok =
+	    !curl_easy_setopt(e, CURLOPT_URL, c->url) &&
+	    !curl_easy_setopt(e, CURLOPT_POSTFIELDS, job->body.data) &&
+	    !curl_easy_setopt(e, CURLOPT_POSTFIELDSIZE_LARGE,
+	                      (curl_off_t)job->body.size) &&
+	    !curl_easy_setopt(e, CURLOPT_HTTPHEADER, c->hdrs) &&
+	    !curl_easy_setopt(e, CURLOPT_WRITEFUNCTION, write_cb) &&
+	    !curl_easy_setopt(e, CURLOPT_WRITEDATA, job) &&
+	    !curl_easy_setopt(e, CURLOPT_PRIVATE, job) &&
+	    !curl_easy_setopt(e, CURLOPT_NOSIGNAL, 1L) &&
+	    !curl_easy_setopt(e, CURLOPT_PROTOCOLS_STR, "http") &&
+	    !curl_easy_setopt(e, CURLOPT_HTTP_VERSION,
+	                      (long)CURL_HTTP_VERSION_1_1) &&
+	    !curl_easy_setopt(e, CURLOPT_CONNECTTIMEOUT_MS, kConnectMs) &&
+	    /* Not CURLOPT_LOW_SPEED_*: those compare a rolling average
+	     * that the request upload inflates, so a silent server
+	     * after a large POST times out only once the burst decays
+	     * below the limit -- hours, for our prompt sizes.  The
+	     * reply arrives whole, so a total cap says the same thing
+	     * the old per-silence poll did.
+	     */
+	    !curl_easy_setopt(e, CURLOPT_TIMEOUT_MS,
+	                      (long)job->timeout_s * 1000L) &&
+	    curl_multi_add_handle(c->multi, e) == CURLM_OK;
+	if (!ok) {
+		curl_easy_cleanup(e);
+		return false;
+	}
+	job->easy = e;
+	return true;
+}
+
+/* Start the next queued job unless one is active, the gap is being
+ * served, or the client is quitting.  A job that cannot launch
+ * reports LLM_ERR_MEM and the next one gets its chance.
+ */
+static void
+start_next (struct llm *c)
+{
+	while (!c->pacing) {
+		struct llm_job *job;
+		struct list *n;
+		pthread_mutex_lock(&c->mtx);
+		if (c->quit || c->active || !(n = list_head(&c->queue))) {
+			pthread_mutex_unlock(&c->mtx);
+			return;
 		}
 		list_del(n);
 		job = container_of(n, struct llm_job, link);
 		c->active = job;
 		c->cancel = false;
 		pthread_mutex_unlock(&c->mtx);
-		run_job(c, job);
+		if (launch(c, job))
+			return;
 		pthread_mutex_lock(&c->mtx);
-		if (c->pace_ms > 0)
-			cool_down(c);
+		c->active = nullptr;
+		pthread_mutex_unlock(&c->mtx);
+		finish(job, LLM_ERR_MEM, nullptr);
+		llm_buf_free(&job->in);
+		free(job);
+	}
+}
+
+/* The eventfd handler: asks start work, cancels retire the active
+ * transfer, destroy exits the loop.  Wakeups coalesce in the
+ * counter; one drain answers them all.
+ */
+static void
+on_wake (struct loop *loop, struct loop_ref *ref, uint32_t events)
+{
+	struct llm *c = container_of(ref, struct llm, wake);
+	struct llm_job *job;
+	bool quit;
+	(void)loop;
+	(void)events;
+	drain(ref->fd);
+	pthread_mutex_lock(&c->mtx);
+	quit = c->quit;
+	job = c->cancel ? c->active : nullptr;
+	if (job) {
+		c->active = nullptr;
+		c->cancel = false;
 	}
 	pthread_mutex_unlock(&c->mtx);
+	if (job) {
+		/* Removal is silent -- no CURLMSG_DONE follows -- so
+		 * the job concludes right here, on the worker.
+		 */
+		curl_multi_remove_handle(c->multi, job->easy);
+		curl_easy_cleanup(job->easy);
+		finish(job, LLM_ERR_CANCEL, nullptr);
+		llm_buf_free(&job->in);
+		free(job);
+	}
+	if (quit) {
+		loop_exit(&c->loop);
+		return;
+	}
+	if (job)
+		after_job(c);
+	else
+		start_next(c);
+}
+
+static void
+on_ktimer (struct loop *loop, struct loop_ref *ref, uint32_t events)
+{
+	struct llm *c = container_of(ref, struct llm, ktimer);
+	int running;
+	(void)loop;
+	(void)events;
+	drain(ref->fd);
+	curl_multi_socket_action(c->multi, CURL_SOCKET_TIMEOUT, 0,
+	                         &running);
+	reap(c);
+}
+
+static void
+on_ptimer (struct loop *loop, struct loop_ref *ref, uint32_t events)
+{
+	struct llm *c = container_of(ref, struct llm, ptimer);
+	(void)loop;
+	(void)events;
+	drain(ref->fd);
+	c->pacing = false;
+	start_next(c);
+}
+
+static void
+on_sock (struct loop *loop, struct loop_ref *ref, uint32_t events)
+{
+	struct llm_sock *s = container_of(ref, struct llm_sock, ref);
+	struct llm *c = s->c;
+	curl_socket_t fd = ref->fd;
+	int bits = (events & EPOLLIN  ? CURL_CSELECT_IN  : 0)
+	         | (events & EPOLLOUT ? CURL_CSELECT_OUT : 0)
+	         | (events & (EPOLLERR | EPOLLHUP) ? CURL_CSELECT_ERR
+	                                           : 0);
+	int running;
+	(void)loop;
+	/* The action call may retire this very socket (CURL_POLL_REMOVE
+	 * frees s); nothing after it touches s or ref.
+	 */
+	curl_multi_socket_action(c->multi, fd, bits, &running);
+	reap(c);
+}
+
+static void *
+work (void *arg)
+{
+	struct llm *c = arg;
+	loop_exec(&c->loop);
+	/* Exactly one callback per accepted task even if the loop died
+	 * on an epoll failure rather than loop_exit(): retire whatever
+	 * was still on the wire.
+	 */
+	pthread_mutex_lock(&c->mtx);
+	struct llm_job *job = c->active;
+	c->active = nullptr;
+	pthread_mutex_unlock(&c->mtx);
+	if (job) {
+		curl_multi_remove_handle(c->multi, job->easy);
+		curl_easy_cleanup(job->easy);
+		finish(job, LLM_ERR_CANCEL, nullptr);
+		llm_buf_free(&job->in);
+		free(job);
+	}
 	return nullptr;
 }
 
 static bool
-build_request (struct llm const *c, struct llm_task const *task,
-               struct llm_buf *req)
+build_body (struct llm_task const *task, struct llm_buf *body)
 {
 	static char const kOpen[] =
 		"{\"stream\":false,\"cache_prompt\":true,\"messages\":[";
-	struct llm_buf body = {};
-	char head[512];
-	int n;
-	bool ok = llm_buf_str(&body, kOpen);
+	bool ok = llm_buf_str(body, kOpen);
 	if (ok && task->system && *task->system)
-		ok = llm_buf_str(&body, "{\"role\":\"system\",\"content\":")
-		  && llm_buf_json(&body, task->system)
-		  && llm_buf_str(&body, "},");
+		ok = llm_buf_str(body, "{\"role\":\"system\",\"content\":")
+		  && llm_buf_json(body, task->system)
+		  && llm_buf_str(body, "},");
 	ok = ok
-	  && llm_buf_str(&body, "{\"role\":\"user\",\"content\":")
-	  && llm_buf_json(&body, task->prompt)
-	  && llm_buf_str(&body, "}]");
+	  && llm_buf_str(body, "{\"role\":\"user\",\"content\":")
+	  && llm_buf_json(body, task->prompt)
+	  && llm_buf_str(body, "}]");
 	if (ok && task->max_tokens > 0) {
 		char opt[40];
 		snprintf(opt, sizeof opt, ",\"max_tokens\":%ld",
 		         (long)task->max_tokens);
-		ok = llm_buf_str(&body, opt);
+		ok = llm_buf_str(body, opt);
 	}
 	if (ok && task->temperature >= 0.0) {
 		char num[32];
@@ -875,45 +905,97 @@ build_request (struct llm const *c, struct llm_task const *task,
 		for (char *p = num; *p; ++p)
 			*p = *p == ',' ? '.' : *p;
 		ok = len > 0 && (size_t)len < sizeof num
-		  && llm_buf_put(&body, ",\"temperature\":",
+		  && llm_buf_put(body, ",\"temperature\":",
 		                 sizeof ",\"temperature\":" - 1)
-		  && llm_buf_put(&body, num, (size_t)len);
+		  && llm_buf_put(body, num, (size_t)len);
 	}
-	ok = ok && llm_buf_put(&body, "}", 1);
-	n = snprintf(head, sizeof head,
-	             "POST /v1/chat/completions HTTP/1.1\r\n"
-	             "Host: %s:%s\r\n"
-	             "Content-Type: application/json\r\n"
-	             "Content-Length: %zu\r\n"
-	             "Connection: close\r\n\r\n",
-	             c->host, c->port, body.size);
-	ok = ok && n > 0 && (size_t)n < sizeof head
-	  && llm_buf_put(req, head, (size_t)n)
-	  && llm_buf_put(req, body.data, body.size);
-	llm_buf_free(&body);
-	return ok;
+	return ok && llm_buf_put(body, "}", 1);
+}
+
+/* The endpoint URL; a host containing ':' is an IPv6 literal and
+ * gets its brackets.
+ */
+static char *
+endpoint (char const *host, uint16_t port)
+{
+	char const *fmt = strchr(host, ':')
+	                  ? "http://[%s]:%u/v1/chat/completions"
+	                  : "http://%s:%u/v1/chat/completions";
+	int n = snprintf(nullptr, 0, fmt, host, port);
+	char *url = n > 0 ? malloc((size_t)n + 1) : nullptr;
+	if (url)
+		snprintf(url, (size_t)n + 1, fmt, host, port);
+	return url;
 }
 
 struct llm *
 llm_create (char const *host,
             uint16_t    port)
 {
+	if (curl_global_init(CURL_GLOBAL_DEFAULT))
+		return nullptr;
 	struct llm *c = calloc(1, sizeof *c);
 	if (!c)
-		return nullptr;
-	c->host = strdup(host && *host ? host : "127.0.0.1");
-	snprintf(c->port, sizeof c->port, "%u",
-	         port ? port : (uint16_t)8080U);
-	c->fd = -1;
+		goto fail_alloc;
+	c->url = endpoint(host && *host ? host : "127.0.0.1",
+	                  port ? port : (uint16_t)8080U);
+	if (!c->url)
+		goto fail_url;
+	/* llama-server answers nothing to Expect: 100-continue, and
+	 * libcurl would add it for bodies this size -- an empty value
+	 * keeps the header out and the body flowing immediately.
+	 */
+	c->hdrs = curl_slist_append(nullptr,
+	                            "Content-Type: application/json");
+	if (!c->hdrs || !curl_slist_append(c->hdrs, "Expect:"))
+		goto fail_hdrs;
+	c->multi = curl_multi_init();
+	if (!c->multi ||
+	    curl_multi_setopt(c->multi, CURLMOPT_SOCKETFUNCTION,
+	                      sock_cb) ||
+	    curl_multi_setopt(c->multi, CURLMOPT_SOCKETDATA, c) ||
+	    curl_multi_setopt(c->multi, CURLMOPT_TIMERFUNCTION,
+	                      timer_cb) ||
+	    curl_multi_setopt(c->multi, CURLMOPT_TIMERDATA, c))
+		goto fail_multi;
+	if (loop_init(&c->loop))
+		goto fail_multi;
+	c->wakefd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+	c->ktfd = timerfd_create(CLOCK_MONOTONIC,
+	                         TFD_CLOEXEC | TFD_NONBLOCK);
+	c->ptfd = timerfd_create(CLOCK_MONOTONIC,
+	                         TFD_CLOEXEC | TFD_NONBLOCK);
+	if (c->wakefd < 0 || c->ktfd < 0 || c->ptfd < 0 ||
+	    loop_watch(&c->loop, &c->wake, c->wakefd, EPOLLIN,
+	               on_wake) ||
+	    loop_watch(&c->loop, &c->ktimer, c->ktfd, EPOLLIN,
+	               on_ktimer) ||
+	    loop_watch(&c->loop, &c->ptimer, c->ptfd, EPOLLIN,
+	               on_ptimer))
+		goto fail_fds;
 	list_init(&c->queue);
 	pthread_mutex_init(&c->mtx, nullptr);
-	pthread_cond_init(&c->cond, nullptr);
-	if (c->host && !pthread_create(&c->worker, nullptr, work, c))
+	if (!pthread_create(&c->worker, nullptr, work, c))
 		return c;
-	pthread_cond_destroy(&c->cond);
 	pthread_mutex_destroy(&c->mtx);
-	free(c->host);
+fail_fds:
+	if (c->wakefd >= 0)
+		close(c->wakefd);
+	if (c->ktfd >= 0)
+		close(c->ktfd);
+	if (c->ptfd >= 0)
+		close(c->ptfd);
+	loop_fini(&c->loop);
+fail_multi:
+	if (c->multi)
+		curl_multi_cleanup(c->multi);
+fail_hdrs:
+	curl_slist_free_all(c->hdrs);
+fail_url:
+	free(c->url);
 	free(c);
+fail_alloc:
+	curl_global_cleanup();
 	return nullptr;
 }
 
@@ -927,13 +1009,10 @@ llm_destroy (struct llm **p_c)
 	*p_c = nullptr;
 	pthread_mutex_lock(&c->mtx);
 	c->quit = true;
-	if (c->active) {
+	if (c->active)
 		c->cancel = true;
-		if (c->fd >= 0)
-			shutdown(c->fd, SHUT_RDWR);
-	}
-	pthread_cond_signal(&c->cond);
 	pthread_mutex_unlock(&c->mtx);
+	post(c->wakefd);
 	pthread_join(c->worker, nullptr);
 	while ((n = list_head(&c->queue))) {
 		struct llm_job *job = container_of(n, struct llm_job, link);
@@ -941,10 +1020,16 @@ llm_destroy (struct llm **p_c)
 		finish(job, LLM_ERR_CANCEL, nullptr);
 		free(job);
 	}
-	pthread_cond_destroy(&c->cond);
+	curl_multi_cleanup(c->multi);
+	curl_slist_free_all(c->hdrs);
+	loop_fini(&c->loop);
+	close(c->wakefd);
+	close(c->ktfd);
+	close(c->ptfd);
 	pthread_mutex_destroy(&c->mtx);
-	free(c->host);
+	free(c->url);
 	free(c);
+	curl_global_cleanup();
 }
 
 uint64_t
@@ -964,18 +1049,17 @@ llm_ask (struct llm            *c,
 	job->done = done;
 	job->ud = ud;
 	s = task->timeout_s;
-	s = s <= 0 ? 300 : s > 86400 ? 86400 : s;
-	job->timeout_ms = (int)s * 1000;
-	if (!build_request(c, task, &job->req)) {
-		llm_buf_free(&job->req);
+	job->timeout_s = s <= 0 ? 300 : s > 86400 ? 86400 : s;
+	if (!build_body(task, &job->body)) {
+		llm_buf_free(&job->body);
 		free(job);
 		return 0;
 	}
 	pthread_mutex_lock(&c->mtx);
 	id = job->id = ++c->last_id;
 	list_append(&c->queue, &job->link);
-	pthread_cond_signal(&c->cond);
 	pthread_mutex_unlock(&c->mtx);
+	post(c->wakefd);
 	return id;
 }
 
@@ -990,9 +1074,8 @@ llm_cancel (struct llm *c,
 	pthread_mutex_lock(&c->mtx);
 	if (c->active && c->active->id == id) {
 		c->cancel = true;
-		if (c->fd >= 0)
-			shutdown(c->fd, SHUT_RDWR);
 		pthread_mutex_unlock(&c->mtx);
+		post(c->wakefd);
 		return 1;
 	}
 	list_foreach(n, &c->queue) {

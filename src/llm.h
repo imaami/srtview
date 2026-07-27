@@ -4,11 +4,12 @@
  *
  * Sends free-form tasks -- optional system context plus a prompt --
  * to the server's OpenAI-compatible chat endpoint (POST
- * /v1/chat/completions) over plain HTTP on a private worker thread,
- * and hands each reply to a callback.  The server owns the model and
- * applies its chat template; this module is transport and protocol
- * only: POSIX sockets, no HTTP or JSON library, no tokenization, no
- * Qt, no C++.
+ * /v1/chat/completions) on a private worker thread, and hands each
+ * reply to a callback.  The transport is libcurl's multi interface
+ * driven by an epoll event loop on that worker.  The server owns
+ * the model and applies its chat template; this module is transport
+ * and protocol only: no JSON library, no tokenization, no Qt, no
+ * C++.
  *
  * Tasks run FIFO, one in flight at a time (llama-server serves a
  * single slot by default).  The completion callback runs on the
@@ -81,11 +82,13 @@ struct llm_task {
 	char const      *system;      //!< Optional context; may be null.
 	char const      *prompt;      //!< The task body; required.
 	LLM_STD(int32_t) max_tokens;  //!< > 0 caps the reply length.
-	LLM_STD(int32_t) timeout_s;   //!< Longest silence tolerated
-	                              //!< while waiting; <= 0 means 300.
-	                              //!< A non-streamed reply arrives
-	                              //!< whole, so this bounds the full
-	                              //!< generation.
+	LLM_STD(int32_t) timeout_s;   //!< Hard cap on the whole round
+	                              //!< trip; <= 0 means 300.  A
+	                              //!< non-streamed reply arrives
+	                              //!< whole, so waiting out the
+	                              //!< generation and waiting on a
+	                              //!< dead server are the same
+	                              //!< silence; this bounds both.
 	double           temperature; //!< Sampling temperature as-is;
 	                              //!< negative for the server's
 	                              //!< default.

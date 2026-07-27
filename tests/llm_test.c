@@ -1,11 +1,11 @@
 /** @file
  *
- * Unit tests for the llm client: JSON escaping and extraction, HTTP
- * response parsing (content-length, chunked, close-delimited), and
- * full round-trips against a fake in-process server -- success,
- * server error, refused connection, timeout, cancellation, FIFO
- * order.  Optionally (LLM_TEST_LIVE=1) one live round-trip against a
- * real llama-server on 127.0.0.1:8080.
+ * Unit tests for the llm client: JSON escaping and extraction, and
+ * full round-trips against a fake in-process server -- success, a
+ * chunked reply (libcurl's decoding exercised end to end), server
+ * error, refused connection, timeout, cancellation, FIFO order.
+ * Optionally (LLM_TEST_LIVE=1) one live round-trip against a real
+ * llama-server on 127.0.0.1:8080.
  */
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -94,42 +94,6 @@ test_json_extract (void)
 
 	c = (struct llm_cur){ doc, doc + strlen(doc) };
 	check(!llm_json_get(&c, "missing"), "absent key is not found");
-}
-
-static void
-test_http_parse (void)
-{
-	char const *cl =
-		"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-		"Content-Length: 5\r\n\r\nhellotrailing-junk";
-	char const *chunked =
-		"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-		"5;ext=1\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
-	char const *closed =
-		"HTTP/1.0 500 Oops\r\nX: y\r\n\r\nsad body";
-	struct llm_buf dec = {};
-	char const *body = nullptr;
-	size_t n = 0;
-
-	check(llm_http_parse(cl, strlen(cl), &dec, &body, &n) == 200 &&
-	      n == 5 && !memcmp(body, "hello", 5),
-	      "content-length body, extra bytes trimmed");
-	check(llm_http_parse(chunked, strlen(chunked), &dec, &body,
-	                     &n) == 200 &&
-	      n == 11 && !memcmp(body, "hello world", 11),
-	      "chunked body reassembled, extension ignored");
-	llm_buf_free(&dec);
-	check(llm_http_parse(closed, strlen(closed), &dec, &body,
-	                     &n) == 500 &&
-	      n == 8 && !memcmp(body, "sad body", 8),
-	      "close-delimited body, non-2xx status returned");
-	char const *cut =
-		"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\nshort";
-	check(llm_http_parse("junk", 4, &dec, &body, &n) ==
-	      LLM_ERR_PARSE, "garbage rejected");
-	check(llm_http_parse(cut, strlen(cut), &dec, &body, &n) ==
-	      LLM_ERR_PARSE, "truncated body rejected");
-	llm_buf_free(&dec);
 }
 
 /* ---- fake server ------------------------------------------------ */
@@ -640,7 +604,6 @@ main (void)
 	test_json_escape();
 	test_json_unescape();
 	test_json_extract();
-	test_http_parse();
 	test_round_trip();
 	test_chunked_trip();
 	test_http_error();

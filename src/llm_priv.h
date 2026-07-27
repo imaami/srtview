@@ -1,9 +1,10 @@
 /** @file
  *
- * llm internals shared with tests: the growable byte buffer, JSON
- * string escaping and extraction, and HTTP/1.1 response parsing.
- * Everything here is pure buffer-in/buffer-out -- no sockets, no
- * threads -- so the wire protocol is testable without a server.
+ * llm internals shared with tests: the growable byte buffer and
+ * JSON string escaping and extraction.  Everything here is pure
+ * buffer-in/buffer-out -- no sockets, no threads -- so the protocol
+ * payloads are testable without a server.  HTTP itself is libcurl's
+ * business now and has no parsing surface of ours to test.
  */
 #ifndef SRTVIEW_SRC_LLM_PRIV_H_
 #define SRTVIEW_SRC_LLM_PRIV_H_
@@ -87,27 +88,5 @@ llm_json_first (struct llm_cur *c);
 extern bool
 llm_json_str (struct llm_cur *c,
               struct llm_buf *out);
-
-/** @brief Parses a complete HTTP/1.1 response held in memory.
- *
- * Locates the body by Content-Length, Transfer-Encoding: chunked
- * (decoded into @a dec) or connection close (everything after the
- * blank line).
- *
- * @param raw       The full response bytes.
- * @param size      The byte count.
- * @param dec       Receives the de-chunked body when chunked.
- * @param body      Receives the body location (into @a raw or
- *                  @a dec).
- * @param body_size Receives the body byte count.
- * @return          The HTTP status code (>= 100), or LLM_ERR_PARSE
- *                  on malformed or truncated input.
- */
-extern int
-llm_http_parse (char const     *raw,
-                size_t          size,
-                struct llm_buf *dec,
-                char const    **body,
-                size_t         *body_size);
 
 #endif /* SRTVIEW_SRC_LLM_PRIV_H_ */

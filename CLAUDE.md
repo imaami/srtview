@@ -12,7 +12,7 @@ ctest --test-dir build -R fundo_tests     # one test suite (or run ./build/fundo
 ./build/srtview --selftest VIDEO.mp4      # scripted offscreen exercise of the real key paths against a live mpv
 ```
 
-Deps: Qt6 (Widgets, Network), FFmpeg dev libraries (libavformat/avcodec/avutil/swscale), C++23 and C23 compilers, mpv at runtime. All executables land in `build/` (not `build/src/`). `cmake/compiler.cmake` injects LTO flags per compiler via `CMAKE_USER_MAKE_RULES_OVERRIDE`.
+Deps: Qt6 (Widgets, Network), FFmpeg dev libraries (libavformat/avcodec/avutil/swscale), libcurl, C++23 and C23 compilers, mpv at runtime. All executables land in `build/` (not `build/src/`). `cmake/compiler.cmake` injects LTO flags per compiler via `CMAKE_USER_MAKE_RULES_OVERRIDE`.
 
 ## What this is
 
@@ -23,7 +23,7 @@ Deps: Qt6 (Widgets, Network), FFmpeg dev libraries (libavformat/avcodec/avutil/s
 Every source file opens with a comment stating its role and constraints; read those first — they are the authoritative per-file docs.
 
 **Layering (mixed-language, deliberate):**
-- **Plain C core** (`fundo.c/h`, `list.c/h`, `cutil.h`, C23): the undo *tree* with persistent side branches. Opaque byte payloads, exact-content identity, byte-identical actions re-adopt existing branches instead of forking. `*_priv.h` headers hold internals shared with tests. No Qt, no C++.
+- **Plain C core** (`fundo.c/h`, `list.c/h`, `loop.c/h`, `cutil.h`, C23): the undo *tree* with persistent side branches, plus the epoll dispatcher the llm client's worker runs on. Opaque byte payloads, exact-content identity, byte-identical actions re-adopt existing branches instead of forking. `*_priv.h` headers hold internals shared with tests. No Qt, no C++.
 - **Qt-free C++** (`srt.cpp/hpp`, `topics.cpp/hpp`, C++23): SRT cue model, encoding normalization (UTF-8/UTF-16/Windows-1252), and a CRTP push parser (`srt::parser<Derived>` emits `on_cue()` statically dispatched); the topic-file model — the hand-written corpus format of videos plus named, composable regexes (`\{name:}` references) whose grammar is documented in the `topics.hpp` header comment. The UI converts to Qt types at its own boundary.
 - **Qt layer**: everything else.
 
