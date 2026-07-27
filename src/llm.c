@@ -503,7 +503,7 @@ conclude (struct llm_job *job, int status)
 
 /* curl's verdict to the callback contract. */
 static int
-verdict (CURLcode r, long code, curl_off_t dialed, bool overflow)
+verdict (CURLcode r, long code, bool overflow)
 {
 	switch (r) {
 	case CURLE_OK:
@@ -515,11 +515,13 @@ verdict (CURLcode r, long code, curl_off_t dialed, bool overflow)
 		return LLM_ERR_CONNECT;
 
 	case CURLE_OPERATION_TIMEDOUT:
-		/* Idle silence after a completed dial is the task
-		 * timeout; a dial that never completed is the server
-		 * being unreachable, exactly as a refusal would be.
+		/* Always the task timeout: a down server refuses and
+		 * lands in CURLE_COULDNT_CONNECT above, and a reused
+		 * connection never dials -- discriminating on connect
+		 * time would misfile its timeouts as unreachability
+		 * and feed the caller's connect-refusal breaker.
 		 */
-		return dialed ? LLM_ERR_TIMEOUT : LLM_ERR_CONNECT;
+		return LLM_ERR_TIMEOUT;
 
 	case CURLE_SEND_ERROR:
 		return LLM_ERR_SEND;
@@ -669,7 +671,6 @@ reap (struct llm *c)
 	while ((m = curl_multi_info_read(c->multi, &left))) {
 		struct llm_job *job = nullptr;
 		long code = 0;
-		curl_off_t dialed = 0;
 		bool cancelled;
 		if (m->msg != CURLMSG_DONE)
 			continue;
@@ -677,7 +678,6 @@ reap (struct llm *c)
 		CURL *easy = m->easy_handle;
 		curl_easy_getinfo(easy, CURLINFO_PRIVATE, &job);
 		curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
-		curl_easy_getinfo(easy, CURLINFO_CONNECT_TIME_T, &dialed);
 		curl_multi_remove_handle(c->multi, easy);
 		curl_easy_cleanup(easy);
 		job->easy = nullptr;
@@ -692,7 +692,7 @@ reap (struct llm *c)
 		pthread_mutex_unlock(&c->mtx);
 		conclude(job, cancelled
 		              ? LLM_ERR_CANCEL
-		              : verdict(r, code, dialed, job->overflow));
+		              : verdict(r, code, job->overflow));
 		after_job(c);
 	}
 }

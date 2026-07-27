@@ -40,8 +40,10 @@ loop_watch (struct loop     *loop,
             uint32_t         events,
             loop_fn         *fn)
 {
-	if (!fn || fd < 0)
+	if (!fn || fd < 0) {
+		ref->fd = -1;
 		return EINVAL;
+	}
 	*ref = (struct loop_ref){
 		.fn     = fn,
 		.events = events,

@@ -71,7 +71,8 @@ loop_fini (struct loop *loop);
  * @param fd     The descriptor.
  * @param events The epoll interest mask (EPOLLIN, EPOLLOUT, ...).
  * @param fn     The handler; required.
- * @return       0 on success, errno on failure.
+ * @return       0 on success, errno on failure; every failure
+ *               leaves the ref inactive.
  */
 extern int
 loop_watch (struct loop     *loop,
