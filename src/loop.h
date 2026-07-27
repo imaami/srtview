@@ -92,10 +92,15 @@ loop_modify (struct loop     *loop,
              struct loop_ref *ref,
              uint32_t         events);
 
-/** @brief Stops watching; safe on an inactive watch.
+/** @brief Stops watching; safe to repeat.
+ *
+ * Inactive means fd -1: the state a failed loop_watch() and a
+ * completed loop_unwatch() leave behind.  A merely zero-initialized
+ * ref is not a watch -- fd 0 is a valid descriptor and the hook is
+ * unlinked -- and must not be passed here.
  *
  * @param loop The loop.
- * @param ref  The watch; left inactive (fd -1).
+ * @param ref  An active or inactive watch; left inactive (fd -1).
  */
 extern void
 loop_unwatch (struct loop     *loop,

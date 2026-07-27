@@ -714,6 +714,10 @@ launch (struct llm *c, struct llm_job *job)
 	    !curl_easy_setopt(e, CURLOPT_WRITEDATA, job) &&
 	    !curl_easy_setopt(e, CURLOPT_PRIVATE, job) &&
 	    !curl_easy_setopt(e, CURLOPT_NOSIGNAL, 1L) &&
+	    /* Explicitly no proxy: an inherited http_proxy/ALL_PROXY
+	     * environment must never reroute prompt traffic.
+	     */
+	    !curl_easy_setopt(e, CURLOPT_PROXY, "") &&
 	    !curl_easy_setopt(e, CURLOPT_PROTOCOLS_STR, "http") &&
 	    !curl_easy_setopt(e, CURLOPT_HTTP_VERSION,
 	                      (long)CURL_HTTP_VERSION_1_1) &&
