@@ -39,7 +39,7 @@ struct loop_ref {
 	int          fd;     //!< Watched descriptor; -1 when inactive.
 };
 
-/** @brief The loop; zero state before loop_init(). */
+/** @brief The loop; loop_init() before any other call. */
 struct loop {
 	struct list refs; //!< Active watches.
 	int         epfd; //!< The epoll instance.

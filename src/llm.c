@@ -501,6 +501,29 @@ conclude (struct llm_job *job, int status)
 	free(job);
 }
 
+/* Pull the active job off the wire and conclude it with @a status.
+ * Removal is silent -- no CURLMSG_DONE follows -- so delivery
+ * happens right here, on the worker.  False when nothing was
+ * active; a pending cancel flag is consumed either way.
+ */
+static bool
+abort_active (struct llm *c, int status)
+{
+	pthread_mutex_lock(&c->mtx);
+	struct llm_job *job = c->active;
+	c->active = nullptr;
+	c->cancel = false;
+	pthread_mutex_unlock(&c->mtx);
+	if (!job)
+		return false;
+	curl_multi_remove_handle(c->multi, job->easy);
+	curl_easy_cleanup(job->easy);
+	finish(job, status, nullptr);
+	llm_buf_free(&job->in);
+	free(job);
+	return true;
+}
+
 /* curl's verdict to the callback contract. */
 static int
 verdict (CURLcode r, long code, bool overflow)
@@ -680,7 +703,6 @@ reap (struct llm *c)
 		curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
 		curl_multi_remove_handle(c->multi, easy);
 		curl_easy_cleanup(easy);
-		job->easy = nullptr;
 		/* Unpublish before the callback runs and the job is
 		 * freed: a concurrent cancel of this id must find
 		 * nothing to point at.
@@ -695,6 +717,24 @@ reap (struct llm *c)
 		              : verdict(r, code, job->overflow));
 		after_job(c);
 	}
+}
+
+/* One curl_multi_socket_action() with its failure handled: a multi
+ * that errors (an allocation failure inside a callback) cannot
+ * finish the transfer, so the active job is retired as out of
+ * memory instead of hanging until destroy.
+ */
+static void
+action (struct llm *c, curl_socket_t fd, int bits)
+{
+	int running;
+	if (curl_multi_socket_action(c->multi, fd, bits,
+	                             &running) == CURLM_OK) {
+		reap(c);
+		return;
+	}
+	if (abort_active(c, LLM_ERR_MEM))
+		after_job(c);
 }
 
 /* Put one job on the wire; false means it never got there. */
@@ -779,34 +819,20 @@ static void
 on_wake (struct loop *loop, struct loop_ref *ref, uint32_t events)
 {
 	struct llm *c = container_of(ref, struct llm, wake);
-	struct llm_job *job;
-	bool quit;
+	bool quit, cancel;
 	(void)loop;
 	(void)events;
 	drain(ref->fd);
 	pthread_mutex_lock(&c->mtx);
 	quit = c->quit;
-	job = c->cancel ? c->active : nullptr;
-	if (job) {
-		c->active = nullptr;
-		c->cancel = false;
-	}
+	cancel = c->cancel;
 	pthread_mutex_unlock(&c->mtx);
-	if (job) {
-		/* Removal is silent -- no CURLMSG_DONE follows -- so
-		 * the job concludes right here, on the worker.
-		 */
-		curl_multi_remove_handle(c->multi, job->easy);
-		curl_easy_cleanup(job->easy);
-		finish(job, LLM_ERR_CANCEL, nullptr);
-		llm_buf_free(&job->in);
-		free(job);
-	}
+	bool retired = cancel && abort_active(c, LLM_ERR_CANCEL);
 	if (quit) {
 		loop_exit(&c->loop);
 		return;
 	}
-	if (job)
+	if (retired)
 		after_job(c);
 	else
 		start_next(c);
@@ -816,13 +842,10 @@ static void
 on_ktimer (struct loop *loop, struct loop_ref *ref, uint32_t events)
 {
 	struct llm *c = container_of(ref, struct llm, ktimer);
-	int running;
 	(void)loop;
 	(void)events;
 	drain(ref->fd);
-	curl_multi_socket_action(c->multi, CURL_SOCKET_TIMEOUT, 0,
-	                         &running);
-	reap(c);
+	action(c, CURL_SOCKET_TIMEOUT, 0);
 }
 
 static void
@@ -846,13 +869,11 @@ on_sock (struct loop *loop, struct loop_ref *ref, uint32_t events)
 	         | (events & EPOLLOUT ? CURL_CSELECT_OUT : 0)
 	         | (events & (EPOLLERR | EPOLLHUP) ? CURL_CSELECT_ERR
 	                                           : 0);
-	int running;
 	(void)loop;
 	/* The action call may retire this very socket (CURL_POLL_REMOVE
 	 * frees s); nothing after it touches s or ref.
 	 */
-	curl_multi_socket_action(c->multi, fd, bits, &running);
-	reap(c);
+	action(c, fd, bits);
 }
 
 static void *
@@ -864,17 +885,7 @@ work (void *arg)
 	 * on an epoll failure rather than loop_exit(): retire whatever
 	 * was still on the wire.
 	 */
-	pthread_mutex_lock(&c->mtx);
-	struct llm_job *job = c->active;
-	c->active = nullptr;
-	pthread_mutex_unlock(&c->mtx);
-	if (job) {
-		curl_multi_remove_handle(c->multi, job->easy);
-		curl_easy_cleanup(job->easy);
-		finish(job, LLM_ERR_CANCEL, nullptr);
-		llm_buf_free(&job->in);
-		free(job);
-	}
+	abort_active(c, LLM_ERR_CANCEL);
 	return nullptr;
 }
 
