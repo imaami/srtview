@@ -76,6 +76,7 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 - Use anonymous structs and unions to combat nesting hell as needed.
 - Practically nothing should be a `typedef`. The few exceptions when `typedef` is genuinely defensible are:
   - implementing opaque handle types in APIs (for example when library instantiation returns an instance pointer);
+  - API callback function types (note: _not_ callback _pointer_ types - more about this later);
   - uniform interface semantics for C and C++ users of an API (`typedef struct Foo Foo` lets C code pretend `struct` is implicit);
   - `unsigned _BitInt()` because aligning it vertically with much shorter type names is awful, and/or you need to type it often:
     ```c
@@ -85,6 +86,10 @@ Tests mirror the layering: `tests/parse_test.cpp` and `tests/topics_test.cpp` li
 - Structs and unions with a tag but no type alias are great despite being somewhat more verbose to type:
   - they make it possible to have RAII initializer functions that return by value and are named like the tag;
   - an alias can be a `struct`, `union`, or a number of other things, but a tag tells the type semantics immediately.
+- Function type aliases should not be pointer type aliases. While the former has its use cases, the latter is
+  - unnecessary because appending an asterisk makes it a function pointer just like with any other type alias;
+  - harmful because all pointer type aliases obscure pointer-ness, which is fundamentally unacceptable;
+  - limited because a function type can forward declare a function but a function pointer type can not.
 
 ### C++
 
