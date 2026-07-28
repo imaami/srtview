@@ -933,6 +933,13 @@ build_body (struct llm_task const *task, struct llm_buf *body)
 static char *
 endpoint (char const *host, uint16_t port)
 {
+	/* The accepted shape is a bare name, IPv4 or bracket-free
+	 * IPv6: URL metacharacters would splice a different target
+	 * into the endpoint, so a host carrying any is refused and
+	 * the client never comes up.
+	 */
+	if (host[strcspn(host, "/@?#[]")])
+		return nullptr;
 	char const *fmt = strchr(host, ':')
 	                  ? "http://[%s]:%u/v1/chat/completions"
 	                  : "http://%s:%u/v1/chat/completions";

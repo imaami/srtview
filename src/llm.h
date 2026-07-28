@@ -83,7 +83,8 @@ struct llm_task {
 	char const      *prompt;      //!< The task body; required.
 	LLM_STD(int32_t) max_tokens;  //!< > 0 caps the reply length.
 	LLM_STD(int32_t) timeout_s;   //!< Hard cap on the whole round
-	                              //!< trip; <= 0 means 300.  A
+	                              //!< trip; <= 0 means 300, above
+	                              //!< 86400 clamps to a day.  A
 	                              //!< non-streamed reply arrives
 	                              //!< whole, so waiting out the
 	                              //!< generation and waiting on a
