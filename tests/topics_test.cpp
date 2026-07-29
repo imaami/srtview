@@ -342,6 +342,18 @@ void testTidy()
 	      "case-sensitive context keeps case-distinct twins");
 	check(tidy("(?i:[Ee]tsy-?d|[Ee]tsy-?[Dd])") == "(?i:[Ee]tsy-?d)",
 	      "the same twins collapse under an outer (?i:)");
+	check(tidy("(?i:(ab)|x\\1)") == "(?i:(ab)|x\\1)",
+	      "backreferences make the whole pattern doubt");
+	check(tidy("(?i:(a)|(?1))") == "(?i:(a)|(?1))",
+	      "recursion references bail the same way");
+	check(topics::normal_key("(a)\\g{1}") == "(a)\\g{1}",
+	      "\\g references stay verbatim");
+	check(tidy("(?i:\\d|\\d)") == "(?i:\\d)",
+	      "class escapes are not references; dedupe still runs");
+	check(tidy("a\\\\1|a\\\\1") == "a\\\\1",
+	      "an escaped backslash before a digit is no reference");
+	check(tidy("(?i:(?-i:x)|(?-i:x))") == "(?i:(?-i:x))",
+	      "inline modifiers are not references either");
 }
 
 void testClassCanon()

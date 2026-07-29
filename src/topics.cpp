@@ -684,12 +684,43 @@ bool flatten(std::string_view s, bool ci, int depth,
 	return true;
 }
 
+// Group references dangle or renumber when a capturing wrapper
+// peels away: numeric and \g/\k backreferences, recursion and
+// conditionals all pin group identity.  The walk is escape-aware
+// but class-blind; a false hit only costs verbatim keys.  (?- and
+// (?+ need a digit next, so inline modifiers like (?-i) pass.
+bool references_groups(std::string_view s)
+{
+	for (std::size_t i = 0; i + 1 < s.size(); ++i) {
+		unsigned char const a = s[i];
+		unsigned char const b = s[i + 1];
+		if (a == '\\') {
+			if (ascii_digit(b) || b == 'g' || b == 'k')
+				return true;
+			++i;
+			continue;
+		}
+		if (a != '(' || b != '?' || i + 2 >= s.size())
+			continue;
+		unsigned char const c = s[i + 2];
+		if (ascii_digit(c) || c == 'R' || c == '&' ||
+		    c == 'P' || c == '(')
+			return true;
+		if ((c == '+' || c == '-') && i + 3 < s.size() &&
+		    ascii_digit((unsigned char)s[i + 3]))
+			return true;
+	}
+	return false;
+}
+
 // The pattern-level entry: outer wrappers peeled once, parts
 // collected; ci reports the peeled case flag for the rebuild wrap.
 bool flatten_pattern(std::string_view pattern, bool &ci,
                      std::vector<part> &out)
 {
 	ci = false;
+	if (references_groups(pattern))
+		return false;
 	// Sequenced apart deliberately: peel() writes ci, and argument
 	// evaluation order would be free to read it first.
 	std::string_view const inner = peel(pattern, ci);
