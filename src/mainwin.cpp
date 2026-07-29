@@ -846,7 +846,10 @@ bool MainWin::pumpProbe(PendingFocus &w)
 	std::string const text = f.readAll().toStdString();
 	if (text.starts_with("NONE"))
 		return false;
-	std::string const pat = regexLine(text);
+	// Tidied mechanically before anything consumes it: small models
+	// repeat branches freely, and the searched, stored and
+	// journaled pattern must not carry that.
+	std::string const pat = topics::tidy(regexLine(text));
 	if (pat.empty())
 		return retryProbe(w,
 			"FEEDBACK\nYour reply did not end with a REGEX: "

@@ -324,6 +324,21 @@ void testAdoptNovel()
 	      "novel adoptions round-trip through write");
 }
 
+void testTidy()
+{
+	using topics::tidy;
+	check(tidy("(?i:(a|b|a))") == "(?i:a|b)",
+	      "wrappers flatten and repeats drop");
+	check(tidy("(?i)(x|(?:y)|x|x)") == "(?i:x|y)",
+	      "the prefix shape and inner wraps tidy to one form");
+	check(tidy("[Qq]uorum") == "[Qq]uorum" &&
+	      tidy("(?i:froz|freez)") == "(?i:froz|freez)",
+	      "already-clean patterns pass through byte-identical");
+	check(tidy("(?i:a|b") == "(?i:a|b" && tidy("a||b") == "a||b",
+	      "structural doubt passes through unchanged");
+	check(tidy("") == "", "emptiness stays empty");
+}
+
 } // namespace
 
 int main()
@@ -338,6 +353,7 @@ int main()
 	testAdopt();
 	testNormalKey();
 	testAdoptNovel();
+	testTidy();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	            g_fail, g_fail == 1 ? "" : "s");
 	return g_fail ? 1 : 0;

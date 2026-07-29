@@ -705,6 +705,25 @@ std::string adopt_novel(doc &d, std::string const &pattern,
 	return adopt(d, rebuilt, stem) ? rebuilt : std::string();
 }
 
+std::string tidy(std::string const &pattern)
+{
+	bool ci;
+	std::vector<part> parts;
+	if (!flatten_pattern(pattern, ci, parts))
+		return pattern;
+	std::string body;
+	std::vector<std::string> seen;
+	for (part &q : parts) {
+		if (std::ranges::find(seen, q.key) != seen.end())
+			continue;
+		seen.push_back(std::move(q.key));
+		if (!body.empty())
+			body += '|';
+		body += q.text;
+	}
+	return ci ? "(?i:" + body + ")" : body;
+}
+
 std::string write(doc const &d)
 {
 	std::string out;

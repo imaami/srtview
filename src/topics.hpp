@@ -160,6 +160,13 @@ std::string normal_key(std::string_view pattern);
 std::string adopt_novel(doc &d, std::string const &pattern,
                         char const *stem);
 
+// The tidied text of a machine-written pattern: the same branch set
+// with redundant full-span wrappers flattened and repeated branches
+// dropped -- (?i:(a|b|a)) becomes (?i:a|b).  Matching semantics are
+// preserved; structural doubt returns the input unchanged.  For
+// model output only: user-typed patterns are never rewritten.
+std::string tidy(std::string const &pattern);
+
 // Canonical text form; parses back to an equal document.
 std::string write(doc const &d);
 
