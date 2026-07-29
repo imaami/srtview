@@ -455,7 +455,8 @@ std::size_t class_end(std::string_view b, std::size_t at)
 // position rule survives into the key.  Under ci the letter bits
 // fold to lowercase.  Beyond-the-rules content bails to verbatim,
 // which is always sound: non-ASCII (UTF-8 units, not bytes),
-// numeric escapes, \p and unknown letter escapes, inverted ranges.
+// numeric escapes, \p and unknown letter escapes, POSIX [:...:]
+// classes (class_end() cannot deliver one whole), inverted ranges.
 std::string canon_class(std::string_view cls, bool ci)
 {
 	bool const neg = !cls.empty() && cls[0] == '^';
@@ -481,15 +482,13 @@ std::string canon_class(std::string_view cls, bool ci)
 			continue;
 		}
 		int one = -1;
-		if (c == '[' && i + 1 < cls.size() && cls[i + 1] == ':') {
-			std::size_t const e = cls.find(":]", i + 2);
-			if (e == std::string_view::npos || dash)
-				return {};
-			flush();
-			opaque.emplace_back(cls.substr(i, e + 2 - i));
-			i = e + 2;
-			continue;
-		}
+		if (c == '[' && i + 1 < cls.size() && cls[i + 1] == ':')
+			// class_end() cannot carry a complete [:...:]
+			// token past its inner ']': whatever reaches here
+			// is a truncated POSIX class, and canonicalizing
+			// its debris as literal members would forge
+			// equalities.  Verbatim is the sound key.
+			return {};
 		if (c == '\\') {
 			if (i + 1 >= cls.size())
 				return {};

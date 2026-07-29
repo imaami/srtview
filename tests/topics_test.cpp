@@ -372,6 +372,8 @@ void testClassCanon()
 	      "the idiom fold still outranks canonicalization");
 	check(normal_key("i:foo") != normal_key("(?i:FOO)"),
 	      "a literal i: branch cannot forge a folded key");
+	check(normal_key("x[[:alpha:]]y") == "x[[:alpha:]]y",
+	      "POSIX classes stay verbatim, never member debris");
 }
 
 } // namespace
