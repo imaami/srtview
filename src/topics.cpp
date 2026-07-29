@@ -2,7 +2,6 @@
 #include "topics.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <cstring>
 #include <utility>
@@ -319,17 +318,22 @@ std::vector<std::string_view> branches(std::string_view body)
 	return out;
 }
 
-// The branch is exactly one capturing group: "(...)" spanning all of
-// it, and not a "(?..." construct.
-bool whole_group(std::string_view b)
+// The first depth-zero ')' is the final byte: one whole group.
+bool spans_whole(std::string_view b)
 {
-	if (b.size() < 2 || b[0] != '(' || b[1] == '?')
-		return false;
 	char c;
 	for (rx_cursor cur{b}; cur.next(c);)
 		if (c == ')' && cur.depth == 0)
 			return cur.i == b.size();
 	return false;
+}
+
+// The branch is exactly one capturing group: "(...)" spanning all of
+// it, and not a "(?..." construct.
+bool whole_group(std::string_view b)
+{
+	return b.size() >= 2 && b[0] == '(' && b[1] != '?'
+	    && spans_whole(b);
 }
 
 // Exactly one reference inside: the acknowledged component.
@@ -379,15 +383,26 @@ export_item plan_one(doc const &d, topic const &t)
 // falls back to exact text.  Keys compare; they are never stored,
 // exported or hashed into an identity.
 
-// The first depth-zero ')' is the final byte: one whole group.
-bool spans_whole(std::string_view b)
+// Locale-free ASCII classification: the Qt host runs
+// setlocale(LC_ALL, ""), and keys must not shift with it.
+constexpr bool ascii_alpha(unsigned char c)
 {
-	char c;
-	for (rx_cursor cur{b}; cur.next(c);)
-		if (c == ')' && cur.depth == 0)
-			return cur.i == b.size();
-	return false;
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
+
+constexpr bool ascii_digit(unsigned char c)
+{
+	return c >= '0' && c <= '9';
+}
+
+constexpr char ascii_lower(unsigned char c)
+{
+	return char(c >= 'A' && c <= 'Z' ? c + 32 : c);
+}
+
+// Flattening depth past anything the pipeline writes: deeper
+// nesting reads as structure we should not pretend to understand.
+constexpr int kFlattenDepth = 8;
 
 // Peels a leading "(?i)" and full-span (?i:X), (?:X) and (X)
 // wrappers; the case-insensitive shapes set ci.
@@ -444,7 +459,7 @@ std::size_t class_end(std::string_view b, std::size_t at)
 std::string canon_class(std::string_view cls, bool ci)
 {
 	bool const neg = !cls.empty() && cls[0] == '^';
-	if (cls.size() <= neg)
+	if (cls.size() <= std::size_t{neg})
 		return {};
 	bool map[256] = {};
 	std::vector<std::string> opaque;
@@ -479,7 +494,7 @@ std::string canon_class(std::string_view cls, bool ci)
 			if (i + 1 >= cls.size())
 				return {};
 			unsigned char const e = cls[i + 1];
-			if (std::isalnum(e)) {
+			if (ascii_alpha(e) || ascii_digit(e)) {
 				int byte = 0;
 				switch (e) {
 				case 'a': byte = 7;  break;
@@ -569,10 +584,10 @@ bool case_idiom(std::string_view cls, char &low)
 		return false;
 	unsigned char const a = (unsigned char)cls[0];
 	unsigned char const b = (unsigned char)cls[1];
-	if (a == b || !std::isalpha(a) || !std::isalpha(b) ||
-	    std::tolower(a) != std::tolower(b))
+	if (a == b || !ascii_alpha(a) || !ascii_alpha(b) ||
+	    ascii_lower(a) != ascii_lower(b))
 		return false;
-	low = char(std::tolower(a));
+	low = ascii_lower(a);
 	return true;
 }
 
@@ -599,7 +614,11 @@ std::string branch_key(std::string_view b, bool ci)
 		ci = case_idiom(b.substr(i + 1, end - i - 1), low);
 		i = end + 1;
 	}
-	std::string out = ci ? "i:" : "";
+	// The fold tag is a newline: adopt() refuses patterns carrying
+	// one and the topic-file format is line-based, so no corpus
+	// pattern can begin with it -- a printable tag ("i:") would be
+	// forgeable by a literal branch and cause a false subtraction.
+	std::string out = ci ? "\n" : "";
 	for (std::size_t i = 0; i < b.size();) {
 		char const c = b[i];
 		if (c == '\\') {
@@ -626,7 +645,7 @@ std::string branch_key(std::string_view b, bool ci)
 			i = end + 1;
 			continue;
 		}
-		out += ci ? char(std::tolower((unsigned char)c)) : c;
+		out += ci ? ascii_lower((unsigned char)c) : c;
 		++i;
 	}
 	return out;
@@ -643,7 +662,7 @@ struct part {
 bool flatten(std::string_view s, bool ci, int depth,
              std::vector<part> &out)
 {
-	if (depth > 8)
+	if (depth > kFlattenDepth)
 		return false;
 	for (std::string_view const b : branches(s)) {
 		if (b.empty())
@@ -850,9 +869,15 @@ std::string tidy(std::string const &pattern)
 	std::string body;
 	std::vector<std::string> seen;
 	for (part &q : parts) {
-		if (std::ranges::find(seen, q.key) != seen.end())
+		// Folded keys decide repeats only under an outer (?i:),
+		// where the wrapper covers the case difference; in a
+		// case-sensitive context the [Xx] idiom's promotion
+		// would let "[Ee]tsy-?d" swallow "[Ee]tsy-?[Dd]" and
+		// narrow what the pattern matches.
+		std::string const &k = ci ? q.key : q.text;
+		if (std::ranges::find(seen, k) != seen.end())
 			continue;
-		seen.push_back(std::move(q.key));
+		seen.push_back(k);
 		if (!body.empty())
 			body += '|';
 		body += q.text;

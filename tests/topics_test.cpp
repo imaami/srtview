@@ -337,6 +337,11 @@ void testTidy()
 	check(tidy("(?i:a|b") == "(?i:a|b" && tidy("a||b") == "a||b",
 	      "structural doubt passes through unchanged");
 	check(tidy("") == "", "emptiness stays empty");
+	check(tidy("[Ee]tsy-?d|[Ee]tsy-?[Dd]")
+	      == "[Ee]tsy-?d|[Ee]tsy-?[Dd]",
+	      "case-sensitive context keeps case-distinct twins");
+	check(tidy("(?i:[Ee]tsy-?d|[Ee]tsy-?[Dd])") == "(?i:[Ee]tsy-?d)",
+	      "the same twins collapse under an outer (?i:)");
 }
 
 void testClassCanon()
@@ -365,6 +370,8 @@ void testClassCanon()
 	      "inverted ranges and numeric escapes bail to verbatim");
 	check(normal_key("[Qq]uorum") == normal_key("(?i:quorum)"),
 	      "the idiom fold still outranks canonicalization");
+	check(normal_key("i:foo") != normal_key("(?i:FOO)"),
+	      "a literal i: branch cannot forge a folded key");
 }
 
 } // namespace
