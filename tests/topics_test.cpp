@@ -261,6 +261,69 @@ void testAdopt()
 	      "a document with adoptions round-trips through write");
 }
 
+void testNormalKey()
+{
+	using topics::normal_key;
+	check(normal_key("(?i:b|a|a)") == normal_key("(?i:a|b)"),
+	      "branch order and repeats collapse");
+	check(normal_key("(?i)(a|b)") == normal_key("(?i:a|b)") &&
+	      normal_key("(?i:(a|b))") == normal_key("(?i:a|b)"),
+	      "both live wrapper shapes normalize alike");
+	check(normal_key("(?:foo)|(bar)") == normal_key("foo|bar"),
+	      "redundant group wrappers peel");
+	check(normal_key("[Qq]uorum") == normal_key("(?i:quorum)"),
+	      "the two-case idiom meets (?i:) in the middle");
+	check(normal_key("Foo") != normal_key("(?i:foo)") &&
+	      normal_key("Foo") != normal_key("foo"),
+	      "case-sensitive text keeps its case identity");
+	std::string const k = normal_key("(?i:b|a)");
+	check(normal_key(k) == k, "keys are fixpoints");
+	check(normal_key("a||b") == "a||b" &&
+	      normal_key("(a|b") == "(a|b",
+	      "structural doubt collapses to exact text");
+}
+
+void testAdoptNovel()
+{
+	auto r = topics::parse("- quorum\n"
+	                       "  - [Qq]uorum\n"
+	                       "\n"
+	                       "- backups\n"
+	                       "  - [Bb]ack ?ups?\n");
+	check(r.error.empty(), "novelty sketch parses");
+	topics::doc d = r.value;
+
+	check(topics::adopt_novel(d, "(?i:quorum)", "focus").empty()
+	      && d.topics.size() == 2,
+	      "a fully covered regex adopts nothing");
+
+	std::string const kept =
+		topics::adopt_novel(d, "(?i:quorum|etsy-?d|et ?cd)",
+		                    "focus");
+	check(kept == "(?i:etsy-?d|et ?cd)" && d.topics.size() == 3 &&
+	      d.topics[2].name == "focus1" &&
+	      d.topics[2].fragments == std::vector<std::string>{kept},
+	      "covered branches subtract; the novel remainder adopts");
+
+	check(topics::adopt_novel(d, "(?i:(et ?cd)|zeta|zeta)",
+	                          "focus") == "(?i:zeta)",
+	      "wrapping, repeats and fresh coverage all collapse");
+
+	auto r2 = topics::parse("- shout\n  - Foo\n");
+	check(r2.error.empty(), "case-sensitive sketch parses");
+	check(topics::adopt_novel(r2.value, "(?i:foo|bar)", "focus")
+	      == "(?i:foo|bar)",
+	      "a case-sensitive topic subtracts no (?i:) branch");
+
+	check(topics::adopt(d, "(?i:bar|foo)") &&
+	      !topics::adopt(d, "(?i:foo|bar)"),
+	      "adopt() refuses key-level duplicates");
+
+	auto const back = topics::parse(topics::write(d));
+	check(back.error.empty() && back.value == d,
+	      "novel adoptions round-trip through write");
+}
+
 } // namespace
 
 int main()
@@ -273,6 +336,8 @@ int main()
 	testLexical();
 	testComponents();
 	testAdopt();
+	testNormalKey();
+	testAdoptNovel();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	            g_fail, g_fail == 1 ? "" : "s");
 	return g_fail ? 1 : 0;

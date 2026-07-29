@@ -122,7 +122,10 @@ constexpr char kProbePrompt[] =
 	"any one term, so never demand two terms in one line and "
 	"never use lookaheads. A simple pattern is a good answer: "
 	"when unsure, prefer a plain union of a few terms over "
-	"elaborate structure. Note your working briefly, then end with "
+	"elaborate structure. Branches that merely repeat a PATTERN "
+	"word add nothing -- the collection already runs those "
+	"searches; spend them on new terms and their variants. "
+	"Note your working briefly, then end with "
 	"exactly one line of this form: REGEX: followed by one PCRE2 "
 	"regular expression, case-insensitive via (?i:...) where "
 	"sensible, no delimiters or flags outside the pattern.";

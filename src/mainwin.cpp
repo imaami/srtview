@@ -980,14 +980,17 @@ void MainWin::harvestOne(QString const &file)
 	if (pat.empty() || !QRegularExpression(
 	                    	QString::fromStdString(pat)).isValid())
 		return;
-	// adopt() is the gate: a refusal, or a collision with a topic
-	// the corpus already carries (user-authored ones included),
-	// must neither demote that topic to generated nor stage a
-	// dangling dive for a pattern outside the corpus.
-	if (!topics::adopt(m_corpus, pat, "focus"))
+	// adopt_novel() is the gate: branches the corpus already covers
+	// (user-authored topics included) are subtracted, and a regex
+	// with nothing novel left adopts nothing -- the focus file's
+	// prose remains; only the redundant topic and its dive are
+	// declined.  What survives is the pattern from here on.
+	std::string const kept = topics::adopt_novel(m_corpus, pat,
+	                                             "focus");
+	if (kept.empty())
 		return;
-	m_generated.insert(pat);
-	stageDive(pat, false, true);
+	m_generated.insert(kept);
+	stageDive(kept, false, true);
 }
 
 // A topic file: the corpus source of videos and composable regexes

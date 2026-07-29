@@ -139,6 +139,27 @@ std::vector<topic const *> components(doc const &d);
 bool adopt(doc &d, std::string const &pattern,
            char const *stem = "adhoc");
 
+// The deterministic comparison key of a pattern: top-level branches
+// flattened out of full-span (?i:)/(?:)/() wrappers, each branch
+// case-folded when its context is case-insensitive -- an outer (?i,
+// or the [Xx] two-case class idiom, which is itself a deliberate
+// case-covering mark -- and tagged so folded and unfolded branches
+// never collide, then sorted, deduplicated and rejoined.  Keys
+// exist to COMPARE patterns ("fuzzy but accurate"): they are never
+// stored, exported or hashed into an identity.  Structurally
+// doubtful input is its own key, collapsing to exact comparison.
+std::string normal_key(std::string_view pattern);
+
+// Adopts only what the corpus does not already cover: branches of
+// the pattern whose normal_key() a topic's expansion already has
+// are dropped, and the remainder -- rebuilt from the surviving
+// branches in original order, re-wrapped (?i:...) when the source
+// was -- is adopted under the stem like adopt().  Returns the
+// adopted text, empty when nothing novel remained or adoption was
+// refused.
+std::string adopt_novel(doc &d, std::string const &pattern,
+                        char const *stem);
+
 // Canonical text form; parses back to an equal document.
 std::string write(doc const &d);
 
