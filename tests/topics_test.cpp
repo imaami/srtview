@@ -339,6 +339,34 @@ void testTidy()
 	check(tidy("") == "", "emptiness stays empty");
 }
 
+void testClassCanon()
+{
+	using topics::normal_key;
+	check(normal_key("[cab]") == normal_key("[abc]") &&
+	      normal_key("[abc]") == normal_key("[a-c]"),
+	      "member order and equivalent ranges canonicalize");
+	check(normal_key("a[ -]?b") == normal_key("a[- ]?b"),
+	      "edge-dash literal position stops mattering");
+	check(normal_key("[^ba]") == normal_key("[^ab]") &&
+	      normal_key("[^ab]") != normal_key("[ab]"),
+	      "negation canonicalizes and never collides with plain");
+	check(normal_key("(?i:[AB]c)") == normal_key("(?i:[ba]C)"),
+	      "class members fold under a case-insensitive branch");
+	check(normal_key("[a-cx]") == normal_key("[xcab]"),
+	      "ranges and singles merge into one member set");
+	check(normal_key("[a\\]]") == normal_key("[\\]a]"),
+	      "escaped members join the set like any other");
+	check(normal_key("[\\da]") == normal_key("[a\\d]") &&
+	      normal_key("[\\d]") != normal_key("[\\D]"),
+	      "class-type escapes are opaque members, case intact");
+	check(normal_key("[z-a]") == "[z-a]" &&
+	      normal_key("[z-a]") != normal_key("[a-z]") &&
+	      normal_key("[\\x41]") != normal_key("[A]"),
+	      "inverted ranges and numeric escapes bail to verbatim");
+	check(normal_key("[Qq]uorum") == normal_key("(?i:quorum)"),
+	      "the idiom fold still outranks canonicalization");
+}
+
 } // namespace
 
 int main()
@@ -354,6 +382,7 @@ int main()
 	testNormalKey();
 	testAdoptNovel();
 	testTidy();
+	testClassCanon();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	            g_fail, g_fail == 1 ? "" : "s");
 	return g_fail ? 1 : 0;

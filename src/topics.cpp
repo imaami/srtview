@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstring>
 #include <utility>
 
 namespace topics {
@@ -430,6 +431,136 @@ std::size_t class_end(std::string_view b, std::size_t at)
 	return std::string_view::npos;
 }
 
+// Canonical key text of a class, or empty to keep it verbatim.
+// Membership is order-free once parsed, so the members land in a
+// bitmap (negation noted, ranges expanded, literal escapes decoded,
+// class-type escapes like \d kept as opaque set members) and are
+// re-emitted deterministically: ascending bytes, runs of three or
+// more as ranges, the metacharacters \ ] ^ - always escaped so no
+// position rule survives into the key.  Under ci the letter bits
+// fold to lowercase.  Beyond-the-rules content bails to verbatim,
+// which is always sound: non-ASCII (UTF-8 units, not bytes),
+// numeric escapes, \p and unknown letter escapes, inverted ranges.
+std::string canon_class(std::string_view cls, bool ci)
+{
+	bool const neg = !cls.empty() && cls[0] == '^';
+	if (cls.size() <= neg)
+		return {};
+	bool map[256] = {};
+	std::vector<std::string> opaque;
+	int prev = -1;   /* pending single member */
+	bool dash = false;
+	auto flush = [&] {
+		if (prev >= 0)
+			map[prev] = true;
+		prev = -1;
+	};
+	for (std::size_t i = neg; i < cls.size();) {
+		unsigned char const c = cls[i];
+		if (c >= 0x80)
+			return {};
+		if (c == '-' && !dash && prev >= 0 &&
+		    i + 1 < cls.size()) {
+			dash = true;
+			++i;
+			continue;
+		}
+		int one = -1;
+		if (c == '[' && i + 1 < cls.size() && cls[i + 1] == ':') {
+			std::size_t const e = cls.find(":]", i + 2);
+			if (e == std::string_view::npos || dash)
+				return {};
+			flush();
+			opaque.emplace_back(cls.substr(i, e + 2 - i));
+			i = e + 2;
+			continue;
+		}
+		if (c == '\\') {
+			if (i + 1 >= cls.size())
+				return {};
+			unsigned char const e = cls[i + 1];
+			if (std::isalnum(e)) {
+				int byte = 0;
+				switch (e) {
+				case 'a': byte = 7;  break;
+				case 'b': byte = 8;  break;
+				case 't': byte = 9;  break;
+				case 'n': byte = 10; break;
+				case 'f': byte = 12; break;
+				case 'r': byte = 13; break;
+				case 'e': byte = 27; break;
+				}
+				if (!byte) {
+					if (dash ||
+					    !std::strchr("dDsSwWhHvV",
+					                 e))
+						return {};
+					flush();
+					opaque.push_back({'\\',
+					                  char(e)});
+					i += 2;
+					continue;
+				}
+				one = byte;
+			} else {
+				one = e;
+			}
+			i += 2;
+		} else {
+			one = c;
+			++i;
+		}
+		if (dash) {
+			if (prev < 0 || one < prev)
+				return {};
+			for (int b = prev; b <= one; ++b)
+				map[b] = true;
+			prev = -1;
+			dash = false;
+		} else {
+			flush();
+			prev = one;
+		}
+	}
+	flush();
+	if (ci)
+		for (int c = 'A'; c <= 'Z'; ++c)
+			if (map[c]) {
+				map[c] = false;
+				map[c + 32] = true;
+			}
+	std::ranges::sort(opaque);
+	auto const dup = std::ranges::unique(opaque);
+	opaque.erase(dup.begin(), dup.end());
+	std::string out = neg ? "[^" : "[";
+	auto emit = [&](int b) {
+		if (b == '\\' || b == ']' || b == '^' || b == '-')
+			out += '\\';
+		out += char(b);
+	};
+	for (int b = 0; b < 256;) {
+		if (!map[b]) {
+			++b;
+			continue;
+		}
+		int run = b;
+		while (run + 1 < 256 && map[run + 1])
+			++run;
+		if (run - b >= 2) {
+			emit(b);
+			out += '-';
+			emit(run);
+		} else
+			for (int m = b; m <= run; ++m)
+				emit(m);
+		b = run + 1;
+	}
+	for (std::string const &o : opaque)
+		out += o;
+	out += ']';
+	return out;
+}
+
 // [Xx]: exactly the upper and lower of one ASCII letter -- the house
 // idiom that marks deliberate case coverage.
 bool case_idiom(std::string_view cls, char &low)
@@ -482,9 +613,14 @@ std::string branch_key(std::string_view b, bool ci)
 				out.append(b.substr(i));
 				break;
 			}
+			std::string_view const cls =
+				b.substr(i + 1, end - i - 1);
 			char low;
-			if (case_idiom(b.substr(i + 1, end - i - 1), low))
+			if (case_idiom(cls, low))
 				out += low;
+			else if (std::string canon = canon_class(cls, ci);
+			         !canon.empty())
+				out += canon;
 			else
 				out.append(b.substr(i, end - i + 1));
 			i = end + 1;
