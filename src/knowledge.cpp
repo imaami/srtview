@@ -65,6 +65,7 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 		QStringLiteral("no artifact cached yet"));
 	m_tabs.addTab(&m_hits, QStringLiteral("Evidence"));
 	m_tabs.addTab(&m_preview, QStringLiteral("Prose"));
+	m_tabs.addTab(&m_gloss, QStringLiteral("Gloss"));
 	split->addWidget(&m_tree);
 	split->addWidget(&m_tabs);
 	split->setStretchFactor(0, 3);
@@ -149,6 +150,19 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits)
 		m_tabs.setCurrentWidget(&m_hits);
 	else if (!m_preview.toPlainText().isEmpty())
 		m_tabs.setCurrentWidget(&m_preview);
+}
+
+void KnowledgePane::setGloss(QString const &text, bool editable)
+{
+	m_gloss.setPlainText(text);
+	m_gloss.setReadOnly(!editable);
+	m_gloss.setPlaceholderText(editable
+		? QStringLiteral("no gloss yet — write one (one line "
+		                 "per point; saved beside the topic "
+		                 "file on leaving the entry)")
+		: QStringLiteral("glosses live beside the topic file "
+		                 "— none is loaded"));
+	m_gloss.document()->setModified(false);
 }
 
 void KnowledgePane::summon()

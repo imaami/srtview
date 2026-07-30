@@ -64,6 +64,13 @@ public:
 	// transcripts); the pane presents them.
 	void setEvidence(QVector<KnowledgeHit> hits);
 
+	// The selected topic's definition text.  Editable only when
+	// the owner says so (a topic row with a durable home to write
+	// to); the owner reads the edit back through glossEdit() and
+	// its modified flag.
+	void setGloss(QString const &text, bool editable);
+	QPlainTextEdit &glossEdit() { return m_gloss; }
+
 	// Activation surfaces for the owner: Enter / double-click.
 	// Payload rides in item data (roles below).
 	QTreeWidget &tree() { return m_tree; }
@@ -89,6 +96,7 @@ private:
 	QTabWidget              m_tabs;
 	QTreeWidget             m_hits;
 	QPlainTextEdit          m_preview;
+	QPlainTextEdit          m_gloss;
 	QVector<KnowledgeRow>   m_rows;
 };
 

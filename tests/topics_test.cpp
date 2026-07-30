@@ -388,6 +388,28 @@ void testClassCanon()
 	      "POSIX classes stay verbatim, never member debris");
 }
 
+void testGloss()
+{
+	auto g = topics::parse_gloss(
+		"# notes\n"
+		"stray junk\n"
+		"  - orphan child before any head\n"
+		"- etcd\n"
+		"  - The config store the cluster rides on.\n"
+		"  - Whisper mangles it as et cd / etsy-d.\n"
+		"\n"
+		"- \n"
+		"- quorum\n");
+	check(g.size() == 2 && g[0].name == "etcd"
+	      && g[0].lines.size() == 2 && g[1].name == "quorum"
+	      && g[1].lines.empty(),
+	      "tolerant parse: junk, comments, orphans, empty heads");
+	check(topics::parse_gloss(topics::write_gloss(g)) == g,
+	      "gloss round-trips through canonical write");
+	check(topics::write_gloss({{"", {"dropped"}}}).empty(),
+	      "nameless entries never write");
+}
+
 } // namespace
 
 int main()
@@ -404,6 +426,7 @@ int main()
 	testAdoptNovel();
 	testTidy();
 	testClassCanon();
+	testGloss();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
 	            g_fail, g_fail == 1 ? "" : "s");
 	return g_fail ? 1 : 0;

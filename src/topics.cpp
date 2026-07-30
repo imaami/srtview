@@ -915,6 +915,44 @@ std::string tidy(std::string const &pattern)
 	return ci ? "(?i:" + body + ")" : body;
 }
 
+std::vector<gloss_entry> parse_gloss(std::string_view text)
+{
+	std::vector<gloss_entry> out;
+	for (std::size_t at = 0; at <= text.size();) {
+		std::size_t nl = text.find('\n', at);
+		if (nl == std::string_view::npos)
+			nl = text.size();
+		std::string_view const line = text.substr(at, nl - at);
+		at = nl + 1;
+		std::string_view const s = strip(line);
+		if (s.empty() || s.front() == '#' || !s.starts_with("- "))
+			continue;
+		std::string_view const body = strip(s.substr(2));
+		if (line.front() == '-') {
+			if (!body.empty())
+				out.push_back({std::string(body), {}});
+		} else if (!out.empty()) {
+			out.back().lines.push_back(std::string(body));
+		}
+	}
+	return out;
+}
+
+std::string write_gloss(std::vector<gloss_entry> const &g)
+{
+	std::string out;
+	for (gloss_entry const &e : g) {
+		if (e.name.empty())
+			continue;
+		if (!out.empty())
+			out += '\n';
+		out += "- " + e.name + '\n';
+		for (std::string const &l : e.lines)
+			out += "  - " + l + '\n';
+	}
+	return out;
+}
+
 std::string write(doc const &d)
 {
 	std::string out;

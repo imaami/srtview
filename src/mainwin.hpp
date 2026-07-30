@@ -157,6 +157,10 @@ private:
 	void harvestOne(QString const &file);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
+	QString glossPath() const;
+	void loadGloss();
+	void commitGloss();
+	void showGloss(QTreeWidgetItem const *item);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();
@@ -213,6 +217,8 @@ private:
 	std::vector<PendingFocus>       m_focusWork; // probe chains
 	std::set<std::string>           m_generated; // harvested regexes
 	std::set<std::string>           m_harvested; // focus files seen
+	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
+	QString                         m_glossName; // entry being edited
 	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for

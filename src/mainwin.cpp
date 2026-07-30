@@ -18,6 +18,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QSaveFile>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
@@ -605,6 +606,7 @@ void MainWin::rebuildCorpus(bool fresh)
 	harvestFocus();
 	queueDives(fresh);
 	updateInfo();
+	loadGloss();
 	refreshKnowledge();
 }
 
@@ -1144,12 +1146,97 @@ void MainWin::refreshKnowledge()
 	m_know.setRows(std::move(rows));
 }
 
+// The gloss sidecar sits beside the corpus file; an implicit corpus
+// has no durable home, so editing waits for one.
+QString MainWin::glossPath() const
+{
+	if (m_corpusPath.isEmpty())
+		return {};
+	QFileInfo const fi(m_corpusPath);
+	return fi.absolutePath() + QLatin1Char('/')
+	     + fi.completeBaseName() + QStringLiteral(".gloss");
+}
+
+void MainWin::loadGloss()
+{
+	m_gloss.clear();
+	m_glossName.clear();
+	QFile f(glossPath());
+	if (!glossPath().isEmpty() && f.open(QIODevice::ReadOnly))
+		m_gloss = topics::parse_gloss(
+			f.readAll().toStdString());
+}
+
+// Persist the entry being edited, if it changed: the file is the
+// human's -- whole-list canonical rewrite, entries preserved even
+// when their name is not currently a topic.
+void MainWin::commitGloss()
+{
+	if (m_glossName.isEmpty()
+	    || !m_know.glossEdit().document()->isModified())
+		return;
+	std::vector<std::string> lines;
+	for (QString const &l : m_know.glossEdit().toPlainText()
+	                        .split(QLatin1Char('\n')))
+		if (QString const t = l.trimmed(); !t.isEmpty())
+			lines.push_back(t.toStdString());
+	std::string const name = m_glossName.toStdString();
+	auto const at = std::ranges::find_if(m_gloss,
+		[&name](topics::gloss_entry const &e) {
+			return e.name == name;
+		});
+	if (at != m_gloss.end()) {
+		if (lines.empty())
+			m_gloss.erase(at);
+		else
+			at->lines = std::move(lines);
+	} else if (!lines.empty()) {
+		m_gloss.push_back({name, std::move(lines)});
+	}
+	QSaveFile out(glossPath());
+	if (out.open(QIODevice::WriteOnly)) {
+		std::string const text = topics::write_gloss(m_gloss);
+		out.write(text.data(), qint64(text.size()));
+		out.commit();
+	}
+	m_know.glossEdit().document()->setModified(false);
+}
+
+// Load the selected topic's gloss into the pane, committing the
+// previous entry first.  Only topic rows carry glosses; a durable
+// home requires a corpus file.
+void MainWin::showGloss(QTreeWidgetItem const *item)
+{
+	commitGloss();
+	QString name;
+	if (item && item->parent()
+	    && item->parent()->text(0) == QStringLiteral("Topics"))
+		name = item->text(0);
+	bool const editable = !name.isEmpty()
+	                   && !glossPath().isEmpty();
+	m_glossName = editable ? name : QString();
+	QString text;
+	std::string const key = name.toStdString();
+	for (topics::gloss_entry const &e : m_gloss) {
+		if (e.name != key)
+			continue;
+		for (std::string const &l : e.lines) {
+			if (!text.isEmpty())
+				text += QLatin1Char('\n');
+			text += QString::fromStdString(l);
+		}
+		break;
+	}
+	m_know.setGloss(text, editable);
+}
+
 // Occurrences of the selected pattern, computed over the shared
 // transcript cache exactly like the tally: the scan reads every cue
 // of every video, so the index is never truncated.  The per-video
 // display cap trims presentation only.
 void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 {
+	showGloss(item);
 	QVector<KnowledgeHit> hits;
 	QString const pat = item
 		? item->data(0, KnowledgePane::kPattern).toString()
@@ -1778,6 +1865,7 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
+	commitGloss();
 	m_grab.shutdown();
 	m_link.shutdown();
 	ev->accept();
