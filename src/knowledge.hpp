@@ -37,6 +37,9 @@ struct KnowledgeRow {
 	QString srt;
 	QString badge;    // "generated", "supportive", "pending", ...
 	QString gloss;    // first line, shown inline in the directory
+	QString name;     // corpus name behind a retitled row ("term3")
+
+	bool operator==(KnowledgeRow const &) const = default;
 };
 
 // One occurrence of the selected pattern: an exact cue in an exact
@@ -56,7 +59,11 @@ public:
 
 	// Replaces the whole model; selection is kept when the same
 	// title still exists in the same group.  Cheap at session
-	// scale (dozens of rows), so refresh is rebuild.
+	// scale (dozens of rows), so refresh is rebuild -- except an
+	// unchanged model, which is a no-op: the owner refreshes on a
+	// timer, and a gratuitous rebuild would re-emit the selection
+	// (rescanning transcripts) and disturb an in-progress gloss
+	// edit.
 	void setRows(QVector<KnowledgeRow> rows);
 
 	// The selected row's occurrences, grouped per video; a
@@ -88,6 +95,7 @@ public:
 		kVideo,
 		kSrt,
 		kCue,
+		kName,
 	};
 
 private:

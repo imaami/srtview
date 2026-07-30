@@ -917,13 +917,11 @@ std::string tidy(std::string const &pattern)
 
 std::vector<gloss_entry> parse_gloss(std::string_view text)
 {
+	if (text.starts_with(kBom))
+		text.remove_prefix(kBom.size());
 	std::vector<gloss_entry> out;
-	for (std::size_t at = 0; at <= text.size();) {
-		std::size_t nl = text.find('\n', at);
-		if (nl == std::string_view::npos)
-			nl = text.size();
-		std::string_view const line = text.substr(at, nl - at);
-		at = nl + 1;
+	cursor cur{text, 0};
+	for (std::string_view line; cur.next(line);) {
 		std::string_view const s = strip(line);
 		if (s.empty() || s.front() == '#' || !s.starts_with("- "))
 			continue;

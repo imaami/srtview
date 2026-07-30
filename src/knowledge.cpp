@@ -82,12 +82,23 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	        this, [this] { applyFilter(); });
 	connect(&m_filter, &QLineEdit::returnPressed, this, [this] {
 		m_tree.setFocus();
-		if (!m_tree.currentItem()
-		    && m_tree.topLevelItemCount())
-			m_tree.setCurrentItem(
-				m_tree.topLevelItem(0)->childCount()
-				? m_tree.topLevelItem(0)->child(0)
-				: m_tree.topLevelItem(0));
+		// A visible current row stands; otherwise land on the
+		// first row the filter left visible -- Enter must never
+		// activate what the filter just hid.
+		if (QTreeWidgetItem const *cur = m_tree.currentItem();
+		    cur && !cur->isHidden())
+			return;
+		for (int g = 0; g < m_tree.topLevelItemCount(); ++g) {
+			QTreeWidgetItem const *grp =
+				m_tree.topLevelItem(g);
+			for (int i = 0; i < grp->childCount(); ++i) {
+				QTreeWidgetItem *it = grp->child(i);
+				if (it->isHidden())
+					continue;
+				m_tree.setCurrentItem(it);
+				return;
+			}
+		}
 	});
 	connect(&m_tree, &QTreeWidget::currentItemChanged,
 	        this, [this](QTreeWidgetItem *cur, QTreeWidgetItem *) {
@@ -97,6 +108,8 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 
 void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 {
+	if (rows == m_rows)
+		return;
 	QString keepGroup, keepTitle;
 	if (QTreeWidgetItem const *cur = m_tree.currentItem();
 	    cur && cur->parent()) {
@@ -114,6 +127,7 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 		it->setData(0, kPath, r.path);
 		it->setData(0, kVideo, r.video);
 		it->setData(0, kSrt, r.srt);
+		it->setData(0, kName, r.name);
 		it->setToolTip(0, r.pattern.isEmpty() ? r.title
 		                                      : r.pattern);
 		if (!r.gloss.isEmpty())

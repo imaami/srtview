@@ -242,6 +242,7 @@ private:
 	std::set<std::string>           m_harvested; // focus files seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
 	QString                         m_glossName; // entry being edited
+	QString                         m_glossTopic;// its corpus name
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
 	std::set<std::string>           m_termTopics;// index-only patterns

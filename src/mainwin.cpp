@@ -382,7 +382,7 @@ MainWin::MainWin()
 			return;
 		m_know.glossEdit().document()->setModified(true);
 		commitGloss();
-		if (auto const at = m_termInfo.find(m_glossName);
+		if (auto const at = m_termInfo.find(m_glossTopic);
 		    at != m_termInfo.end())
 			at->gloss.clear();
 		refreshKnowledge();
@@ -391,7 +391,7 @@ MainWin::MainWin()
 		QKeySequence(QStringLiteral("Ctrl+Backspace")), &m_know);
 	gd->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(gd, &QShortcut::activated, this, [this] {
-		auto const at = m_termInfo.find(m_glossName);
+		auto const at = m_termInfo.find(m_glossTopic);
 		if (m_glossName.isEmpty() || at == m_termInfo.end()
 		    || at->gloss.isEmpty())
 			return;
@@ -1181,7 +1181,7 @@ void MainWin::refreshKnowledge()
 		                     QString::fromStdString(pat),
 		                     cached ? path : QString(),
 		                     {}, {}, badge,
-		                     gloss.left(120)});
+		                     gloss.left(120), name});
 	}
 	// Alphabetical within the directory; other groups keep their
 	// natural orders (files, playlist).
@@ -1216,7 +1216,7 @@ void MainWin::refreshKnowledge()
 		rows.push_back({QStringLiteral("Focuses"),
 		                QString::fromStdString(pat),
 		                QString::fromStdString(pat),
-		                path, {}, {}, {}, {}});
+		                path, {}, {}, {}, {}, {}});
 	}
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
@@ -1238,7 +1238,7 @@ void MainWin::refreshKnowledge()
 		                it.video, it.srt,
 		                cached ? QString()
 		                       : QStringLiteral("pending"),
-		                {}});
+		                {}, {}});
 	}
 	m_know.setRows(std::move(rows));
 }
@@ -1443,6 +1443,7 @@ void MainWin::loadGloss()
 {
 	m_gloss.clear();
 	m_glossName.clear();
+	m_glossTopic.clear();
 	QFile f(glossPath());
 	if (!glossPath().isEmpty() && f.open(QIODevice::ReadOnly))
 		m_gloss = topics::parse_gloss(
@@ -1476,10 +1477,18 @@ void MainWin::commitGloss()
 		m_gloss.push_back({name, std::move(lines)});
 	}
 	QSaveFile out(glossPath());
-	if (out.open(QIODevice::WriteOnly)) {
-		std::string const text = topics::write_gloss(m_gloss);
-		out.write(text.data(), qint64(text.size()));
-		out.commit();
+	std::string const text = topics::write_gloss(m_gloss);
+	bool const ok = out.open(QIODevice::WriteOnly)
+	             && out.write(text.data(), qint64(text.size()))
+	                == qint64(text.size())
+	             && out.commit();
+	if (!ok) {
+		// The human's words must not vanish quietly: the flag
+		// stays up so the buffer remains the retry source, and
+		// the status line says why.
+		setState(QStringLiteral("gloss save failed (%1)")
+		         .arg(out.errorString()));
+		return;
 	}
 	m_know.glossEdit().document()->setModified(false);
 }
@@ -1490,13 +1499,19 @@ void MainWin::commitGloss()
 void MainWin::showGloss(QTreeWidgetItem const *item)
 {
 	commitGloss();
-	QString name;
+	// Two keys per row: the display title keys the human sidecar
+	// ("- etcd", renumber-proof), the corpus name keys m_termInfo
+	// (a term topic's title is the term, never its termN name).
+	QString name, topic;
 	if (item && item->parent()
-	    && item->parent()->text(0) == QStringLiteral("Topics"))
+	    && item->parent()->text(0) == QStringLiteral("Topics")) {
 		name = item->text(0);
+		topic = item->data(0, KnowledgePane::kName).toString();
+	}
 	bool const editable = !name.isEmpty()
 	                   && !glossPath().isEmpty();
 	m_glossName = editable ? name : QString();
+	m_glossTopic = editable ? topic : QString();
 	QString text;
 	std::string const key = name.toStdString();
 	for (topics::gloss_entry const &e : m_gloss) {
@@ -1513,7 +1528,7 @@ void MainWin::showGloss(QTreeWidgetItem const *item)
 	// (Ctrl+Return copies it into the sidecar) or edits; the
 	// sidecar always wins once an entry exists.
 	if (text.isEmpty())
-		text = m_termInfo.value(name).gloss;
+		text = m_termInfo.value(topic).gloss;
 	m_know.setGloss(text, editable);
 }
 

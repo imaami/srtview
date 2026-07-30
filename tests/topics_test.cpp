@@ -408,6 +408,15 @@ void testGloss()
 	      "gloss round-trips through canonical write");
 	check(topics::write_gloss({{"", {"dropped"}}}).empty(),
 	      "nameless entries never write");
+	auto const lf = topics::parse_gloss("- a\n  - x\n- b\n");
+	check(lf.size() == 2
+	      && topics::parse_gloss(
+	         "\xEF\xBB\xBF- a\n  - x\n- b\n") == lf,
+	      "a BOM never hides the first entry");
+	check(topics::parse_gloss("- a\r\n  - x\r\n- b\r\n") == lf,
+	      "CRLF sidecars parse like LF");
+	check(topics::parse_gloss("- a\r  - x\r- b") == lf,
+	      "bare-CR sidecars parse like LF");
 }
 
 } // namespace
