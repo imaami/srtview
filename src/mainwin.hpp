@@ -91,6 +91,16 @@ private:
 		std::string             parts;    // raw matched lines
 	};
 
+	// One staged terms window: a cue range of one transcript whose
+	// extraction the harvest maps back onto its video.  Windows
+	// re-derive deterministically each session, so records exist
+	// for cached replies too.
+	struct TermsWork {
+		agenda::id id;
+		QString    video, srt;
+		int        first = 0, last = 0;
+	};
+
 	// A dive pair awaiting its interactive focus: the probe asks
 	// what to search, the app runs the search, the write turns the
 	// evidence into prose.  The probe's ask carries a TRANSCRIPT
@@ -155,6 +165,9 @@ private:
 	std::size_t focusWorkOf(agenda::id id) const;
 	void harvestFocus();
 	void harvestOne(QString const &file);
+	void queueTerms(bool fresh);
+	void harvestTerms();
+	bool harvestTermsOne(TermsWork const &w);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	QString glossPath() const;
@@ -219,6 +232,10 @@ private:
 	std::set<std::string>           m_harvested; // focus files seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
 	QString                         m_glossName; // entry being edited
+	std::vector<TermsWork>          m_termsWork; // staged windows
+	std::set<std::string>           m_termsSeen; // harvested ids
+	std::set<std::string>           m_termTopics;// index-only patterns
+	QHash<QString, QString>         m_proposedGloss; // name -> text
 	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for

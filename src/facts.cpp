@@ -130,18 +130,43 @@ constexpr char kProbePrompt[] =
 	"regular expression, case-insensitive via (?i:...) where "
 	"sensible, no delimiters or flags outside the pattern.";
 
-// System prompt per task kind (leaf, node, dive, focus, probe).
-// The views wrap NUL-terminated literals, so .data() satisfies the
-// C API below.
+constexpr char kTermsPrompt[] =
+	"The user message is a numbered excerpt from the machine-"
+	"transcribed subtitles of one video: lines of the form "
+	"#N [H:MM:SS] text. Identify the terms worth an index entry: "
+	"systems, components, protocols, tools, acronyms, project and "
+	"product names. Skip ordinary words. For each, most important "
+	"first, at most twelve, emit one block of lines:\n"
+	"TERM: the likely correct spelling\n"
+	"KIND: one of term, acronym, system, component, person, other\n"
+	"MEANS: the expansion, only for an acronym the excerpt itself "
+	"explains\n"
+	"SEEN: every spelling observed in the excerpt, verbatim, "
+	"separated by |\n"
+	"GLOSS: one sentence saying what it is, drawn from the excerpt "
+	"only\n"
+	"CUES: the #numbers of the lines it appears on, space "
+	"separated\n"
+	"Blocks are separated by one blank line. The subtitles are "
+	"machine transcriptions of speech: one spoken term may appear "
+	"under several mangled spellings -- list every observed form "
+	"in SEEN and put the intended form in TERM. Only terms the "
+	"excerpt actually contains; only cue numbers that appear "
+	"above. If nothing qualifies, reply with the single word "
+	"NONE. No other text.";
+
+// System prompt per task kind (leaf, node, dive, focus, probe,
+// terms).  The views wrap NUL-terminated literals, so .data()
+// satisfies the C API below.
 constexpr std::string_view kPromptOf[] = {
 	kLeafPrompt, kNodePrompt, kDivePrompt, kFocusPrompt,
-	kProbePrompt,
+	kProbePrompt, kTermsPrompt,
 };
 
 // Cache subdirectory per task kind: leaves and nodes share the
 // flat root so any dependency reads at facts/<id>.txt.
 constexpr std::string_view kSubdir[] = {
-	"/", "/", "/dives/", "/focus/", "/probe/",
+	"/", "/", "/dives/", "/focus/", "/probe/", "/terms/",
 };
 
 // Connect refusals in a row before the pipeline parks itself for
@@ -149,7 +174,7 @@ constexpr std::string_view kSubdir[] = {
 constexpr int kRefusalCap = 3;
 
 constexpr char const *kKindName[] = {"leaf", "node", "dive",
-                                     "focus", "probe"};
+                                     "focus", "probe", "terms"};
 
 // The path a reply belongs to travels as the task's user data,
 // heap-owned: exactly one callback per accepted task makes adoption
@@ -168,7 +193,7 @@ struct reply_ctx {
 // prose and the pattern both, and human readers get the same favor.
 // Kinds with an empty prefix carry no head.
 constexpr std::string_view kHeadPfx[] = {
-	"", "", "PATTERN ", "REGEX: ", "",
+	"", "", "PATTERN ", "REGEX: ", "", "",
 };
 
 std::string head_of(agenda::task const &t)
@@ -342,6 +367,8 @@ Facts::Facts()
 		std::filesystem::create_directories(m_dir + "/focus", ec);
 	if (!ec)
 		std::filesystem::create_directories(m_dir + "/probe", ec);
+	if (!ec)
+		std::filesystem::create_directories(m_dir + "/terms", ec);
 	if (!ec) {
 		endpoint const ep = serverEnv();
 		m_llm = llm_create(ep.host.empty() ? nullptr
@@ -527,6 +554,13 @@ void Facts::advance()
 			return;
 		agenda::task const *t = m_plan.get(next);
 		if (!t || !submit(*t)) {
+			// A submission that dies here parks silently for
+			// the session; that must at least be on the
+			// record when anyone is watching.
+			if (debug())
+				std::fprintf(stderr, "srtview: facts: "
+				             "park %s at submit\n",
+				             next.hex().c_str());
 			m_plan.fail(next);
 			continue;
 		}
@@ -588,6 +622,11 @@ std::string Facts::assemble(agenda::task const &t)
 
 	case agenda::kind::probe:
 		return assemble_probe(t);
+
+	case agenda::kind::terms:
+		// A numbered window snapshot, leaf-like: the caller
+		// built the excerpt, nothing to layer.
+		return spend_body(t.id);
 	}
 
 	return {};

@@ -142,6 +142,30 @@ constexpr std::size_t kProbeSample = std::size_t{16} * 1024;
 // only; scans and counts always cover everything.
 constexpr int kEvidenceCap = 500;
 
+// One terms window's worth of numbered transcript, in bytes: cue
+// boundaries always, roughly a quarter of the llm clip so prompt
+// and reply breathe.
+constexpr qsizetype kTermsWindow = qsizetype{10} * 1024;
+
+// Terms-window identity covers the subtitle's discovery id, the
+// cue range and the window text itself -- content-honest, so a
+// retranscribed subtitle plans fresh windows instead of silently
+// reusing stale replies.
+agenda::id termsId(QString const &srtId, int first, int last,
+                   QByteArray const &text)
+{
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView("terms\n"));
+	h.addData(srtId.toUtf8());
+	h.addData(QByteArrayView("\n"));
+	h.addData(QByteArray::number(first));
+	h.addData(QByteArrayView("-"));
+	h.addData(QByteArray::number(last));
+	h.addData(QByteArrayView("\n"));
+	h.addData(text);
+	return takeId(h);
+}
+
 // The head of an excerpt block, cut at a line boundary; excerpt
 // lines are newline-terminated, so a no-fit only happens when the
 // first line alone overflows the slice.
@@ -347,6 +371,31 @@ MainWin::MainWin()
 		m_view.showCue(cue);
 		m_playback.seekCue(cue, false);
 	});
+	// Gloss proposals: Ctrl+Return accepts the shown text into the
+	// sidecar verbatim -- the copy that makes it human-owned --
+	// and Ctrl+Backspace discards the proposal for this session.
+	auto *ga = new QShortcut(
+		QKeySequence(QStringLiteral("Ctrl+Return")), &m_know);
+	ga->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(ga, &QShortcut::activated, this, [this] {
+		if (m_glossName.isEmpty())
+			return;
+		m_know.glossEdit().document()->setModified(true);
+		commitGloss();
+		m_proposedGloss.remove(m_glossName);
+		refreshKnowledge();
+	});
+	auto *gd = new QShortcut(
+		QKeySequence(QStringLiteral("Ctrl+Backspace")), &m_know);
+	gd->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(gd, &QShortcut::activated, this, [this] {
+		if (m_glossName.isEmpty()
+		    || !m_proposedGloss.remove(m_glossName))
+			return;
+		m_know.glossEdit().document()->setModified(false);
+		showGloss(m_know.tree().currentItem());
+		refreshKnowledge();
+	});
 
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
@@ -385,6 +434,7 @@ MainWin::MainWin()
 	m_focusTick.setInterval(10000);
 	connect(&m_focusTick, &QTimer::timeout, this, [this] {
 		pumpProbes();
+		harvestTerms();
 		harvestFocus();
 		refreshKnowledge();
 	});
@@ -603,6 +653,13 @@ void MainWin::rebuildCorpus(bool fresh)
 	m_facts.corpus(std::move(nodes));
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
+	// Terms before focus, here and on the tick: in-session the
+	// terms band completes first, so focus regexes always adopt
+	// against a corpus that already holds the term subtractions --
+	// replaying that order over a warm cache reproduces the same
+	// topics, the same dive ids, and zero asks.
+	queueTerms(fresh);
+	harvestTerms();
 	harvestFocus();
 	queueDives(fresh);
 	updateInfo();
@@ -669,6 +726,11 @@ void MainWin::queueDives(bool fresh)
 	}
 	for (topics::export_item const &e :
 	     topics::export_plan(m_corpus)) {
+		// Term topics are index entries: occurrences scan live
+		// in the pane, and a dive per term would flood the
+		// queue with prose nobody asked for.
+		if (m_termTopics.contains(e.pattern))
+			continue;
 		bool const gen = m_generated.contains(e.pattern);
 		stageDive(e.pattern, !gen, gen);
 	}
@@ -1085,6 +1147,11 @@ void MainWin::refreshKnowledge()
 			: comp.contains(t.name)
 			  ? QStringLiteral("supportive")
 			  : QString();
+		if (m_proposedGloss.contains(
+				QString::fromStdString(t.name)))
+			badge += badge.isEmpty()
+				? QStringLiteral("proposed")
+				: QStringLiteral(" · proposed");
 		if (!cached)
 			badge += badge.isEmpty()
 				? QStringLiteral("pending")
@@ -1144,6 +1211,188 @@ void MainWin::refreshKnowledge()
 		                       : QStringLiteral("pending")});
 	}
 	m_know.setRows(std::move(rows));
+}
+
+// Stage the terms windows: cue-boundary slices of each transcript,
+// numbered with absolute cue indices and timestamps.  Offers dedupe
+// against the plan and the cache; records re-derive every session
+// so cached replies stay mappable to their cue ranges.
+void MainWin::queueTerms(bool fresh)
+{
+	if (fresh) {
+		m_termsWork.clear();
+		m_termsSeen.clear();
+		m_termTopics.clear();
+	}
+	for (PlayItem const &it : m_playlist) {
+		QString const srt = srtOf(it);
+		if (srt.isEmpty())
+			continue;
+		QString const sid = QString::fromStdString(
+			m_disc.id_for_video(srt.toStdString()));
+		if (sid.isEmpty())
+			continue;
+		exporter::transcript const &tx =
+			exporter::load(m_transcripts, srt);
+		dbgHop(QStringLiteral("terms: window %1 sid=%2 lines=%3")
+		       .arg(srt, sid).arg(tx.lines.size()));
+		QByteArray text;
+		int first = 0;
+		auto const flush = [&](int last) {
+			if (text.isEmpty())
+				return;
+			agenda::id const id = termsId(sid, first, last,
+			                              text);
+			bool const known = std::ranges::any_of(
+				m_termsWork,
+				[&id](TermsWork const &w) {
+					return w.id == id;
+				});
+			if (!known) {
+				agenda::task t;
+				t.id = id;
+				t.keys = {agenda::id::from_hex(
+					sid.toStdString())};
+				t.note = QFileInfo(it.video).fileName()
+				         	.toStdString()
+				       + " #" + std::to_string(first)
+				       + "-" + std::to_string(last);
+				t.what = agenda::kind::terms;
+				t.exported = false;
+				m_facts.offer(std::move(t),
+				              text.toStdString());
+				m_termsWork.push_back({id, it.video, srt,
+				                       first, last});
+			}
+			text.clear();
+		};
+		for (qsizetype i = 0; i < tx.lines.size(); ++i) {
+			if (text.isEmpty())
+				first = int(i);
+			text += '#';
+			text += QByteArray::number(i);
+			text += " [";
+			text += fmtTime(tx.cues[std::size_t(i)].start,
+			                true).toUtf8();
+			text += "] ";
+			text += tx.lines[i].toUtf8();
+			text += '\n';
+			if (text.size() >= kTermsWindow)
+				flush(int(i));
+		}
+		flush(int(tx.lines.size()) - 1);
+	}
+}
+
+void MainWin::harvestTerms()
+{
+	for (TermsWork const &w : m_termsWork)
+		if (!m_termsSeen.contains(w.id.hex())
+		    && harvestTermsOne(w))
+			m_termsSeen.insert(w.id.hex());
+}
+
+// Parse, validate and adopt one terms reply.  The gate is
+// mechanical: every cited cue must lie inside the window and every
+// SEEN spelling must occur on a cited line -- an entry failing
+// either drops whole, never kept diluted.  Survivors' spellings
+// are escaped literals joined into a case-folded union (the model
+// never writes regex here), then pass the same tidy/subtract gate
+// as every machine pattern; the gloss waits as a proposal until a
+// human copies it into the sidecar.
+bool MainWin::harvestTermsOne(TermsWork const &w)
+{
+	QFile f(QString::fromStdString(m_facts.dir())
+	        + QStringLiteral("/terms/")
+	        + QString::fromStdString(w.id.hex())
+	        + QStringLiteral(".txt"));
+	if (!f.open(QIODevice::ReadOnly))
+		return false;
+	QString const text = QString::fromUtf8(f.readAll());
+	if (text.startsWith(QStringLiteral("NONE")))
+		return true;
+	exporter::transcript const &tx =
+		exporter::load(m_transcripts, w.srt);
+	auto const line = [&](int cue) -> QString const * {
+		return cue >= w.first && cue <= w.last
+		       && cue < int(tx.lines.size())
+		       ? &tx.lines[cue] : nullptr;
+	};
+	for (QString const &block :
+	     text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
+		QString term, gloss, means;
+		QStringList seen;
+		QList<int> cues;
+		for (QString const &l : block.split(QLatin1Char('\n'))) {
+			if (l.startsWith(QStringLiteral("TERM:")))
+				term = l.mid(5).trimmed();
+			else if (l.startsWith(QStringLiteral("MEANS:")))
+				means = l.mid(6).trimmed();
+			else if (l.startsWith(QStringLiteral("GLOSS:")))
+				gloss = l.mid(6).trimmed();
+			else if (l.startsWith(QStringLiteral("SEEN:"))) {
+				for (QString const &v : l.mid(5)
+				     .split(QLatin1Char('|')))
+					if (QString const t = v.trimmed();
+					    !t.isEmpty())
+						seen << t;
+			} else if (l.startsWith(QStringLiteral("CUES:"))) {
+				for (QString const &c : l.mid(5)
+				     .split(QLatin1Char(' '),
+				            Qt::SkipEmptyParts)) {
+					bool ok = false;
+					int const n = QStringView(c)
+						.sliced(c.startsWith(
+							QLatin1Char('#')))
+						.toInt(&ok);
+					if (ok)
+						cues << n;
+				}
+			}
+		}
+		if (term.isEmpty() || seen.isEmpty() || gloss.isEmpty()
+		    || cues.isEmpty())
+			continue;
+		if (!std::ranges::all_of(cues, [&](int c) {
+				return line(c) != nullptr;
+			}))
+			continue;
+		QStringList kept;
+		for (QString const &v : seen) {
+			bool const found = std::ranges::any_of(cues,
+				[&](int c) {
+					return line(c)->contains(v,
+						Qt::CaseInsensitive);
+				});
+			if (found)
+				kept << v;
+		}
+		if (kept.isEmpty())
+			continue;
+		QString pat = QStringLiteral("(?i:");
+		for (qsizetype i = 0; i < kept.size(); ++i) {
+			if (i)
+				pat += QLatin1Char('|');
+			pat += QRegularExpression::escape(kept[i]);
+		}
+		pat += QLatin1Char(')');
+		std::string const adopted = topics::adopt_novel(
+			m_corpus,
+			topics::tidy(pat.toStdString()), "term");
+		if (adopted.empty())
+			continue;
+		m_generated.insert(adopted);
+		m_termTopics.insert(adopted);
+		QString const name = QString::fromStdString(
+			m_corpus.topics.back().name);
+		m_proposedGloss.insert(name, means.isEmpty()
+			? gloss
+			: term + QStringLiteral(" = ") + means
+			  + QStringLiteral(". ") + gloss);
+		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
+		       .arg(name, QString::fromStdString(adopted)));
+	}
+	return true;
 }
 
 // The gloss sidecar sits beside the corpus file; an implicit corpus
@@ -1227,6 +1476,11 @@ void MainWin::showGloss(QTreeWidgetItem const *item)
 		}
 		break;
 	}
+	// A machine proposal fills the void only until a human accepts
+	// (Ctrl+Return copies it into the sidecar) or edits; the
+	// sidecar always wins once an entry exists.
+	if (text.isEmpty())
+		text = m_proposedGloss.value(name);
 	m_know.setGloss(text, editable);
 }
 

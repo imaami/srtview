@@ -150,6 +150,7 @@ static void test_order_bands()
 	p.add({.id = tid("p1"), .what = agenda::kind::probe});
 	p.add({.id = tid("f1"), .what = agenda::kind::focus});
 	p.add({.id = tid("d1"), .what = agenda::kind::dive});
+	p.add({.id = tid("t1"), .what = agenda::kind::terms});
 	p.add({.id = tid("n1"), .what = agenda::kind::node, .tier = 2});
 	p.add({.id = tid("n2"), .what = agenda::kind::node, .tier = 1});
 	p.add({.id = tid("l1"), .what = agenda::kind::leaf});
@@ -158,6 +159,8 @@ static void test_order_bands()
 	      "leaves before nodes, stable by insertion");
 	check(p.take() == tid("n2") && p.take() == tid("n1"),
 	      "lower tier first within a kind");
+	check(p.take() == tid("t1"),
+	      "terms between summaries and dives: the index backbone");
 	check(p.take() == tid("d1"), "dives after nodes");
 	check(p.take() == tid("f1"), "focuses after dives");
 	check(p.take() == tid("p1"),

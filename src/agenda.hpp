@@ -46,10 +46,14 @@ namespace agenda {
 // one search pattern's matched material; a *probe* reads two
 // finished dives and either refuses or hypothesizes a regex worth
 // searching; a *focus* writes the pair's common thread from the
-// evidence that search actually found.  The probe-search-write
-// chain is the executor's caller's to run: a probe's reply names a
-// search, not a dependency the scheduler could gate on.
-enum class kind : std::uint8_t { leaf, node, dive, focus, probe };
+// evidence that search actually found; a *terms* pass reads one
+// cue window of raw transcript and proposes index entries -- term,
+// observed spellings, gloss -- which the caller validates against
+// the window and adopts.  The probe-search-write chain and the
+// terms harvest are the executor's caller's to run.
+enum class kind : std::uint8_t {
+	leaf, node, dive, focus, probe, terms
+};
 
 // Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,
 // kept binary in memory -- hex materializes only at the filesystem
