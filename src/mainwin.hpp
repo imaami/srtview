@@ -10,6 +10,7 @@
 #include "exporter.hpp"
 #include "facts.hpp"
 #include "grabber.hpp"
+#include "knowledge.hpp"
 #include "mpvlink.hpp"
 #include "playback.hpp"
 #include "prefs.hpp"
@@ -154,6 +155,8 @@ private:
 	std::size_t focusWorkOf(agenda::id id) const;
 	void harvestFocus();
 	void harvestOne(QString const &file);
+	void refreshKnowledge();
+	void knowledgeSelected(QTreeWidgetItem const *item);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();
@@ -192,6 +195,7 @@ private:
 	QMenu                          *m_videosMenu = nullptr;
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;
 	SearchBar<SearchCtl>            m_bar;
+	KnowledgePane                   m_know;
 	MpvLink<PlaybackCtl>            m_link;
 	Grabber                         m_grab;
 	Facts                           m_facts;

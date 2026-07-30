@@ -41,6 +41,15 @@ public:
 	int currentCue() const { return textCursor().blockNumber(); }
 	int playCue() const { return m_playCue; }
 
+	// Move the text cursor to a cue (one cue per block); the same
+	// interior as a gutter click, callable by controllers.
+	void showCue(int cue)
+	{
+		if (cue >= 0 && cue < cueCount())
+			setTextCursor(QTextCursor(
+				document()->findBlockByNumber(cue)));
+	}
+
 	void setMatchSelections(QList<ExtraSelection> const &sel);
 	void setCurrentMatchSelection(QList<ExtraSelection> const &sel);
 

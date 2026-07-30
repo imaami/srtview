@@ -10,6 +10,7 @@ add_executable(srtview
 	decoder.cpp
 	exporter.cpp
 	fundo.c
+	knowledge.cpp
 	list.c
 	llm.c
 	loop.c

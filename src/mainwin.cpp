@@ -137,6 +137,10 @@ constexpr std::size_t kDiveBudget = std::size_t{48} * 1024;
 // enough and two sides fit beside the pair's prose.
 constexpr std::size_t kProbeSample = std::size_t{16} * 1024;
 
+// Evidence display cap per video in the knowledge pane -- display
+// only; scans and counts always cover everything.
+constexpr int kEvidenceCap = 500;
+
 // The head of an excerpt block, cut at a line boundary; excerpt
 // lines are newline-terminated, so a no-fit only happens when the
 // first line alone overflows the slice.
@@ -199,6 +203,7 @@ void dbgHop(QString const &msg)
 MainWin::MainWin()
 	: m_view(&m_playback, &m_search, this)
 	, m_bar(&m_search, &m_view)
+	, m_know(this)
 	, m_link(&m_playback)
 	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
 	             this)
@@ -289,6 +294,59 @@ MainWin::MainWin()
 	connect(m_videosMenu, &QMenu::aboutToShow,
 	        this, [this] { rebuildVideosMenu(); });
 
+	// The knowledge pane: hidden until summoned, then keyboard all
+	// the way -- Ctrl+K filters, Enter lands in the list, Enter
+	// again activates.  A topic or focus applies its exact pattern
+	// to the live search (tally and heat follow on their own); a
+	// video row switches playback.
+	addDockWidget(Qt::RightDockWidgetArea, &m_know);
+	m_know.hide();
+	auto *view = menuBar()->addMenu(QStringLiteral("Vie&w"));
+	QAction *ka = m_know.toggleViewAction();
+	ka->setText(QStringLiteral("&Knowledge\tCtrl+K"));
+	view->addAction(ka);
+	auto *ks = new QShortcut(QKeySequence(
+		QStringLiteral("Ctrl+K")), this);
+	ks->setContext(Qt::ApplicationShortcut);
+	connect(ks, &QShortcut::activated,
+	        this, [this] { m_know.summon(); });
+	connect(&m_know.tree(), &QTreeWidget::itemActivated, this,
+	        [this](QTreeWidgetItem *it, int) {
+		QString const pat =
+			it->data(0, KnowledgePane::kPattern).toString();
+		QString const video =
+			it->data(0, KnowledgePane::kVideo).toString();
+		if (!pat.isEmpty())
+			m_search.applyPattern(pat);
+		else if (!video.isEmpty())
+			openPath(video,
+			         it->data(0, KnowledgePane::kSrt)
+			           .toString());
+	});
+	connect(&m_know.tree(), &QTreeWidget::currentItemChanged, this,
+	        [this](QTreeWidgetItem *cur, QTreeWidgetItem *) {
+		knowledgeSelected(cur);
+	});
+	// An evidence line is an exact cue in an exact video: switch
+	// there if needed, park the cursor on the cue and seek -- the
+	// same trail-recorded jump a gutter click makes.
+	connect(&m_know.hits(), &QTreeWidget::itemActivated, this,
+	        [this](QTreeWidgetItem *it, int) {
+		QString const video =
+			it->data(0, KnowledgePane::kVideo).toString();
+		if (video.isEmpty())
+			return;
+		int const cue =
+			it->data(0, KnowledgePane::kCue).toInt();
+		if (videoId(video) != m_trail.videoId()
+		    && !openPath(video,
+		                 it->data(0, KnowledgePane::kSrt)
+		                   .toString()))
+			return;
+		m_view.showCue(cue);
+		m_playback.seekCue(cue, false);
+	});
+
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
 	                  this, [this] { m_search.showSearch(); });
@@ -324,8 +382,11 @@ MainWin::MainWin()
 	// and completed focuses fold their REGEX hypotheses back into
 	// the corpus as generated topics.
 	m_focusTick.setInterval(10000);
-	connect(&m_focusTick, &QTimer::timeout,
-	        this, [this] { pumpProbes(); harvestFocus(); });
+	connect(&m_focusTick, &QTimer::timeout, this, [this] {
+		pumpProbes();
+		harvestFocus();
+		refreshKnowledge();
+	});
 	m_focusTick.start();
 
 	repairMenuPalette(menuBar());
@@ -544,6 +605,7 @@ void MainWin::rebuildCorpus(bool fresh)
 	harvestFocus();
 	queueDives(fresh);
 	updateInfo();
+	refreshKnowledge();
 }
 
 // A video seen outside the playlist joins the corpus in memory: a
@@ -590,6 +652,7 @@ void MainWin::searchCommitted()
 	stageDive(pat, true, false);
 	if (m_diveAt < m_diveScans.size())
 		m_diveTick.start();
+	refreshKnowledge();
 }
 
 // Stage the corpus topic dives: one scan per exported grouping,
@@ -994,6 +1057,127 @@ void MainWin::harvestOne(QString const &file)
 		return;
 	m_generated.insert(kept);
 	stageDive(kept, false, true);
+}
+
+// The knowledge rows, rebuilt whole from where the state already
+// lives: the corpus (topics with their dive artifacts), the focus
+// cache (harvested threads), and the playlist (per-video
+// summaries).  Cheap at session scale, so refresh is rebuild;
+// called after corpus mutations and on the harvest tick.
+void MainWin::refreshKnowledge()
+{
+	QVector<KnowledgeRow> rows;
+	std::set<std::string> comp;
+	for (topics::topic const *t : topics::components(m_corpus))
+		comp.insert(t->name);
+	QString const dives = QString::fromStdString(m_facts.dir())
+	                    + QStringLiteral("/dives/");
+	for (topics::topic const &t : m_corpus.topics) {
+		std::string const pat = topics::expand(m_corpus, t);
+		QString const path = dives
+			+ QString::fromStdString(diveId(pat).hex())
+			+ QStringLiteral(".txt");
+		bool const cached = QFile::exists(path);
+		QString badge = m_generated.contains(pat)
+			? QStringLiteral("generated")
+			: comp.contains(t.name)
+			  ? QStringLiteral("supportive")
+			  : QString();
+		if (!cached)
+			badge += badge.isEmpty()
+				? QStringLiteral("pending")
+				: QStringLiteral(" · pending");
+		rows.push_back({QStringLiteral("Topics"),
+		                QString::fromStdString(t.name),
+		                QString::fromStdString(pat),
+		                cached ? path : QString(),
+		                {}, {}, badge});
+	}
+	QDir const fdir(QString::fromStdString(m_facts.dir())
+	                + QStringLiteral("/focus"));
+	for (QString const &name : fdir.entryList(
+	     {QStringLiteral("*.txt")}, QDir::Files)) {
+		QString const path = fdir.filePath(name);
+		QFile f(path);
+		if (!f.open(QIODevice::ReadOnly))
+			continue;
+		std::string const text = f.readAll().toStdString();
+		if (text.starts_with("NONE"))
+			continue;
+		std::string pat;
+		if (text.starts_with("REGEX:")) {
+			std::size_t nl = text.find('\n');
+			if (nl == std::string::npos)
+				nl = text.size();
+			pat = regexPayload(text, 6, nl);
+		} else {
+			pat = regexLine(text);
+		}
+		if (pat.empty())
+			continue;
+		rows.push_back({QStringLiteral("Focuses"),
+		                QString::fromStdString(pat),
+		                QString::fromStdString(pat),
+		                path, {}, {}, {}});
+	}
+	for (PlayItem const &it : m_playlist) {
+		QString const srt = srtOf(it);
+		QString path;
+		if (!srt.isEmpty()) {
+			QString const leaf = QString::fromStdString(
+				m_disc.id_for_video(srt.toStdString()));
+			if (!leaf.isEmpty())
+				path = QString::fromStdString(
+					m_facts.dir())
+				     + QLatin1Char('/') + leaf
+				     + QStringLiteral(".txt");
+		}
+		bool const cached = !path.isEmpty()
+		                 && QFile::exists(path);
+		rows.push_back({QStringLiteral("Videos"),
+		                QFileInfo(it.video).fileName(), {},
+		                cached ? path : QString(),
+		                it.video, it.srt,
+		                cached ? QString()
+		                       : QStringLiteral("pending")});
+	}
+	m_know.setRows(std::move(rows));
+}
+
+// Occurrences of the selected pattern, computed over the shared
+// transcript cache exactly like the tally: the scan reads every cue
+// of every video, so the index is never truncated.  The per-video
+// display cap trims presentation only.
+void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
+{
+	QVector<KnowledgeHit> hits;
+	QString const pat = item
+		? item->data(0, KnowledgePane::kPattern).toString()
+		: QString();
+	QRegularExpression const re(pat);
+	if (!pat.isEmpty() && re.isValid()) {
+		for (PlayItem const &it : m_playlist) {
+			QString const srt = srtOf(it);
+			if (srt.isEmpty())
+				continue;
+			exporter::transcript const &tx =
+				exporter::load(m_transcripts, srt);
+			int kept = 0;
+			for (qsizetype i = 0;
+			     i < tx.lines.size() && kept < kEvidenceCap;
+			     ++i) {
+				if (!re.match(tx.lines[i]).hasMatch())
+					continue;
+				hits.push_back({it.video, srt,
+				                tx.lines[i],
+				                tx.cues[std::size_t(i)]
+				                	.start,
+				                int(i)});
+				++kept;
+			}
+		}
+	}
+	m_know.setEvidence(std::move(hits));
 }
 
 // A topic file: the corpus source of videos and composable regexes
