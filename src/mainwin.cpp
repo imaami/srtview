@@ -382,16 +382,20 @@ MainWin::MainWin()
 			return;
 		m_know.glossEdit().document()->setModified(true);
 		commitGloss();
-		m_proposedGloss.remove(m_glossName);
+		if (auto const at = m_termInfo.find(m_glossName);
+		    at != m_termInfo.end())
+			at->gloss.clear();
 		refreshKnowledge();
 	});
 	auto *gd = new QShortcut(
 		QKeySequence(QStringLiteral("Ctrl+Backspace")), &m_know);
 	gd->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(gd, &QShortcut::activated, this, [this] {
-		if (m_glossName.isEmpty()
-		    || !m_proposedGloss.remove(m_glossName))
+		auto const at = m_termInfo.find(m_glossName);
+		if (m_glossName.isEmpty() || at == m_termInfo.end()
+		    || at->gloss.isEmpty())
 			return;
+		at->gloss.clear();
 		m_know.glossEdit().document()->setModified(false);
 		showGloss(m_know.tree().currentItem());
 		refreshKnowledge();
@@ -1136,32 +1140,57 @@ void MainWin::refreshKnowledge()
 		comp.insert(t->name);
 	QString const dives = QString::fromStdString(m_facts.dir())
 	                    + QStringLiteral("/dives/");
+	QVector<KnowledgeRow> directory;
 	for (topics::topic const &t : m_corpus.topics) {
 		std::string const pat = topics::expand(m_corpus, t);
 		QString const path = dives
 			+ QString::fromStdString(diveId(pat).hex())
 			+ QStringLiteral(".txt");
 		bool const cached = QFile::exists(path);
-		QString badge = m_generated.contains(pat)
-			? QStringLiteral("generated")
-			: comp.contains(t.name)
-			  ? QStringLiteral("supportive")
-			  : QString();
-		if (m_proposedGloss.contains(
-				QString::fromStdString(t.name)))
+		QString const name = QString::fromStdString(t.name);
+		TermInfo const info = m_termInfo.value(name);
+		QString badge = info.kind;
+		auto const mark = [&badge](QString const &m) {
 			badge += badge.isEmpty()
-				? QStringLiteral("proposed")
-				: QStringLiteral(" · proposed");
-		if (!cached)
-			badge += badge.isEmpty()
-				? QStringLiteral("pending")
-				: QStringLiteral(" · pending");
-		rows.push_back({QStringLiteral("Topics"),
-		                QString::fromStdString(t.name),
-		                QString::fromStdString(pat),
-		                cached ? path : QString(),
-		                {}, {}, badge});
+				? m : QStringLiteral(" · ") + m;
+		};
+		if (m_generated.contains(pat))
+			mark(QStringLiteral("generated"));
+		else if (comp.contains(t.name))
+			mark(QStringLiteral("supportive"));
+		if (!info.gloss.isEmpty())
+			mark(QStringLiteral("proposed"));
+		if (!cached && !m_termTopics.contains(pat))
+			mark(QStringLiteral("pending"));
+		QString gloss = info.gloss;
+		// Sidecar entries key on the display title -- the human-
+		// readable term for term topics, the name otherwise --
+		// so "- etcd" survives any termN renumbering.
+		std::string const key = info.term.isEmpty()
+			? t.name : info.term.toStdString();
+		for (topics::gloss_entry const &e : m_gloss)
+			if (e.name == key) {
+				if (!e.lines.empty())
+					gloss = QString::fromStdString(
+						e.lines.front());
+				break;
+			}
+		directory.push_back({QStringLiteral("Topics"),
+		                     info.term.isEmpty() ? name
+		                                         : info.term,
+		                     QString::fromStdString(pat),
+		                     cached ? path : QString(),
+		                     {}, {}, badge,
+		                     gloss.left(120)});
 	}
+	// Alphabetical within the directory; other groups keep their
+	// natural orders (files, playlist).
+	std::ranges::sort(directory,
+		[](KnowledgeRow const &a, KnowledgeRow const &b) {
+			return QString::compare(a.title, b.title,
+			                        Qt::CaseInsensitive) < 0;
+		});
+	rows += directory;
 	QDir const fdir(QString::fromStdString(m_facts.dir())
 	                + QStringLiteral("/focus"));
 	for (QString const &name : fdir.entryList(
@@ -1187,7 +1216,7 @@ void MainWin::refreshKnowledge()
 		rows.push_back({QStringLiteral("Focuses"),
 		                QString::fromStdString(pat),
 		                QString::fromStdString(pat),
-		                path, {}, {}, {}});
+		                path, {}, {}, {}, {}});
 	}
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
@@ -1208,7 +1237,8 @@ void MainWin::refreshKnowledge()
 		                cached ? path : QString(),
 		                it.video, it.srt,
 		                cached ? QString()
-		                       : QStringLiteral("pending")});
+		                       : QStringLiteral("pending"),
+		                {}});
 	}
 	m_know.setRows(std::move(rows));
 }
@@ -1223,6 +1253,7 @@ void MainWin::queueTerms(bool fresh)
 		m_termsWork.clear();
 		m_termsSeen.clear();
 		m_termTopics.clear();
+		m_termInfo.clear();
 	}
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
@@ -1320,12 +1351,14 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 	};
 	for (QString const &block :
 	     text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
-		QString term, gloss, means;
+		QString term, kind, gloss, means;
 		QStringList seen;
 		QList<int> cues;
 		for (QString const &l : block.split(QLatin1Char('\n'))) {
 			if (l.startsWith(QStringLiteral("TERM:")))
 				term = l.mid(5).trimmed();
+			else if (l.startsWith(QStringLiteral("KIND:")))
+				kind = l.mid(5).trimmed().toLower();
 			else if (l.startsWith(QStringLiteral("MEANS:")))
 				means = l.mid(6).trimmed();
 			else if (l.startsWith(QStringLiteral("GLOSS:")))
@@ -1385,10 +1418,10 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		m_termTopics.insert(adopted);
 		QString const name = QString::fromStdString(
 			m_corpus.topics.back().name);
-		m_proposedGloss.insert(name, means.isEmpty()
+		m_termInfo.insert(name, {term, kind, means.isEmpty()
 			? gloss
 			: term + QStringLiteral(" = ") + means
-			  + QStringLiteral(". ") + gloss);
+			  + QStringLiteral(". ") + gloss});
 		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
 		       .arg(name, QString::fromStdString(adopted)));
 	}
@@ -1480,7 +1513,7 @@ void MainWin::showGloss(QTreeWidgetItem const *item)
 	// (Ctrl+Return copies it into the sidecar) or edits; the
 	// sidecar always wins once an entry exists.
 	if (text.isEmpty())
-		text = m_proposedGloss.value(name);
+		text = m_termInfo.value(name).gloss;
 	m_know.setGloss(text, editable);
 }
 
@@ -1492,6 +1525,7 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 {
 	showGloss(item);
 	QVector<KnowledgeHit> hits;
+	QHash<QString, int> counts;
 	QString const pat = item
 		? item->data(0, KnowledgePane::kPattern).toString()
 		: QString();
@@ -1503,11 +1537,13 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 				continue;
 			exporter::transcript const &tx =
 				exporter::load(m_transcripts, srt);
-			int kept = 0;
-			for (qsizetype i = 0;
-			     i < tx.lines.size() && kept < kEvidenceCap;
+			int kept = 0, total = 0;
+			for (qsizetype i = 0; i < tx.lines.size();
 			     ++i) {
 				if (!re.match(tx.lines[i]).hasMatch())
+					continue;
+				++total;
+				if (kept >= kEvidenceCap)
 					continue;
 				hits.push_back({it.video, srt,
 				                tx.lines[i],
@@ -1516,9 +1552,11 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 				                int(i)});
 				++kept;
 			}
+			if (total)
+				counts.insert(it.video, total);
 		}
 	}
-	m_know.setEvidence(std::move(hits));
+	m_know.setEvidence(std::move(hits), counts);
 }
 
 // A topic file: the corpus source of videos and composable regexes

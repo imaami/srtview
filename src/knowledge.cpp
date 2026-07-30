@@ -45,12 +45,15 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 
 	auto *split = new QSplitter(Qt::Vertical, body);
 	m_tree.setParent(split);
-	m_tree.setColumnCount(2);
+	m_tree.setColumnCount(3);
 	m_tree.setHeaderLabels({QStringLiteral("item"),
-	                        QStringLiteral("state")});
-	m_tree.header()->setStretchLastSection(false);
+	                        QStringLiteral("state"),
+	                        QStringLiteral("gloss")});
+	m_tree.header()->setStretchLastSection(true);
 	m_tree.header()->setSectionResizeMode(
-		0, QHeaderView::Stretch);
+		0, QHeaderView::ResizeToContents);
+	m_tree.header()->setSectionResizeMode(
+		1, QHeaderView::ResizeToContents);
 	m_tree.setRootIsDecorated(true);
 	m_tree.setUniformRowHeights(true);
 	m_tabs.setParent(split);
@@ -105,13 +108,16 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	QTreeWidgetItem *reselect = nullptr;
 	for (KnowledgeRow const &r : m_rows) {
 		auto *it = new QTreeWidgetItem(
-			groupItem(m_tree, r.group), {r.title, r.badge});
+			groupItem(m_tree, r.group),
+			{r.title, r.badge, r.gloss});
 		it->setData(0, kPattern, r.pattern);
 		it->setData(0, kPath, r.path);
 		it->setData(0, kVideo, r.video);
 		it->setData(0, kSrt, r.srt);
 		it->setToolTip(0, r.pattern.isEmpty() ? r.title
 		                                      : r.pattern);
+		if (!r.gloss.isEmpty())
+			it->setToolTip(2, r.gloss);
 		if (r.group == keepGroup && r.title == keepTitle)
 			reselect = it;
 	}
@@ -120,20 +126,29 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	applyFilter();
 }
 
-void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits)
+void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
+                                QHash<QString, int> const &counts)
 {
 	m_hits.clear();
 	QTreeWidgetItem *grp = nullptr;
 	QString video;
+	int listed = 0;
 	for (KnowledgeHit const &h : hits) {
 		if (!grp || h.video != video) {
+			if (grp && counts.value(video) > listed)
+				grp->setText(1, grp->text(1)
+					+ QStringLiteral(", first %1")
+					  .arg(listed));
 			video = h.video;
+			listed = 0;
 			grp = new QTreeWidgetItem(&m_hits,
 				{QFileInfo(video).fileName(),
-				 QString()});
+				 QStringLiteral("%1 cues")
+				 .arg(counts.value(video))});
 			grp->setFlags(Qt::ItemIsEnabled);
 			grp->setExpanded(true);
 		}
+		++listed;
 		qint64 const s = qint64(h.start);
 		auto *it = new QTreeWidgetItem(grp,
 			{QStringLiteral("%1:%2:%3")
@@ -146,6 +161,9 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits)
 		it->setData(0, kCue, h.cue);
 		it->setToolTip(1, h.line);
 	}
+	if (grp && counts.value(video) > listed)
+		grp->setText(1, grp->text(1)
+			+ QStringLiteral(", first %1").arg(listed));
 	if (!hits.isEmpty())
 		m_tabs.setCurrentWidget(&m_hits);
 	else if (!m_preview.toPlainText().isEmpty())
@@ -188,6 +206,8 @@ void KnowledgePane::applyFilter()
 			QTreeWidgetItem *it = grp->child(i);
 			bool const hit = all
 				|| re.match(it->text(0)).hasMatch()
+				|| re.match(it->text(1)).hasMatch()
+				|| re.match(it->text(2)).hasMatch()
 				|| re.match(it->data(0, kPattern)
 				              .toString()).hasMatch();
 			it->setHidden(!hit);

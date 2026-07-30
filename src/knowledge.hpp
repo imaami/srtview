@@ -36,6 +36,7 @@ struct KnowledgeRow {
 	QString video;    // playback activation target
 	QString srt;
 	QString badge;    // "generated", "supportive", "pending", ...
+	QString gloss;    // first line, shown inline in the directory
 };
 
 // One occurrence of the selected pattern: an exact cue in an exact
@@ -61,8 +62,10 @@ public:
 	// The selected row's occurrences, grouped per video; a
 	// non-empty set raises the Evidence tab, an empty one falls
 	// back to prose.  The owner computes hits (it owns the
-	// transcripts); the pane presents them.
-	void setEvidence(QVector<KnowledgeHit> hits);
+	// transcripts); counts are the true per-video totals even when
+	// the listing was capped, and the group headers say so.
+	void setEvidence(QVector<KnowledgeHit> hits,
+	                 QHash<QString, int> const &counts);
 
 	// The selected topic's definition text.  Editable only when
 	// the owner says so (a topic row with a durable home to write

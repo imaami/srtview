@@ -101,6 +101,16 @@ private:
 		int        first = 0, last = 0;
 	};
 
+	// Directory metadata for one term topic, rebuilt every session
+	// from the cached replies by the same harvest that adopts: the
+	// display term (the topic name is an opaque termN), its kind,
+	// and the proposed gloss awaiting acceptance.
+	struct TermInfo {
+		QString term;
+		QString kind;
+		QString gloss;
+	};
+
 	// A dive pair awaiting its interactive focus: the probe asks
 	// what to search, the app runs the search, the write turns the
 	// evidence into prose.  The probe's ask carries a TRANSCRIPT
@@ -235,7 +245,7 @@ private:
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
 	std::set<std::string>           m_termTopics;// index-only patterns
-	QHash<QString, QString>         m_proposedGloss; // name -> text
+	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
 	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
