@@ -61,7 +61,7 @@ enum class kind : std::uint8_t {
 struct id {
 	std::array<std::uint8_t, 8> b{};
 
-	constexpr bool operator==(id const &) const = default;
+	constexpr auto operator<=>(id const &) const = default;
 
 	constexpr explicit operator bool() const
 	{

@@ -381,7 +381,8 @@ MainWin::MainWin()
 		if (m_glossName.isEmpty())
 			return;
 		m_know.glossEdit().document()->setModified(true);
-		commitGloss();
+		if (!commitGloss())
+			return;
 		if (auto const at = m_termInfo.find(m_glossTopic);
 		    at != m_termInfo.end())
 			at->gloss.clear();
@@ -1255,6 +1256,11 @@ void MainWin::queueTerms(bool fresh)
 		m_termTopics.clear();
 		m_termInfo.clear();
 	}
+	// Staged ids as a set, built once: a per-flush linear scan of
+	// m_termsWork would go quadratic as the corpus grows.
+	std::set<agenda::id> staged;
+	for (TermsWork const &w : m_termsWork)
+		staged.insert(w.id);
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		if (srt.isEmpty())
@@ -1274,12 +1280,7 @@ void MainWin::queueTerms(bool fresh)
 				return;
 			agenda::id const id = termsId(sid, first, last,
 			                              text);
-			bool const known = std::ranges::any_of(
-				m_termsWork,
-				[&id](TermsWork const &w) {
-					return w.id == id;
-				});
-			if (!known) {
+			if (staged.insert(id).second) {
 				agenda::task t;
 				t.id = id;
 				t.keys = {agenda::id::from_hex(
@@ -1452,12 +1453,15 @@ void MainWin::loadGloss()
 
 // Persist the entry being edited, if it changed: the file is the
 // human's -- whole-list canonical rewrite, entries preserved even
-// when their name is not currently a topic.
-void MainWin::commitGloss()
+// when their name is not currently a topic.  False only when a
+// needed write failed: the editor still holds the words, and the
+// caller must leave it and the gloss keys alone -- together they
+// are the retry source.
+bool MainWin::commitGloss()
 {
 	if (m_glossName.isEmpty()
 	    || !m_know.glossEdit().document()->isModified())
-		return;
+		return true;
 	std::vector<std::string> lines;
 	for (QString const &l : m_know.glossEdit().toPlainText()
 	                        .split(QLatin1Char('\n')))
@@ -1488,9 +1492,10 @@ void MainWin::commitGloss()
 		// the status line says why.
 		setState(QStringLiteral("gloss save failed (%1)")
 		         .arg(out.errorString()));
-		return;
+		return false;
 	}
 	m_know.glossEdit().document()->setModified(false);
+	return true;
 }
 
 // Load the selected topic's gloss into the pane, committing the
@@ -1498,7 +1503,10 @@ void MainWin::commitGloss()
 // home requires a corpus file.
 void MainWin::showGloss(QTreeWidgetItem const *item)
 {
-	commitGloss();
+	// A failed save keeps the pane on the unsaved entry: switching
+	// keys or repainting the editor would wipe the retry source.
+	if (!commitGloss())
+		return;
 	// Two keys per row: the display title keys the human sidecar
 	// ("- etcd", renumber-proof), the corpus name keys m_termInfo
 	// (a term topic's title is the term, never its termN name).

@@ -182,7 +182,7 @@ private:
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	QString glossPath() const;
 	void loadGloss();
-	void commitGloss();
+	bool commitGloss();
 	void showGloss(QTreeWidgetItem const *item);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
