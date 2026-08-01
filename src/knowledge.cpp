@@ -180,7 +180,7 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
 			+ QStringLiteral(", first %1").arg(listed));
 	if (!hits.isEmpty())
 		m_tabs.setCurrentWidget(&m_hits);
-	else if (!m_preview.toPlainText().isEmpty())
+	else
 		m_tabs.setCurrentWidget(&m_preview);
 }
 
