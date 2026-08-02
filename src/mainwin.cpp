@@ -27,8 +27,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
-#include <system_error>
 #include <utility>
 
 namespace {
@@ -60,6 +58,15 @@ agenda::id takeId(QCryptographicHash &h)
 	static_assert(sizeof out.b <= 32, "id exceeds BLAKE2b-256");
 	std::memcpy(out.b.data(), h.result().constData(), sizeof out.b);
 	return out;
+}
+
+// vault's injected H8 over arbitrary bytes: the same BLAKE2b-256
+// head every pipeline id uses.
+agenda::id hash8(std::string_view s)
+{
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView(s.data(), qsizetype(s.size())));
+	return takeId(h);
 }
 
 // Pyramid-node identity from ordered children: two corpora sharing
@@ -230,6 +237,7 @@ MainWin::MainWin()
 	, m_bar(&m_search, &m_view)
 	, m_know(this)
 	, m_link(&m_playback)
+	, m_facts(hash8)
 	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
 	             this)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
@@ -597,16 +605,16 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 // The facts cache is keyed by the srt file's own discovery identity
 // (its hex socket hash, rehydrated to bytes at this boundary): one
 // summary per unique srt however many entries share it.  The
-// rendered transcript (tags consumed) is what the model reads;
-// settle() both registers cache hits as done -- new dives depend on
-// cached leaves, so the plan must know them -- and gates the join,
-// so re-derivations never materialize text the executor would only
-// discard.  The returned id feeds the pyramid and the heat map.
+// rendered transcript (tags consumed) is what the model reads and
+// what the vault witnesses: offer() hashes it, marks resolvable
+// cache hits done -- new dives depend on cached leaves, so the plan
+// must know them -- and asks only when the chain misses.  The
+// returned id feeds the pyramid and the heat map.
 agenda::id MainWin::offerFacts(QString const &srt)
 {
 	agenda::id const key = agenda::id::from_hex(
 		m_disc.id_for_video(srt.toStdString()));
-	if (m_facts.settle(key))
+	if (key)
 		m_facts.offer(key, exporter::load(m_transcripts, srt)
 		                   .lines.join(QLatin1Char('\n'))
 		                   .toStdString());
@@ -938,9 +946,13 @@ void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
 	for (PendingFocus const &w : m_focusWork)
 		if (w.focus == fid)
 			return;
-	std::error_code ec;
-	if (std::filesystem::exists(m_facts.dir() + "/focus/"
-	                            + fid.hex() + ".txt", ec))
+	agenda::task written;
+	written.id = fid;
+	written.deps = {a.id, b.id};
+	written.what = agenda::kind::focus;
+	// resolve()-backed: a stale-named focus file adopts its
+	// current name en passant.
+	if (m_facts.cached(written))
 		return;
 	PendingFocus w;
 	w.probe = probeId(a.id, b.id, false);
@@ -994,12 +1006,10 @@ bool MainWin::pumpProbe(PendingFocus &w)
 {
 	if (w.scanning)
 		return true;
-	QFile f(QString::fromStdString(
-		m_facts.dir() + "/probe/"
-		+ (w.retry ? w.retry : w.probe).hex() + ".txt"));
-	if (!f.open(QIODevice::ReadOnly))
+	std::string const text = m_facts.fetch(
+		probeTask(w, w.retry ? w.retry : w.probe));
+	if (text.empty())
 		return true;   // unanswered; waiting is free
-	std::string const text = f.readAll().toStdString();
 	if (text.starts_with("NONE"))
 		return false;
 	// Tidied mechanically before anything consumes it: small models
@@ -1108,7 +1118,10 @@ void MainWin::harvestFocus()
 	               + QStringLiteral("/focus"));
 	for (QString const &name : dir.entryList(
 	     {QStringLiteral("*.txt")}, QDir::Files)) {
-		if (m_harvested.insert(name.toStdString()).second)
+		// Keyed by the 16-char plan-id prefix: a vault rename
+		// must not re-trigger the harvest.
+		if (m_harvested.insert(name.left(16).toStdString())
+		    .second)
 			harvestOne(dir.filePath(name));
 	}
 	if (m_diveAt < m_diveScans.size())
@@ -1169,15 +1182,12 @@ void MainWin::refreshKnowledge()
 	std::set<std::string> comp;
 	for (topics::topic const *t : topics::components(m_corpus))
 		comp.insert(t->name);
-	QString const dives = QString::fromStdString(m_facts.dir())
-	                    + QStringLiteral("/dives/");
 	QVector<KnowledgeRow> directory;
 	for (topics::topic const &t : m_corpus.topics) {
 		std::string const pat = topics::expand(m_corpus, t);
-		QString const path = dives
-			+ QString::fromStdString(diveId(pat).hex())
-			+ QStringLiteral(".txt");
-		bool const cached = QFile::exists(path);
+		QString const path = QString::fromStdString(
+			m_facts.locate(diveId(pat), agenda::kind::dive));
+		bool const cached = !path.isEmpty();
 		QString const name = QString::fromStdString(t.name);
 		TermInfo const info = m_termInfo.value(name);
 		QString badge = info.kind;
@@ -1266,16 +1276,14 @@ void MainWin::refreshKnowledge()
 		QString const srt = srtOf(it);
 		QString path;
 		if (!srt.isEmpty()) {
-			QString const leaf = QString::fromStdString(
+			agenda::id const leaf = agenda::id::from_hex(
 				m_disc.id_for_video(srt.toStdString()));
-			if (!leaf.isEmpty())
+			if (leaf)
 				path = QString::fromStdString(
-					m_facts.dir())
-				     + QLatin1Char('/') + leaf
-				     + QStringLiteral(".txt");
+					m_facts.locate(leaf,
+					               agenda::kind::leaf));
 		}
-		bool const cached = !path.isEmpty()
-		                 && QFile::exists(path);
+		bool const cached = !path.isEmpty();
 		QFileInfo const fi(it.video);
 		QString title = fi.fileName();
 		if (bases.value(title) > 1)
@@ -1385,10 +1393,8 @@ void MainWin::harvestTerms()
 // human copies it into the sidecar.
 bool MainWin::harvestTermsOne(TermsWork const &w)
 {
-	QFile f(QString::fromStdString(m_facts.dir())
-	        + QStringLiteral("/terms/")
-	        + QString::fromStdString(w.id.hex())
-	        + QStringLiteral(".txt"));
+	QFile f(QString::fromStdString(
+		m_facts.locate(w.id, agenda::kind::terms)));
 	if (!f.open(QIODevice::ReadOnly))
 		return false;
 	QString const text = QString::fromUtf8(f.readAll());

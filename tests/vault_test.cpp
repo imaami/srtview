@@ -125,6 +125,8 @@ int main()
 		s2.content(l1, mix("transcript one"));
 		check(s2.resolve(tl1) == p,
 		      "a fresh store resolves the identical name");
+		check(s2.resolve(l1) == p,
+		      "resolution by bare id follows the registry");
 	}
 
 	// --- external srt edit renames the chain ---------------------

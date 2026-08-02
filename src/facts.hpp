@@ -19,14 +19,19 @@
 // back into the corpus.  The probe-search-write chain is the UI
 // layer's to run: a probe's reply names a search, not a file the
 // plan could gate on.  Cache layout, sibling to the frame cache:
-//   $XDG_CACHE_HOME/srtview/facts/<id>.txt        leaves and nodes
-//   $XDG_CACHE_HOME/srtview/facts/dives/<id>.txt  dives
-//   $XDG_CACHE_HOME/srtview/facts/focus/<id>.txt  focuses
-//   $XDG_CACHE_HOME/srtview/facts/probe/<id>.txt  probes
-// File existence is the manifest: done work is marked done instead
-// of queued, a failed or cancelled task writes nothing and retries
-// next session by its absence, and an empty reply writes nothing so
-// the cache can never mask a failure.
+//   $XDG_CACHE_HOME/srtview/facts/<name>.txt        leaves, nodes
+//   $XDG_CACHE_HOME/srtview/facts/dives/<name>.txt  dives
+//   $XDG_CACHE_HOME/srtview/facts/focus/<name>.txt  focuses
+//   $XDG_CACHE_HOME/srtview/facts/probe/<name>.txt  probes
+//   $XDG_CACHE_HOME/srtview/facts/terms/<name>.txt  terms
+// where <name> is the vault's two-part <planid>.<suffix> (terms
+// single-part): the suffix chains content, so an external edit to
+// an .srt or a cached file renames the dependents instead of
+// regenerating them -- see vault.hpp.  File existence is the
+// manifest: done work is marked done instead of queued, a failed or
+// cancelled task writes nothing and retries next session by its
+// absence, and an empty reply writes nothing so the cache can never
+// mask a failure.
 //
 // Thread rules.  R1: Qt objects never enter here; callers snapshot
 // text on their own thread.  R2: cache files are written to .tmp
@@ -56,28 +61,25 @@
 #include <vector>
 
 #include "agenda.hpp"
+#include "vault.hpp"
 
 struct llm;
 
 class Facts
 {
 public:
-	Facts();
+	explicit Facts(vault::hash8_fn h);
 	~Facts();
 
 	Facts(Facts const &) = delete;
 	Facts &operator=(Facts const &) = delete;
 
-	// Resolves what the cache already answers: an id whose file
-	// exists is marked done -- dependents of a cached leaf must
-	// unblock even though no offer will follow -- and false says
-	// no transcript text is needed.  True means the caller should
-	// follow up with offer() and the materialized text.
-	bool settle(agenda::id key);
-
-	// Leaf summary of one subtitle file: the id keys both the
-	// cache and the heat map; the text is snapshot here.  Ids the
-	// plan already knows and ids whose file exists are skipped.
+	// Leaf summary of one subtitle file: the id keys the cache and
+	// the heat map, the text is snapshot here, and its hash is the
+	// vault's content witness.  Ids the plan already knows are
+	// skipped; ids whose file resolves are marked done instead of
+	// queued -- dependents of a cached leaf must unblock even
+	// though no ask will follow.
 	void offer(agenda::id key, std::string const &utf8Text);
 
 	// Body-less tasks whose inputs are cache files: pyramid
@@ -87,6 +89,14 @@ public:
 
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
+
+	// Locked front doors for the UI layer's out-of-band reads:
+	// whether a task's artifact exists (resolving adopts stale
+	// names en passant), its text, and a plan id's file whatever
+	// its suffix (best-effort, for previews).
+	bool cached(agenda::task const &t);
+	std::string fetch(agenda::task const &t);
+	std::string locate(agenda::id plan, agenda::kind k) const;
 
 	// A caller-built task with a snapshot: a dive's matched
 	// excerpts, a probe's transcript sample (plus feedback on a
@@ -105,23 +115,25 @@ public:
 private:
 	static void deliver(void *ud, std::uint64_t task, int status,
 	                    char const *text, std::size_t size);
-	void completed(agenda::id which, int status, bool wrote);
+	void completed(agenda::task const &t, std::string const &tmp,
+	               std::string const &line, int status, bool wrote);
 	void advance();
 	bool submit(agenda::task const &t);
 	std::string assemble(agenda::task const &t);
-	std::string assemble_node(agenda::task const &t) const;
+	std::string assemble_node(agenda::task const &t);
 	std::string assemble_dive(agenda::task const &t);
 	std::string assemble_probe(agenda::task const &t);
 	std::string assemble_focus(agenda::task const &t);
-	std::string pair_sections(agenda::task const &t) const;
+	std::string pair_sections(agenda::task const &t);
 	std::string spend_body(agenda::id which);
-	std::string path_of(agenda::task const &t) const;
 
 	mutable std::mutex m_mtx;
 	agenda::plan       m_plan;      // guarded by m_mtx
 	std::vector<std::pair<agenda::id, std::string>>
 	                   m_bodies;    // snapshots, spent on submit
 	std::string        m_dir;       // .../srtview/facts
+	vault::store       m_vault;     // guarded by m_mtx
+	vault::hash8_fn    m_hash;      // H8, injected
 	agenda::id         m_inflight;  // id at the llm, or none
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails

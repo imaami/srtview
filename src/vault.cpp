@@ -240,6 +240,12 @@ std::string store::resolve(agenda::task const &t)
 	return resolve_at(registered(t));
 }
 
+std::string store::resolve(agenda::id id)
+{
+	std::size_t const at = index_of(id);
+	return at == npos ? std::string() : resolve_at(at);
+}
+
 std::string store::place(agenda::task const &t)
 {
 	std::size_t const at = registered(t);

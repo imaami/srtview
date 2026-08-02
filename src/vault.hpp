@@ -56,6 +56,10 @@ public:
 	// (no witness yet, dep unregistered, dep artifact missing).
 	std::string resolve(agenda::task const &t);
 
+	// The registered task's artifact by id alone -- assembly reads
+	// deps it knows only by id.  Unregistered ids miss.
+	std::string resolve(agenda::id id);
+
 	// The write target for a finished artifact; unlinks every
 	// other file of the plan id except its tmp.  Empty while the
 	// chain is incomputable.

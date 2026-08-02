@@ -163,12 +163,6 @@ constexpr std::string_view kPromptOf[] = {
 	kProbePrompt, kTermsPrompt,
 };
 
-// Cache subdirectory per task kind: leaves and nodes share the
-// flat root so any dependency reads at facts/<id>.txt.
-constexpr std::string_view kSubdir[] = {
-	"/", "/", "/dives/", "/focus/", "/probe/", "/terms/",
-};
-
 // Connect refusals in a row before the pipeline parks itself for
 // the session; anything else the server says resets the count.
 constexpr int kRefusalCap = 3;
@@ -176,16 +170,18 @@ constexpr int kRefusalCap = 3;
 constexpr char const *kKindName[] = {"leaf", "node", "dive",
                                      "focus", "probe", "terms"};
 
-// The path a reply belongs to travels as the task's user data,
-// heap-owned: exactly one callback per accepted task makes adoption
-// in deliver() the release.  The journal line and the file head
-// ride along, prepared while the task is known.
+// A reply's context travels as the task's user data, heap-owned:
+// exactly one callback per accepted task makes adoption in
+// deliver() the release.  The path is the plan-stable tmp target;
+// the task rides whole so completed() can name the artifact by its
+// current content chain, the journal line and file head prepared
+// while the task was known.
 struct reply_ctx {
-	Facts      *self;
-	std::string path;
-	std::string line;
-	std::string head;
-	agenda::id  id;
+	Facts        *self;
+	std::string   path;
+	std::string   line;
+	std::string   head;
+	agenda::task  t;
 };
 
 // A dive file opens with its regex and a focus file with the regex
@@ -358,8 +354,8 @@ std::string journal_line(agenda::task const &t)
 
 } // namespace
 
-Facts::Facts()
-	: m_dir(cacheDir())
+Facts::Facts(vault::hash8_fn h)
+	: m_dir(cacheDir()), m_vault(m_dir, h), m_hash(h)
 {
 	std::error_code ec;
 	std::filesystem::create_directories(m_dir + "/dives", ec);
@@ -395,27 +391,6 @@ Facts::~Facts()
 	llm_destroy(&m_llm);
 }
 
-bool Facts::settle(agenda::id key)
-{
-	if (!key)
-		return false;
-
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm || m_plan.status(key) != agenda::plan::state::unknown)
-		return false;
-	std::error_code ec;
-	if (std::filesystem::exists(m_dir + '/' + key.hex() + ".txt",
-	                            ec)) {
-		// The bookkeeping half that must never be skipped: a
-		// dependent of this cache hit may just have gone ready.
-		m_plan.done(key);
-		advance();
-		return false;
-	}
-
-	return true;
-}
-
 void Facts::offer(agenda::id key, std::string const &utf8Text)
 {
 	if (!key || utf8Text.empty())
@@ -424,15 +399,21 @@ void Facts::offer(agenda::id key, std::string const &utf8Text)
 	std::lock_guard const lock(m_mtx);
 	if (!m_llm || m_plan.status(key) != agenda::plan::state::unknown)
 		return;
-	std::error_code ec;
-	if (std::filesystem::exists(m_dir + '/' + key.hex() + ".txt",
-	                            ec)) {
-		// A dependent of this cache hit may just have gone ready.
+	// The witness is the full text: clipping is this executor's
+	// presentation concern, and a clipped hash would tie identity
+	// to the clip limit instead of to the transcript.
+	m_vault.content(key, m_hash(utf8Text));
+	agenda::task t;
+	t.id = key;
+	t.keys = {key};
+	if (!m_vault.resolve(t).empty()) {
+		// The bookkeeping half that must never be skipped: a
+		// dependent of this cache hit may just have gone ready.
 		m_plan.done(key);
 		advance();
 		return;
 	}
-	m_plan.add({.id = key, .keys = {key}});
+	m_plan.add(std::move(t));
 	m_bodies.emplace_back(key, std::string(clip(utf8Text)));
 	advance();
 }
@@ -445,8 +426,7 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 	for (agenda::task &t : nodes) {
 		if (m_plan.status(t.id) != agenda::plan::state::unknown)
 			continue;
-		std::error_code ec;
-		if (std::filesystem::exists(path_of(t), ec))
+		if (!m_vault.resolve(t).empty())
 			m_plan.done(t.id);
 		else
 			m_plan.add(std::move(t));
@@ -462,8 +442,7 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 	std::lock_guard const lock(m_mtx);
 	if (!m_llm || m_plan.status(t.id) != agenda::plan::state::unknown)
 		return;
-	std::error_code ec;
-	if (std::filesystem::exists(path_of(t), ec)) {
+	if (!m_vault.resolve(t).empty()) {
 		m_plan.done(t.id);
 		advance();
 		return;
@@ -501,7 +480,26 @@ void Facts::reset()
 	m_bodies.clear();
 }
 
-// On the llm worker thread; the file write stays outside the lock.
+bool Facts::cached(agenda::task const &t)
+{
+	std::lock_guard const lock(m_mtx);
+	return !m_vault.resolve(t).empty();
+}
+
+std::string Facts::fetch(agenda::task const &t)
+{
+	std::lock_guard const lock(m_mtx);
+	return slurp(m_vault.resolve(t));
+}
+
+std::string Facts::locate(agenda::id plan, agenda::kind k) const
+{
+	std::lock_guard const lock(m_mtx);
+	return m_vault.locate(plan, k);
+}
+
+// On the llm worker thread; the tmp write stays outside the lock,
+// and the artifact is named under it in completed().
 void Facts::deliver(void *ud, std::uint64_t, int status,
                     char const *text, std::size_t size)
 {
@@ -509,25 +507,36 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 		static_cast<reply_ctx *>(ud));
 	bool const wrote = status == LLM_OK && size
 	                && store(ctx->path, ctx->head, text, size);
-	if (wrote)
-		// m_dir never changes after construction; the worker
-		// reads it unlocked.
-		journal(ctx->self->m_dir, ctx->line);
-	else if (debug())
+	if (!wrote && debug())
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
-		             ctx->id.hex().c_str(), llm_strerror(status));
-	ctx->self->completed(ctx->id, status, wrote);
+		             ctx->t.id.hex().c_str(),
+		             llm_strerror(status));
+	ctx->self->completed(ctx->t, ctx->path, ctx->line, status,
+	                     wrote);
 }
 
-void Facts::completed(agenda::id which, int status, bool wrote)
+void Facts::completed(agenda::task const &t, std::string const &tmp,
+                      std::string const &line, int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
-	if (m_inflight == which)
+	if (m_inflight == t.id)
 		m_inflight = {};
-	if (wrote)
-		m_plan.done(which);
-	else
-		m_plan.fail(which);
+	// Naming is the locked half of the write: place() computes the
+	// content-chained target, sweeps the plan id down to one file,
+	// and the rename publishes (R2).  A place that cannot compute
+	// -- a reset raced the chain away -- discards the tmp and
+	// parks; absence retries next session.
+	std::string const target = wrote ? m_vault.place(t)
+	                                 : std::string();
+	if (!target.empty()
+	    && std::rename(tmp.c_str(), target.c_str()) == 0) {
+		journal(m_dir, line);
+		m_plan.done(t.id);
+	} else {
+		if (wrote)
+			std::remove(tmp.c_str());
+		m_plan.fail(t.id);
+	}
 
 	// A cancelled task proves nothing about the server; anything
 	// answered, even an error, proves it is there.
@@ -573,9 +582,9 @@ bool Facts::submit(agenda::task const &t)
 {
 	// The context first: a leaf's snapshot is spent by assemble(),
 	// so nothing fallible may sit between spending it and the ask.
-	auto *ctx = new (std::nothrow) reply_ctx{this, path_of(t),
+	auto *ctx = new (std::nothrow) reply_ctx{this, m_vault.tmp(t),
 	                                         journal_line(t),
-	                                         head_of(t), t.id};
+	                                         head_of(t), t};
 	if (!ctx)
 		return false;
 	std::string const body = assemble(t);
@@ -635,12 +644,11 @@ std::string Facts::assemble(agenda::task const &t)
 // FIRST and SECOND are the pair's finished dives, read whole: their
 // PATTERN heads travel along, so the model sees both the prose and
 // the regexes whose threads it is asked to join or refuse.
-std::string Facts::pair_sections(agenda::task const &t) const
+std::string Facts::pair_sections(agenda::task const &t)
 {
 	std::string all;
 	for (agenda::id const dep : t.deps) {
-		std::string const part =
-			slurp(m_dir + "/dives/" + dep.hex() + ".txt");
+		std::string const part = slurp(m_vault.resolve(dep));
 		if (part.empty())
 			return {};
 		all += all.empty() ? "FIRST\n" : "\n---\nSECOND\n";
@@ -681,12 +689,11 @@ std::string Facts::assemble_focus(agenda::task const &t)
 	return std::string(clip(all));
 }
 
-std::string Facts::assemble_node(agenda::task const &t) const
+std::string Facts::assemble_node(agenda::task const &t)
 {
 	std::string all;
 	for (agenda::id const dep : t.deps) {
-		std::string const part =
-			slurp(m_dir + '/' + dep.hex() + ".txt");
+		std::string const part = slurp(m_vault.resolve(dep));
 		if (part.empty())
 			return {};
 		if (!all.empty())
@@ -704,8 +711,8 @@ std::string Facts::assemble_dive(agenda::task const &t)
 {
 	std::string over;
 	for (agenda::id const ref : t.refs) {
-		std::string const part =
-			slurp(m_dir + '/' + ref.hex() + ".txt");
+		std::string const part = slurp(
+			m_vault.locate(ref, agenda::kind::node));
 		if (part.empty())
 			continue;
 		over += over.empty() ? "OVERVIEW\n" : "\n\n";
@@ -714,8 +721,7 @@ std::string Facts::assemble_dive(agenda::task const &t)
 
 	std::string sums;
 	for (agenda::id const dep : t.deps) {
-		std::string const part =
-			slurp(m_dir + '/' + dep.hex() + ".txt");
+		std::string const part = slurp(m_vault.resolve(dep));
 		if (part.empty())
 			return {};
 		sums += sums.empty() ? "SUMMARIES\n" : "\n\n";
@@ -751,10 +757,4 @@ std::string Facts::spend_body(agenda::id which)
 		return spent;
 	}
 	return {};
-}
-
-std::string Facts::path_of(agenda::task const &t) const
-{
-	return m_dir + std::string(kSubdir[std::size_t(t.what)])
-	     + t.id.hex() + ".txt";
 }

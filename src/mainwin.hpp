@@ -240,7 +240,7 @@ private:
 	std::vector<FinishedDive>       m_dives;     // for pairing
 	std::vector<PendingFocus>       m_focusWork; // probe chains
 	std::set<std::string>           m_generated; // machine topic names
-	std::set<std::string>           m_harvested; // focus files seen
+	std::set<std::string>           m_harvested; // focus ids seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
 	QString                         m_glossName; // entry being edited
 	QString                         m_glossTopic;// its corpus name
