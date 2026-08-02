@@ -21,6 +21,7 @@ add_executable(srtview
 	mpvlink.cpp
 	srt.cpp
 	topics.cpp
+	vault.cpp
 	timefmt.cpp
 	discovery.cpp
 	palettefix.cpp

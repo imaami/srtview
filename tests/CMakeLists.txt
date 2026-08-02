@@ -40,6 +40,18 @@ target_compile_options(agenda_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME agenda_tests COMMAND agenda_tests)
 
+# The vault naming store is standard C++ over std::filesystem; no
+# Qt, no llm -- the hash comes injected.
+add_executable(vault_tests
+	vault_test.cpp
+	${CMAKE_SOURCE_DIR}/src/vault.cpp
+	${CMAKE_SOURCE_DIR}/src/agenda.cpp
+)
+target_include_directories(vault_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(vault_tests PRIVATE -Wall -Wextra)
+
+add_test(NAME vault_tests COMMAND vault_tests)
+
 # The epoll dispatcher is plain C + Linux; no C++, no libcurl.
 add_executable(loop_tests
 	loop_test.c
