@@ -869,6 +869,26 @@ std::vector<std::string> corpus_keys(doc const &d)
 	return covered;
 }
 
+// Branches of parts whose key the covered set lacks, joined in
+// original order -- survivors keep their text, repeats within the
+// pattern itself collapse.  Empty when nothing novel remains.
+std::string novel_body(std::vector<part> &parts,
+                       std::vector<std::string> const &covered)
+{
+	std::string body;
+	std::vector<std::string> kept;
+	for (part &q : parts) {
+		if (std::ranges::find(covered, q.key) != covered.end() ||
+		    std::ranges::find(kept, q.key) != kept.end())
+			continue;
+		kept.push_back(std::move(q.key));
+		if (!body.empty())
+			body += '|';
+		body += q.text;
+	}
+	return body;
+}
+
 } // namespace
 
 std::string adopt_novel(doc &d, std::string const &pattern,
@@ -881,21 +901,7 @@ std::string adopt_novel(doc &d, std::string const &pattern,
 		// key-level duplicate refusal still applies.
 		return adopt(d, pattern, stem) ? pattern : std::string();
 
-	std::vector<std::string> const covered = corpus_keys(d);
-
-	// Survivors keep their original text and order; repeats within
-	// the pattern itself collapse too.
-	std::string body;
-	std::vector<std::string> kept;
-	for (part &q : parts) {
-		if (std::ranges::find(covered, q.key) != covered.end() ||
-		    std::ranges::find(kept, q.key) != kept.end())
-			continue;
-		kept.push_back(std::move(q.key));
-		if (!body.empty())
-			body += '|';
-		body += q.text;
-	}
+	std::string body = novel_body(parts, corpus_keys(d));
 	if (body.empty())
 		return {};
 	std::string rebuilt = ci ? "(?i:" + body + ")"
@@ -939,18 +945,7 @@ std::string extend(doc &d, std::string_view name,
 	    || !flatten_pattern(target->fragments[0], tci, tp)
 	    || ci != tci)
 		return {};
-	std::vector<std::string> const covered = corpus_keys(d);
-	std::string body;
-	std::vector<std::string> kept;
-	for (part &q : parts) {
-		if (std::ranges::find(covered, q.key) != covered.end() ||
-		    std::ranges::find(kept, q.key) != kept.end())
-			continue;
-		kept.push_back(std::move(q.key));
-		if (!body.empty())
-			body += '|';
-		body += q.text;
-	}
+	std::string const body = novel_body(parts, corpus_keys(d));
 	if (body.empty())
 		return {};
 	// One wrap covers the grown alternation; the peel flag is

@@ -119,7 +119,7 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	}
 	m_rows = std::move(rows);
 	m_tree.clear();
-	QTreeWidgetItem *reselect = nullptr;
+	QTreeWidgetItem *byName = nullptr, *byTitle = nullptr;
 	for (KnowledgeRow const &r : m_rows) {
 		auto *it = new QTreeWidgetItem(
 			groupItem(m_tree, r.group),
@@ -133,13 +133,18 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 		                                      : r.pattern);
 		if (!r.gloss.isEmpty())
 			it->setToolTip(2, r.gloss);
-		if (!reselect && r.group == keepGroup
-		    && (keepName.isEmpty() ? r.title == keepTitle
-		                           : r.name == keepName))
-			reselect = it;
+		if (!byName && !keepName.isEmpty()
+		    && r.group == keepGroup && r.name == keepName)
+			byName = it;
+		if (!byTitle && r.group == keepGroup
+		    && r.title == keepTitle)
+			byTitle = it;
 	}
-	if (reselect)
-		m_tree.setCurrentItem(reselect);
+	// Names outrank titles but may vanish under a rename (a focus
+	// row's name is its artifact path): the title match is the
+	// fallback, not the loser of a race.
+	if (QTreeWidgetItem *const keep = byName ? byName : byTitle)
+		m_tree.setCurrentItem(keep);
 	applyFilter();
 }
 

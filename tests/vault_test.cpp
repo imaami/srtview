@@ -10,6 +10,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -95,7 +96,8 @@ std::size_t count(std::string_view hay, std::string_view what)
 
 int main()
 {
-	g_rig = fs::temp_directory_path() / "srtview_vault_test";
+	g_rig = fs::temp_directory_path()
+	      / ("srtview_vault_test." + std::to_string(getpid()));
 
 	agenda::id const l1 = gid(1), l2 = gid(2), n = gid(3);
 	agenda::id const da = gid(4), db = gid(5), f = gid(6);
@@ -259,17 +261,51 @@ int main()
 
 	// --- locate ---------------------------------------------------
 	{
+		// Planted before the store looks: a file appearing behind
+		// a live store's back is the documented next-load case.
+		agenda::id const lg = gid(8);
+		std::string const legacy = dir() + "/dives/" + lg.hex()
+		                         + ".txt";
+		put(legacy, "old dive");
 		vault::store s(dir(), mix);
 		check(s.locate(da, agenda::kind::dive) == q_da,
 		      "locate finds a two-part name by prefix");
 		check(s.locate(gid(99), agenda::kind::dive).empty(),
 		      "locate misses politely");
-		agenda::id const lg = gid(8);
-		std::string const legacy = dir() + "/dives/" + lg.hex()
-		                         + ".txt";
-		put(legacy, "old dive");
 		check(s.locate(lg, agenda::kind::dive) == legacy,
 		      "locate sees legacy names too");
+	}
+
+	// --- the shelf: lookups stop re-reading directories ----------
+	{
+		vault::store s(dir(), mix);
+		s.content(l1, mix("one EDITED"));
+		s.content(l2, mix("two"));
+		std::size_t const s0 = s.scans();
+		s.resolve(tn);
+		s.resolve(tda);
+		s.resolve(tdb);
+		check(s.scans() == s0,
+		      "clean resolves never touch readdir");
+		for (int i = 0; i < 8; ++i)
+			s.locate(da, agenda::kind::dive);
+		s.locate(db, agenda::kind::dive);
+		check(s.scans() == s0 + 1,
+		      "lookups share one shelf per directory");
+		s.place(tda);
+		s.locate(da, agenda::kind::dive);
+		check(s.scans() == s0 + 2,
+		      "a placement re-reads exactly its directory");
+	}
+
+	// --- a placement without its rename stays a miss -------------
+	{
+		vault::store s(dir(), mix);
+		s.content(l1, mix("one EDITED"));
+		s.content(l2, mix("two"));
+		auto const td9 = task(gid(11), agenda::kind::dive, {l2});
+		check(!s.place(td9).empty() && s.resolve(td9).empty(),
+		      "no phantom hit before the executor's rename lands");
 	}
 
 	// --- incomputable chains miss --------------------------------

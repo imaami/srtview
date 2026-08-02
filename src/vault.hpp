@@ -16,7 +16,10 @@
 // cache miss.  Renames are atomic and idempotent, adoption is lazy
 // and bottom-up (dep resolution recurses first), and every move or
 // drop appends a line to the human journal.  Terms artifacts keep
-// single-part names: their plan id is already content.
+// single-part names: their plan id is already content.  Directory
+// listings sit on a per-kind shelf the store keeps current itself
+// -- it is the process's only cache writer -- so steady-state
+// lookups read no directories at all.
 //
 // The write protocol is tmp() then place(): the executor writes the
 // reply to the plan-stable tmp name, asks place() for the target
@@ -74,21 +77,37 @@ public:
 	// against nothing.
 	std::string locate(agenda::id plan, agenda::kind k) const;
 
+	// Readdir passes performed so far: the shelf keeps the steady
+	// state scan-free, and the tests hold it to that.
+	std::size_t scans() const { return m_scans; }
+
 private:
 	struct entry {
 		agenda::task t;         // shape as last registered
 		agenda::id   input;     // leaf witness
 		agenda::id   suffix;    // chain hash; zero = uncomputed
 		agenda::id   bytes;     // artifact hash; zero = unread
-		std::string  path;      // resolved artifact path
-		bool         resolved = false;
+		std::string  path;      // memoized artifact; empty = none
+		bool         walking = false; // chain() re-entry guard
+	};
+
+	// One sorted listing per kind directory, filled lazily and
+	// kept by the store itself: an adoption rename updates it in
+	// place, a placement stales it for one re-read, and nothing
+	// else writes these directories in-session (external edits
+	// surface at the next load, the documented doctrine).
+	struct shelf {
+		std::vector<std::string> names;
+		bool                     fresh = false;
 	};
 
 	static constexpr std::size_t npos = std::size_t(-1);
 
 	std::size_t index_of(agenda::id id) const;
 	std::size_t registered(agenda::task const &t);
+	void forget();
 	std::string resolve_at(std::size_t at);
+	agenda::id chain_of(std::size_t at);
 	bool chain(std::size_t at);
 	bool artifact_bytes(std::size_t at);
 	std::string flat(std::size_t at) const;
@@ -99,9 +118,12 @@ private:
 
 	// Session scale is dozens to a few hundred tasks: linear
 	// scans, no hashed containers (the agenda's own convention).
-	std::vector<entry> m_entries;
-	std::string        m_dir;
-	hash8_fn           m_h;
+	std::vector<entry>  m_entries;
+	mutable shelf       m_shelf[std::size_t(agenda::kind::terms)
+	                            + 1];
+	std::string         m_dir;
+	hash8_fn            m_h;
+	mutable std::size_t m_scans = 0;
 };
 
 } // namespace vault
