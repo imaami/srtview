@@ -324,6 +324,89 @@ void testAdoptNovel()
 	      "novel adoptions round-trip through write");
 }
 
+void testExtend()
+{
+	auto r = topics::parse("- volt\n"
+	                       "  - [Vv]olt\n"
+	                       "\n"
+	                       "- term1\n"
+	                       "  - (?i:cells|sells)\n");
+	check(r.error.empty(), "extension sketch parses");
+	topics::doc d = r.value;
+
+	check(topics::extend(d, "term1", "(?i:cells|selles)")
+	      == "(?i:cells|sells|selles)"
+	      && d.topics.size() == 2
+	      && d.topics[1].fragments
+	         == std::vector<std::string>{"(?i:cells|sells|selles)"},
+	      "novel branches append; covered ones subtract");
+	check(topics::extend(d, "term1", "(?i:sells|selles)").empty()
+	      && d.topics[1].fragments
+	         == std::vector<std::string>{"(?i:cells|sells|selles)"},
+	      "a fully covered pattern extends nothing");
+	check(topics::extend(d, "term1", "(?i:volt|watt)")
+	      == "(?i:cells|sells|selles|watt)",
+	      "the whole corpus subtracts, not just the target");
+	check(topics::extend(d, "term9", "(?i:x)").empty(),
+	      "unknown names refuse");
+	check(topics::extend(d, "volt", "(?i:ampere)").empty()
+	      && topics::find(d, "volt")->fragments
+	         == std::vector<std::string>{"[Vv]olt"},
+	      "a case-context mismatch refuses untouched");
+	check(topics::extend(d, "term1", " x").empty()
+	      && topics::extend(d, "term1", "x\ny").empty()
+	      && topics::extend(d, "term1", "").empty(),
+	      "adopt()'s hygiene guards hold here too");
+	check(topics::extend(d, "term1", "\\{volt:}x").empty(),
+	      "reference syntax refuses unvalidated");
+
+	auto cs = topics::parse("- term2\n  - Foo|Bar\n");
+	check(topics::extend(cs.value, "term2", "Baz|Foo")
+	      == "Foo|Bar|Baz",
+	      "case-sensitive contexts extend unwrapped");
+
+	auto multi = topics::parse("- m\n  - a\n  - |b\n");
+	check(topics::extend(multi.value, "m", "c").empty(),
+	      "multi-fragment targets refuse");
+
+	auto const back = topics::parse(topics::write(d));
+	check(back.error.empty() && back.value == d,
+	      "extended documents round-trip through write");
+}
+
+void testCoverOf()
+{
+	auto const r = topics::parse("- quorum\n"
+	                             "  - [Qq]uorum\n"
+	                             "\n"
+	                             "- term1\n"
+	                             "  - (?i:etcd)\n"
+	                             "\n"
+	                             "- term2\n"
+	                             "  - (?i:etcd|et ?cd|minio)\n");
+	check(r.error.empty(), "coverage sketch parses");
+	auto const &d = r.value;
+
+	check(topics::cover_of(d, "(?i:et ?cd|minio)", "term")
+	      == "term2",
+	      "the widest coverage wins");
+	check(topics::cover_of(d, "(?i:etcd)", "term") == "term1",
+	      "ties break to the earliest topic in doc order");
+	check(topics::cover_of(d, "(?i:quorum)", "term").empty(),
+	      "hand coverage never resolves to a stem topic");
+	check(topics::cover_of(d, "(?i:zeta)", "term").empty(),
+	      "zero coverage resolves to nothing");
+	check(topics::cover_of(d, "(?i:etcd)", "focus").empty(),
+	      "stems are disciplined: term coverage is not focus");
+
+	using topics::stem_name;
+	check(stem_name("term12", "term") && stem_name("focus1", "focus")
+	      && !stem_name("term", "term")
+	      && !stem_name("termite", "term")
+	      && !stem_name("term1x", "term"),
+	      "stem_name demands stem plus digits only");
+}
+
 void testTidy()
 {
 	using topics::tidy;
@@ -433,6 +516,8 @@ int main()
 	testAdopt();
 	testNormalKey();
 	testAdoptNovel();
+	testExtend();
+	testCoverOf();
 	testTidy();
 	testClassCanon();
 	testGloss();

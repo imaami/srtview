@@ -848,16 +848,13 @@ std::string normal_key(std::string_view pattern)
 	return out;
 }
 
-std::string adopt_novel(doc &d, std::string const &pattern,
-                        char const *stem)
-{
-	bool ci;
-	std::vector<part> parts;
-	if (!flatten_pattern(pattern, ci, parts))
-		// Opaque structure: no branch surgery, but adopt()'s
-		// key-level duplicate refusal still applies.
-		return adopt(d, pattern, stem) ? pattern : std::string();
+namespace {
 
+// The union of every topic's expanded branch keys -- the covered
+// set adopt_novel() and extend() subtract against.  A doubtful
+// expansion contributes its whole-pattern key.
+std::vector<std::string> corpus_keys(doc const &d)
+{
 	std::vector<std::string> covered;
 	for (topic const &t : d.topics) {
 		bool tci;
@@ -869,6 +866,22 @@ std::string adopt_novel(doc &d, std::string const &pattern,
 		else
 			covered.push_back(normal_key(ex));
 	}
+	return covered;
+}
+
+} // namespace
+
+std::string adopt_novel(doc &d, std::string const &pattern,
+                        char const *stem)
+{
+	bool ci;
+	std::vector<part> parts;
+	if (!flatten_pattern(pattern, ci, parts))
+		// Opaque structure: no branch surgery, but adopt()'s
+		// key-level duplicate refusal still applies.
+		return adopt(d, pattern, stem) ? pattern : std::string();
+
+	std::vector<std::string> const covered = corpus_keys(d);
 
 	// Survivors keep their original text and order; repeats within
 	// the pattern itself collapse too.
@@ -888,6 +901,98 @@ std::string adopt_novel(doc &d, std::string const &pattern,
 	std::string rebuilt = ci ? "(?i:" + body + ")"
 	                         : std::move(body);
 	return adopt(d, rebuilt, stem) ? rebuilt : std::string();
+}
+
+bool stem_name(std::string_view name, std::string_view stem)
+{
+	if (!name.starts_with(stem) || name.size() == stem.size())
+		return false;
+	for (char const c : name.substr(stem.size()))
+		if (!ascii_digit((unsigned char)c))
+			return false;
+	return true;
+}
+
+std::string extend(doc &d, std::string_view name,
+                   std::string const &pattern)
+{
+	topic *target = nullptr;
+	for (topic &t : d.topics)
+		if (t.name == name) {
+			target = &t;
+			break;
+		}
+	ref r;
+	if (!target || target->fragments.size() != 1
+	    || next_ref(target->fragments[0], 0, r))
+		return {};
+	// adopt()'s hygiene guards: what cannot survive the
+	// write()/parse() round trip must not enter a fragment here
+	// either.
+	if (pattern.empty() || strip(pattern) != pattern
+	    || pattern.find_first_of("\r\n") != std::string::npos
+	    || next_ref(pattern, 0, r))
+		return {};
+	bool ci, tci;
+	std::vector<part> parts, tp;
+	if (!flatten_pattern(pattern, ci, parts)
+	    || !flatten_pattern(target->fragments[0], tci, tp)
+	    || ci != tci)
+		return {};
+	std::vector<std::string> const covered = corpus_keys(d);
+	std::string body;
+	std::vector<std::string> kept;
+	for (part &q : parts) {
+		if (std::ranges::find(covered, q.key) != covered.end() ||
+		    std::ranges::find(kept, q.key) != kept.end())
+			continue;
+		kept.push_back(std::move(q.key));
+		if (!body.empty())
+			body += '|';
+		body += q.text;
+	}
+	if (body.empty())
+		return {};
+	// One wrap covers the grown alternation; the peel flag is
+	// spent -- ci == tci already pinned the case context.
+	bool spent = false;
+	std::string const inner{peel(target->fragments[0], spent)};
+	target->fragments[0] = ci ? "(?i:" + inner + "|" + body + ")"
+	                          : inner + "|" + body;
+	return target->fragments[0];
+}
+
+std::string cover_of(doc const &d, std::string const &pattern,
+                     char const *stem)
+{
+	bool ci;
+	std::vector<part> parts;
+	if (!flatten_pattern(pattern, ci, parts))
+		return {};
+	// Keys carry the fold tag, so case contexts cannot cross-match;
+	// strict > keeps the earliest max -- doc order is the only
+	// tie-break two sessions share.
+	std::string best;
+	std::size_t most = 0;
+	for (topic const &t : d.topics) {
+		if (!stem_name(t.name, stem))
+			continue;
+		bool tci;
+		std::vector<part> tp;
+		if (!flatten_pattern(expand(d, t), tci, tp))
+			continue;
+		auto const covers = [&tp](part const &q) {
+			return std::ranges::find(tp, q.key, &part::key)
+			       != tp.end();
+		};
+		std::size_t const n = std::size_t(
+			std::ranges::count_if(parts, covers));
+		if (n > most) {
+			most = n;
+			best = t.name;
+		}
+	}
+	return best;
 }
 
 std::string tidy(std::string const &pattern)

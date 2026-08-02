@@ -160,6 +160,29 @@ std::string normal_key(std::string_view pattern);
 std::string adopt_novel(doc &d, std::string const &pattern,
                         char const *stem);
 
+// True when name is a stem followed by one or more ASCII digits --
+// the shape adopt()'s name generator mints ("term3", "focus12"),
+// how a reloaded corpus's machine topics are recognized.
+bool stem_name(std::string_view name, std::string_view stem);
+
+// Extends a machine topic in place: branches of pattern whose
+// normal_key() no topic's expansion already covers append to the
+// named topic's single fragment as alternation, keeping its text
+// and (?i:) wrap.  Refused -- returning empty -- for unknown names,
+// multi-fragment or reference-carrying targets, a case context
+// differing from the pattern's, patterns adopt() would refuse, and
+// structural doubt on either side; empty also when nothing novel
+// remained.  Otherwise returns the fragment's new text.
+std::string extend(doc &d, std::string_view name,
+                   std::string const &pattern);
+
+// The stem-generated topic whose expansion covers the most branches
+// of pattern, ties to the earliest in doc order -- the only order
+// two sessions share.  Empty when no stem topic covers any branch;
+// hand-written topics never resolve.
+std::string cover_of(doc const &d, std::string const &pattern,
+                     char const *stem);
+
 // The tidied text of a machine-written pattern: the same branch set
 // with redundant full-span wrappers flattened and repeated branches
 // dropped -- (?i:(a|b|a)) becomes (?i:a|b).  Matching semantics are
