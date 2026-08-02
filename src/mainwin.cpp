@@ -1184,16 +1184,22 @@ void MainWin::refreshKnowledge()
 		                     {}, {}, badge,
 		                     gloss.left(120), name});
 	}
-	// Alphabetical within the directory; other groups keep their
+	// Alphabetical within the directory, the corpus name breaking
+	// title ties into a total order (an unstable sort must not
+	// churn duplicate-titled rows); other groups keep their
 	// natural orders (files, playlist).
 	std::ranges::sort(directory,
 		[](KnowledgeRow const &a, KnowledgeRow const &b) {
-			return QString::compare(a.title, b.title,
-			                        Qt::CaseInsensitive) < 0;
+			int const c = QString::compare(a.title, b.title,
+			                               Qt::CaseInsensitive);
+			return c ? c < 0 : a.name < b.name;
 		});
 	rows += directory;
 	QDir const fdir(QString::fromStdString(m_facts.dir())
 	                + QStringLiteral("/focus"));
+	// Distinct probes can converge on one regex: both essays stay
+	// visible, numbered apart past the first.
+	QHash<QString, int> seen;
 	for (QString const &name : fdir.entryList(
 	     {QStringLiteral("*.txt")}, QDir::Files)) {
 		QString const path = fdir.filePath(name);
@@ -1214,11 +1220,18 @@ void MainWin::refreshKnowledge()
 		}
 		if (pat.empty())
 			continue;
-		rows.push_back({QStringLiteral("Focuses"),
-		                QString::fromStdString(pat),
-		                QString::fromStdString(pat),
-		                path, {}, {}, {}, {}, {}});
+		QString const qpat = QString::fromStdString(pat);
+		QString title = qpat;
+		if (int const n = ++seen[qpat]; n > 1)
+			title += QStringLiteral(" (%1)").arg(n);
+		rows.push_back({QStringLiteral("Focuses"), title, qpat,
+		                path, {}, {}, {}, {}, path});
 	}
+	// The same basename twice in the playlist: the parent
+	// directory tells the rows apart.
+	QHash<QString, int> bases;
+	for (PlayItem const &it : m_playlist)
+		++bases[QFileInfo(it.video).fileName()];
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		QString path;
@@ -1233,13 +1246,16 @@ void MainWin::refreshKnowledge()
 		}
 		bool const cached = !path.isEmpty()
 		                 && QFile::exists(path);
-		rows.push_back({QStringLiteral("Videos"),
-		                QFileInfo(it.video).fileName(), {},
+		QFileInfo const fi(it.video);
+		QString title = fi.fileName();
+		if (bases.value(title) > 1)
+			title += QStringLiteral(" — ") + fi.dir().dirName();
+		rows.push_back({QStringLiteral("Videos"), title, {},
 		                cached ? path : QString(),
 		                it.video, it.srt,
 		                cached ? QString()
 		                       : QStringLiteral("pending"),
-		                {}, {}});
+		                {}, it.video});
 	}
 	m_know.setRows(std::move(rows));
 }

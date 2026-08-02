@@ -58,7 +58,8 @@ public:
 	explicit KnowledgePane(QWidget *parent);
 
 	// Replaces the whole model; selection is kept when the same
-	// title still exists in the same group.  Cheap at session
+	// row -- by corpus name when it has one, else by title --
+	// still exists in the same group.  Cheap at session
 	// scale (dozens of rows), so refresh is rebuild -- except an
 	// unchanged model, which is a no-op: the owner refreshes on a
 	// timer, and a gratuitous rebuild would re-emit the selection

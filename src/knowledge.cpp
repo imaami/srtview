@@ -110,11 +110,12 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 {
 	if (rows == m_rows)
 		return;
-	QString keepGroup, keepTitle;
+	QString keepGroup, keepTitle, keepName;
 	if (QTreeWidgetItem const *cur = m_tree.currentItem();
 	    cur && cur->parent()) {
 		keepGroup = cur->parent()->text(0);
 		keepTitle = cur->text(0);
+		keepName = cur->data(0, kName).toString();
 	}
 	m_rows = std::move(rows);
 	m_tree.clear();
@@ -132,7 +133,9 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 		                                      : r.pattern);
 		if (!r.gloss.isEmpty())
 			it->setToolTip(2, r.gloss);
-		if (r.group == keepGroup && r.title == keepTitle)
+		if (!reselect && r.group == keepGroup
+		    && (keepName.isEmpty() ? r.title == keepTitle
+		                           : r.name == keepName))
 			reselect = it;
 	}
 	if (reselect)
