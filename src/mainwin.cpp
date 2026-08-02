@@ -613,6 +613,24 @@ agenda::id MainWin::offerFacts(QString const &srt)
 	return key;
 }
 
+// Reloaded machine topics keep their roles by name stem: term* stay
+// index-only (no dives, no pending badge) and focus* stay generated
+// (supportive, never pairing), before the harvest re-attaches titles
+// from the cached replies.  A hand topic borrowing the shape is
+// treated as machine -- deterministic, and adopt() never mints a
+// colliding name.  Name-keyed and idempotent, so extension rebuilds
+// re-seed for free.
+void MainWin::seedGenerated()
+{
+	for (topics::topic const &t : m_corpus.topics) {
+		bool const term = topics::stem_name(t.name, "term");
+		if (term)
+			m_termTopics.insert(t.name);
+		if (term || topics::stem_name(t.name, "focus"))
+			m_generated.insert(t.name);
+	}
+}
+
 // Re-derive everything the corpus defines: the playlist and the
 // id registry, then the facts pipeline -- leaf offers, the
 // abstraction pyramid, the topic dive scans.  Runs after any corpus
@@ -629,7 +647,13 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_focusWork.clear();
 		m_generated.clear();
 		m_harvested.clear();
+		m_termsWork.clear();
+		m_termsSeen.clear();
+		m_termTopics.clear();
+		m_termInfo.clear();
+		m_termIndex.clear();
 	}
+	seedGenerated();
 	m_playlist.clear();
 	QDir const dir = QFileInfo(m_corpusPath).absoluteDir();
 	auto const resolve = [&dir](std::string const &p) {
@@ -663,7 +687,7 @@ void MainWin::rebuildCorpus(bool fresh)
 	// against a corpus that already holds the term subtractions --
 	// replaying that order over a warm cache reproduces the same
 	// topics, the same dive ids, and zero asks.
-	queueTerms(fresh);
+	queueTerms();
 	harvestTerms();
 	harvestFocus();
 	queueDives(fresh);
@@ -734,9 +758,9 @@ void MainWin::queueDives(bool fresh)
 		// Term topics are index entries: occurrences scan live
 		// in the pane, and a dive per term would flood the
 		// queue with prose nobody asked for.
-		if (m_termTopics.contains(e.pattern))
+		if (m_termTopics.contains(e.name))
 			continue;
-		bool const gen = m_generated.contains(e.pattern);
+		bool const gen = m_generated.contains(e.name);
 		stageDive(e.pattern, !gen, gen);
 	}
 	// The supportive layer: referenced topics dive too, a band
@@ -1074,6 +1098,12 @@ std::size_t MainWin::focusWorkOf(agenda::id id) const
 // hypotheses re-enter the next session's plan from the cache.
 void MainWin::harvestFocus()
 {
+	// Terms before focus, enforced: focus regexes adopt only against
+	// a corpus already holding every staged term adoption -- the
+	// order a warm replay reproduces.
+	for (TermsWork const &w : m_termsWork)
+		if (!m_termsSeen.contains(w.id.hex()))
+			return;
 	QDir const dir(QString::fromStdString(m_facts.dir())
 	               + QStringLiteral("/focus"));
 	for (QString const &name : dir.entryList(
@@ -1124,7 +1154,7 @@ void MainWin::harvestOne(QString const &file)
 	                                             "focus");
 	if (kept.empty())
 		return;
-	m_generated.insert(kept);
+	m_generated.insert(m_corpus.topics.back().name);
 	stageDive(kept, false, true);
 }
 
@@ -1155,13 +1185,13 @@ void MainWin::refreshKnowledge()
 			badge += badge.isEmpty()
 				? m : QStringLiteral(" · ") + m;
 		};
-		if (m_generated.contains(pat))
+		if (m_generated.contains(t.name))
 			mark(QStringLiteral("generated"));
 		else if (comp.contains(t.name))
 			mark(QStringLiteral("supportive"));
 		if (!info.gloss.isEmpty())
 			mark(QStringLiteral("proposed"));
-		if (!cached && !m_termTopics.contains(pat))
+		if (!cached && !m_termTopics.contains(t.name))
 			mark(QStringLiteral("pending"));
 		QString gloss = info.gloss;
 		// Sidecar entries key on the display title -- the human-
@@ -1264,14 +1294,8 @@ void MainWin::refreshKnowledge()
 // numbered with absolute cue indices and timestamps.  Offers dedupe
 // against the plan and the cache; records re-derive every session
 // so cached replies stay mappable to their cue ranges.
-void MainWin::queueTerms(bool fresh)
+void MainWin::queueTerms()
 {
-	if (fresh) {
-		m_termsWork.clear();
-		m_termsSeen.clear();
-		m_termTopics.clear();
-		m_termInfo.clear();
-	}
 	// Staged ids as a set, built once: a per-flush linear scan of
 	// m_termsWork would go quadratic as the corpus grows.
 	std::set<agenda::id> staged;
@@ -1332,12 +1356,20 @@ void MainWin::queueTerms(bool fresh)
 	}
 }
 
+// Adoption in staging order, strictly: the walk stops at the first
+// window whose reply is still missing, so every session's corpus is
+// a prefix-replay of the same order however the answers arrive.  A
+// parked window starves later adoption until the next session
+// re-asks it -- determinism bought with latency.
 void MainWin::harvestTerms()
 {
-	for (TermsWork const &w : m_termsWork)
-		if (!m_termsSeen.contains(w.id.hex())
-		    && harvestTermsOne(w))
-			m_termsSeen.insert(w.id.hex());
+	for (TermsWork const &w : m_termsWork) {
+		if (m_termsSeen.contains(w.id.hex()))
+			continue;
+		if (!harvestTermsOne(w))
+			return;
+		m_termsSeen.insert(w.id.hex());
+	}
 }
 
 // Parse, validate and adopt one terms reply.  The gate is
@@ -1346,7 +1378,10 @@ void MainWin::harvestTerms()
 // either drops whole, never kept diluted.  Survivors' spellings
 // are escaped literals joined into a case-folded union (the model
 // never writes regex here), then pass the same tidy/subtract gate
-// as every machine pattern; the gloss waits as a proposal until a
+// as every machine pattern -- one term, one topic: a known term
+// grows its owner's alternation, a fully covered one re-attaches
+// its directory entry to the covering term topic, and only a novel
+// term adopts a new termN.  The gloss waits as a proposal until a
 // human copies it into the sidecar.
 bool MainWin::harvestTermsOne(TermsWork const &w)
 {
@@ -1426,19 +1461,57 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 			pat += QRegularExpression::escape(kept[i]);
 		}
 		pat += QLatin1Char(')');
-		std::string const adopted = topics::adopt_novel(
-			m_corpus,
-			topics::tidy(pat.toStdString()), "term");
-		if (adopted.empty())
-			continue;
-		m_generated.insert(adopted);
-		m_termTopics.insert(adopted);
-		QString const name = QString::fromStdString(
-			m_corpus.topics.back().name);
-		m_termInfo.insert(name, {term, kind, means.isEmpty()
+		std::string const tidied =
+			topics::tidy(pat.toStdString());
+		QString const shown = means.isEmpty()
 			? gloss
 			: term + QStringLiteral(" = ") + means
-			  + QStringLiteral(". ") + gloss});
+			  + QStringLiteral(". ") + gloss;
+		QString const folded = term.toCaseFolded();
+		// One term, one topic: a known term's novel spellings
+		// grow its owner instead of minting a titled twin;
+		// kind, casing and gloss keep the first non-empty word.
+		if (QString const own = m_termIndex.value(folded);
+		    !own.isEmpty()) {
+			std::string const grown = topics::extend(
+				m_corpus, own.toStdString(), tidied);
+			TermInfo &info = m_termInfo[own];
+			if (info.kind.isEmpty())
+				info.kind = kind;
+			if (info.gloss.isEmpty())
+				info.gloss = shown;
+			if (!grown.empty())
+				dbgHop(QStringLiteral(
+					"terms: extended %1 [%2]")
+				       .arg(own,
+				            QString::fromStdString(grown)));
+			continue;
+		}
+		std::string const adopted = topics::adopt_novel(
+			m_corpus, tidied, "term");
+		if (adopted.empty()) {
+			// Fully covered: re-attach the directory entry
+			// to the covering term topic, so a reloaded
+			// exported corpus regains its titles and gloss
+			// proposals.
+			QString const owner = QString::fromStdString(
+				topics::cover_of(m_corpus, tidied,
+				                 "term"));
+			if (owner.isEmpty()
+			    || m_termInfo.contains(owner))
+				continue;
+			m_termInfo.insert(owner, {term, kind, shown});
+			m_termIndex.insert(folded, owner);
+			dbgHop(QStringLiteral("terms: attached %1 [%2]")
+			       .arg(owner, term));
+			continue;
+		}
+		QString const name = QString::fromStdString(
+			m_corpus.topics.back().name);
+		m_generated.insert(name.toStdString());
+		m_termTopics.insert(name.toStdString());
+		m_termInfo.insert(name, {term, kind, shown});
+		m_termIndex.insert(folded, name);
 		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
 		       .arg(name, QString::fromStdString(adopted)));
 	}

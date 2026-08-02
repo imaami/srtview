@@ -175,7 +175,8 @@ private:
 	std::size_t focusWorkOf(agenda::id id) const;
 	void harvestFocus();
 	void harvestOne(QString const &file);
-	void queueTerms(bool fresh);
+	void seedGenerated();
+	void queueTerms();
 	void harvestTerms();
 	bool harvestTermsOne(TermsWork const &w);
 	void refreshKnowledge();
@@ -238,15 +239,16 @@ private:
 	std::size_t                     m_diveAt = 0;// scan cursor
 	std::vector<FinishedDive>       m_dives;     // for pairing
 	std::vector<PendingFocus>       m_focusWork; // probe chains
-	std::set<std::string>           m_generated; // harvested regexes
+	std::set<std::string>           m_generated; // machine topic names
 	std::set<std::string>           m_harvested; // focus files seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
 	QString                         m_glossName; // entry being edited
 	QString                         m_glossTopic;// its corpus name
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
-	std::set<std::string>           m_termTopics;// index-only patterns
+	std::set<std::string>           m_termTopics;// index-only names
 	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
+	QHash<QString, QString>         m_termIndex; // folded term -> name
 	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
