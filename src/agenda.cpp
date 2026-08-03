@@ -156,11 +156,11 @@ id plan::take ()
 
 void plan::reset ()
 {
-	// Ids that already ran to completion stay done: they name cache
-	// files, and those outlive any plan.
-	std::erase_if(m_entries, [](entry const &e) {
-		return e.s != state::done;
-	});
+	// Everything goes, done ids included: cache truth is re-derived
+	// by vault resolution at the next offer, and a retained done
+	// tombstone would let a stale completion satisfy a generation
+	// it never saw, then keep the changed input from re-offering.
+	m_entries.clear();
 	m_heat.clear();
 }
 

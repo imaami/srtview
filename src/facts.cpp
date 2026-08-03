@@ -173,10 +173,10 @@ constexpr char const *kKindName[] = {"leaf", "node", "dive",
 // A reply's context travels as the task's user data, heap-owned:
 // exactly one callback per accepted task makes adoption in
 // deliver() the release.  The path is the plan-stable tmp target;
-// want is the artifact name the chain owed at submit time, so
-// completed() can tell a reply from a superseded generation apart;
-// the task rides whole, the journal line and file head prepared
-// while the task was known.
+// want is the artifact name the chain owed at submit time and epoch
+// the reset generation the ask belongs to, so completed() can tell
+// a superseded reply apart; the task rides whole, the journal line
+// and file head prepared while the task was known.
 struct reply_ctx {
 	Facts        *self;
 	std::string   path;
@@ -184,6 +184,7 @@ struct reply_ctx {
 	std::string   line;
 	std::string   head;
 	agenda::task  t;
+	std::uint64_t epoch;
 };
 
 // A dive file opens with its regex and a focus file with the regex
@@ -399,12 +400,16 @@ void Facts::offer(agenda::id key, std::string const &utf8Text)
 		return;
 
 	std::lock_guard const lock(m_mtx);
-	if (!m_llm || m_plan.status(key) != agenda::plan::state::unknown)
+	if (!m_llm)
 		return;
-	// The witness is the full text: clipping is this executor's
-	// presentation concern, and a clipped hash would tie identity
-	// to the clip limit instead of to the transcript.
+	// The witness registers before the plan is consulted: current
+	// inputs define status, never the reverse -- a done id must
+	// not keep a changed transcript out of the vault.  The hash
+	// covers the full text: clipping is presentation, and a
+	// clipped hash would tie identity to the clip limit.
 	m_vault.content(key, m_hash(utf8Text));
+	if (m_plan.status(key) != agenda::plan::state::unknown)
+		return;
 	agenda::task t;
 	t.id = key;
 	t.keys = {key};
@@ -426,9 +431,11 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 	if (!m_llm)
 		return;
 	for (agenda::task &t : nodes) {
+		// Shape before status, as in offer().
+		bool const have = !m_vault.resolve(t).empty();
 		if (m_plan.status(t.id) != agenda::plan::state::unknown)
 			continue;
-		if (!m_vault.resolve(t).empty())
+		if (have)
 			m_plan.done(t.id);
 		else
 			m_plan.add(std::move(t));
@@ -442,9 +449,13 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 		return;
 
 	std::lock_guard const lock(m_mtx);
-	if (!m_llm || m_plan.status(t.id) != agenda::plan::state::unknown)
+	if (!m_llm)
 		return;
-	if (!m_vault.resolve(t).empty()) {
+	// Shape before status, as in offer() above.
+	bool const have = !m_vault.resolve(t).empty();
+	if (m_plan.status(t.id) != agenda::plan::state::unknown)
+		return;
+	if (have) {
 		m_plan.done(t.id);
 		advance();
 		return;
@@ -478,6 +489,7 @@ void Facts::decay(double keep)
 void Facts::reset()
 {
 	std::lock_guard const lock(m_mtx);
+	++m_epoch;
 	m_plan.reset();
 	m_bodies.clear();
 }
@@ -514,12 +526,12 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 		             ctx->t.id.hex().c_str(),
 		             llm_strerror(status));
 	ctx->self->completed(ctx->t, ctx->path, ctx->want, ctx->line,
-	                     status, wrote);
+	                     ctx->epoch, status, wrote);
 }
 
 void Facts::completed(agenda::task const &t, std::string const &tmp,
                       std::string const &want, std::string const &line,
-                      int status, bool wrote)
+                      std::uint64_t epoch, int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
 	if (m_inflight == t.id)
@@ -532,8 +544,11 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 	// comparison would satisfy itself.  An obsolete completion
 	// touches nothing at all under the id: done() would credit the
 	// replacement generation with a stale artifact, fail() would
-	// park it for the session.  The tmp dies; absence retries.
-	bool const current = !want.empty()
+	// park it for the session.  The epoch closes the reset window
+	// itself: between reset() and the re-offers the vault still
+	// describes the old corpus, and the target comparison alone
+	// would pass.  The tmp dies; absence retries.
+	bool const current = epoch == m_epoch && !want.empty()
 	                  && m_vault.target(t.id) == want;
 	std::string const target = wrote && current
 		? m_vault.place(t.id) : std::string();
@@ -599,7 +614,8 @@ bool Facts::submit(agenda::task const &t)
 	auto *ctx = new (std::nothrow) reply_ctx{this, m_vault.tmp(t),
 	                                         m_vault.target(t),
 	                                         journal_line(t),
-	                                         head_of(t), t};
+	                                         head_of(t), t,
+	                                         m_epoch};
 	if (!ctx)
 		return false;
 	std::string const body = assemble(t);

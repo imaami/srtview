@@ -107,9 +107,11 @@ public:
 	void heat(agenda::id key, double add);
 	void decay(double keep);
 
-	// New corpus: drops pending work, snapshots and heat.  A task
-	// in flight keeps running; its completion still lands in the
-	// cache and is remembered.
+	// New corpus: a generation boundary.  Pending work, snapshots,
+	// heat and done marks all drop and the epoch advances -- a
+	// completion from the old generation discards its reply rather
+	// than publish into a corpus it never saw; absence retries it
+	// next session.
 	void reset();
 
 private:
@@ -117,7 +119,7 @@ private:
 	                    char const *text, std::size_t size);
 	void completed(agenda::task const &t, std::string const &tmp,
 	               std::string const &want, std::string const &line,
-	               int status, bool wrote);
+	               std::uint64_t epoch, int status, bool wrote);
 	void advance();
 	bool submit(agenda::task const &t);
 	std::string assemble(agenda::task const &t);
@@ -136,6 +138,7 @@ private:
 	vault::store       m_vault;     // guarded by m_mtx
 	vault::hash8_fn    m_hash;      // H8, injected
 	agenda::id         m_inflight;  // id at the llm, or none
+	std::uint64_t      m_epoch = 0; // reset generation
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;

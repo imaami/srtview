@@ -294,8 +294,8 @@ static void test_reset()
 	p.heat(tid("v"), 5.0);
 	p.done(tid("a"));
 	p.reset();
-	check(p.status(tid("a")) == agenda::plan::state::done,
-	      "reset keeps done ids: cache files outlive plans");
+	check(p.status(tid("a")) == agenda::plan::state::unknown,
+	      "reset clears done ids: resolution re-derives the cache");
 	check(p.status(tid("b")) == agenda::plan::state::unknown
 	      && p.backlog() == 0,
 	      "reset drops pending tasks");
