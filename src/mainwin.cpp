@@ -420,7 +420,10 @@ MainWin::MainWin()
 	search->addAction(&m_search.prevTextAction());
 
 	// --- status bar ---
-	statusBar()->addPermanentWidget(&m_info);
+	// The info line owns the left of the footer and stretches, so
+	// the regex reads from the left edge instead of being crammed
+	// against the right; only the (rare) state text sits right.
+	statusBar()->addWidget(&m_info, 1);
 	statusBar()->addPermanentWidget(&m_state);
 	setState(QStringLiteral("no file"));
 	// Search-side changes push updates (searchInfoChanged); the
@@ -500,8 +503,10 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 	} else {
 		list << play_entry{video, srt};
 	}
-	if (!m_link.setPlaylist(list, sock, index, &err))
+	if (!m_link.setPlaylist(list, sock, index, &err)) {
+		errState(QStringLiteral("mpv: %1").arg(err));
 		return fail(err);
+	}
 	return showDoc(video, srt);
 }
 
@@ -589,15 +594,14 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
 
-	auto const n = tx.cues.size();
 	m_view.setCues(tx.cues);
 	m_search.refresh();
 	setWindowTitle(QStringLiteral("%1 \u2014 srtview")
 	               .arg(QFileInfo(video).fileName()));
-	setState(QStringLiteral("%1 cues \u00b7 mpv %2")
-	         .arg(n)
-	         .arg(m_link.spawned() ? QStringLiteral("spawned")
-	                               : QStringLiteral("reused")));
+	// No murmur on success: cue counts and mpv lifecycle are
+	// implementation trivia, and the state line stays reserved for
+	// the rare red error.
+	setState({});
 	// A search-driven hop must not pull focus out of the bar; only
 	// a switch made from elsewhere hands the keyboard to the view.
 	if (!barFocused())
@@ -1986,22 +1990,27 @@ void MainWin::updateInfo()
 	}
 
 	QStringList parts;
-	QString const pat = m_search.patternText();
-	if (!pat.isEmpty())
-		parts << m_info.fontMetrics().elidedText(
-			pat, Qt::ElideRight, 320);
 	qsizetype const at = indexOfId(m_trail.videoId());
 	if (at >= 0)
-		parts << QStringLiteral("video %1/%2")
-			.arg(at + 1).arg(m_playlist.size());
+		parts << QStringLiteral("video %1/%2%3")
+			.arg(at + 1).arg(m_playlist.size())
+			.arg(m_view.cueCount() > 0 && m_link.lastPause()
+			     ? QStringLiteral(" (paused)") : QString());
 	if (double const t = m_link.lastTime(); t >= 0.0)
 		parts << fmtTime(t, false);
 	if (QString const m = matchInfo(at); !m.isEmpty())
 		parts << m;
-	if (m_view.cueCount() > 0)
-		parts << (m_link.lastPause()
-			? QStringLiteral("video paused")
-			: QStringLiteral("video playing"));
+	QString const pat = m_search.patternText();
+	if (!pat.isEmpty()) {
+		// The regex leads and reads from the left; it gets
+		// whatever width the fixed parts leave free, never a
+		// fixed crumb.
+		int const used = m_info.fontMetrics().horizontalAdvance(
+			parts.join(QStringLiteral("  ·  ")));
+		parts.prepend(m_info.fontMetrics().elidedText(
+			pat, Qt::ElideRight,
+			std::max(160, m_info.width() - used - 48)));
+	}
 	QString const text = parts.join(QStringLiteral("  ·  "));
 	if (text != m_info.text())
 		m_info.setText(text);
@@ -2474,5 +2483,14 @@ bool MainWin::fail(QString const &msg)
 
 void MainWin::setState(QString const &s)
 {
+	m_state.setStyleSheet(QString());
+	m_state.setText(s);
+}
+
+// Errors wear red so they cannot pass for the ordinary murmur; any
+// later plain state clears the paint.
+void MainWin::errState(QString const &s)
+{
+	m_state.setStyleSheet(QStringLiteral("color:#c22222;"));
 	m_state.setText(s);
 }

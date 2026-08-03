@@ -210,6 +210,7 @@ private:
 	void closeFile();
 	bool fail(QString const &msg);
 	void setState(QString const &s);
+	void errState(QString const &s);
 
 	Prefs                           m_prefs;
 	Trail                           m_trail;
