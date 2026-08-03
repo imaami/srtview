@@ -526,15 +526,17 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 		m_inflight = {};
 	// Naming is the locked half of the write: place() computes the
 	// content-chained target, sweeps the plan id down to one file,
-	// and the rename publishes (R2).  The reply lands only in the
-	// generation it was assembled from -- a corpus reload over an
-	// edited transcript re-keys the chain mid-flight, and a stale
-	// reply must park (absence retries next session), never wear
-	// the new generation's name.  A place that cannot compute -- a
-	// reset raced the chain away -- discards the tmp the same way.
-	std::string const target =
-		wrote && !want.empty() && m_vault.target(t) == want
-		? m_vault.place(t) : std::string();
+	// and the rename publishes (R2).  Both vault reads go by id --
+	// the submitted copy must never re-register, or a reload's
+	// re-shaped entry would be overwritten and the generation
+	// comparison would satisfy itself.  An obsolete completion
+	// touches nothing at all under the id: done() would credit the
+	// replacement generation with a stale artifact, fail() would
+	// park it for the session.  The tmp dies; absence retries.
+	bool const current = !want.empty()
+	                  && m_vault.target(t.id) == want;
+	std::string const target = wrote && current
+		? m_vault.place(t.id) : std::string();
 	if (!target.empty()
 	    && std::rename(tmp.c_str(), target.c_str()) == 0) {
 		journal(m_dir, line);
@@ -542,7 +544,12 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 	} else {
 		if (wrote)
 			std::remove(tmp.c_str());
-		m_plan.fail(t.id);
+		if (current)
+			m_plan.fail(t.id);
+		else if (debug())
+			std::fprintf(stderr, "srtview: facts: %s: obsolete "
+			             "completion dropped\n",
+			             t.id.hex().c_str());
 	}
 
 	// A cancelled task proves nothing about the server; anything

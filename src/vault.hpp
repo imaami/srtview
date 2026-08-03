@@ -63,12 +63,22 @@ public:
 	// deps it knows only by id.  Unregistered ids miss.
 	std::string resolve(agenda::id id);
 
-	// The task's current expected artifact path, computed pure: no
-	// adoption, no sweep, no memo of existence.  Empty while the
-	// chain is incomputable.  The executor compares submit-time
-	// and completion-time values so a reply never publishes under
-	// a generation it was not assembled from.
+	// The task's currently owed artifact name.  Never sweeps,
+	// publishes or re-keys the task's own entry; resolving the
+	// dependency chain may adopt a dep's stale name and memoize --
+	// the same rename any reader would perform next, the vault
+	// doctrine rather than a side effect.  Empty while the chain
+	// is incomputable.  The executor records the submit-time value
+	// and publishes only while it still holds.
 	std::string target(agenda::task const &t);
+
+	// Current-state reads by plan id, for completion: the
+	// registered shape answers, and the caller's task copy never
+	// re-registers -- a reload may have re-shaped the id, and a
+	// stale copy writing itself back would make the generation
+	// comparison vacuous.  Unregistered ids answer empty.
+	std::string target(agenda::id id);
+	std::string place(agenda::id id);
 
 	// The write target for a finished artifact; unlinks every
 	// other file of the plan id except its tmp.  Empty while the

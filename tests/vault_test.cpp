@@ -312,6 +312,21 @@ int main()
 		      "no phantom hit before the executor's rename lands");
 	}
 
+	// --- completion reads current state, never re-registers ------
+	{
+		vault::store s(dir(), mix);
+		s.content(l1, mix("one EDITED"));
+		s.content(l2, mix("two"));
+		auto const old = task(gid(12), agenda::kind::dive, {l1});
+		std::string const want = s.target(old);
+		// The corpus reloads: same plan id, grown dep set.
+		s.resolve(task(gid(12), agenda::kind::dive, {l1, l2}));
+		check(!want.empty() && s.target(gid(12)) != want,
+		      "id-keyed target follows the reloaded shape");
+		check(s.place(gid(12)) == s.target(gid(12)),
+		      "id-keyed placement names the current generation");
+	}
+
 	// --- incomputable chains miss --------------------------------
 	{
 		vault::store s(dir(), mix);

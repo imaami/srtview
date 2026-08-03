@@ -290,29 +290,42 @@ std::string store::resolve(agenda::id id)
 
 std::string store::target(agenda::task const &t)
 {
-	std::size_t const at = registered(t);
-	if (t.what == agenda::kind::terms)
+	registered(t);
+	return target(t.id);
+}
+
+std::string store::target(agenda::id id)
+{
+	std::size_t const at = index_of(id);
+	if (at == npos)
+		return {};
+	if (m_entries[at].t.what == agenda::kind::terms)
 		return flat(at);
 	return chain(at) ? two_part(at) : std::string();
 }
 
 std::string store::place(agenda::task const &t)
 {
-	std::string const targ = target(t);
+	registered(t);
+	return place(t.id);
+}
+
+std::string store::place(agenda::id id)
+{
+	std::string const targ = target(id);
 	if (targ.empty())
 		return targ;
-	std::size_t const at = index_of(t.id);
+	std::size_t const at = index_of(id);
+	agenda::kind const k = m_entries[at].t.what;
 	std::string const keep = fs::path(targ).filename().string();
-	std::string const dir = m_dir + '/'
-	                      + std::string(sub(t.what));
-	for (std::string const &n : siblings(t.id, t.what)) {
+	std::string const dir = m_dir + '/' + std::string(sub(k));
+	for (std::string const &n : siblings(id, k)) {
 		if (n == keep)
 			continue;
 		std::error_code ec;
 		fs::remove(dir + n, ec);
 		if (!ec)
-			journal("dropped " + std::string(sub(t.what))
-			        + n);
+			journal("dropped " + std::string(sub(k)) + n);
 	}
 	// Fresh bytes are about to land -- dependents must hash them,
 	// not a memo of the old artifact -- and the file itself is not
@@ -323,7 +336,7 @@ std::string store::place(agenda::task const &t)
 	// reason.
 	m_entries[at].bytes = {};
 	m_entries[at].path.clear();
-	m_shelf[std::size_t(t.what)].fresh = false;
+	m_shelf[std::size_t(k)].fresh = false;
 	return targ;
 }
 
