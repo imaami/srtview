@@ -263,15 +263,19 @@ transcript const &load(transcripts &cache, QString const &srtPath)
 	auto at = cache.constFind(srtPath);
 	if (at != cache.constEnd())
 		return *at;
-	transcript t;
 	QFile f(srtPath);
-	if (f.open(QIODevice::ReadOnly)) {
-		QByteArray const raw = f.readAll();
-		t.cues = srt::parse(srt::to_utf8({raw.constData(),
-		                                  size_t(raw.size())}));
-		for (srt::cue const &c : t.cues)
-			t.lines << oneLine(c.text);
+	if (!f.open(QIODevice::ReadOnly)) {
+		// An unreadable file must not poison the cache with a
+		// permanent empty: the next touch retries.
+		static transcript const none;
+		return none;
 	}
+	transcript t;
+	QByteArray const raw = f.readAll();
+	t.cues = srt::parse(srt::to_utf8({raw.constData(),
+	                                  size_t(raw.size())}));
+	for (srt::cue const &c : t.cues)
+		t.lines << oneLine(c.text);
 	return *cache.insert(srtPath, std::move(t));
 }
 

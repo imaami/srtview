@@ -560,18 +560,21 @@ void MainWin::mpvSwitched(int index)
 }
 
 // The document side of opening: transcript, identities, chrome.
+// One transcript truth per session: the view reads the same parse
+// the pipeline, tally, evidence and export consume, so none of them
+// can disagree about what the document says.
 bool MainWin::showDoc(QString const &video, QString const &srt)
 {
-	QFile srtFile(srt);
-	if (!srtFile.open(QIODevice::ReadOnly))
-		return fail(QStringLiteral("%1: %2").arg(srt,
-		                                         srtFile.errorString()));
-	QByteArray const raw = srtFile.readAll();
-	std::vector<srt::cue> cues = srt::parse(srt::to_utf8(
-		{raw.constData(), size_t(raw.size())}));
-	if (cues.empty())
-		return fail(QStringLiteral("%1: no cues found (not an SRT "
-		                           "file?)").arg(srt));
+	exporter::transcript const &tx =
+		exporter::load(m_transcripts, srt);
+	if (tx.cues.empty()) {
+		QFile f(srt);
+		return f.open(QIODevice::ReadOnly)
+		       ? fail(QStringLiteral("%1: no cues found (not an "
+		                             "SRT file?)").arg(srt))
+		       : fail(QStringLiteral("%1: %2")
+		              .arg(srt, f.errorString()));
+	}
 
 	// Register under the discovery identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.
@@ -586,8 +589,8 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
 
-	auto const n = cues.size();
-	m_view.setCues(std::move(cues));
+	auto const n = tx.cues.size();
+	m_view.setCues(tx.cues);
 	m_search.refresh();
 	setWindowTitle(QStringLiteral("%1 \u2014 srtview")
 	               .arg(QFileInfo(video).fileName()));
