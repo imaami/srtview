@@ -205,8 +205,10 @@ std::optional<trail_step> Trail::undo()
 			out.pattern = at.pattern;
 		if (got & trail_step::cursor)
 			out.cur = at.cur;
-		if (got & trail_step::video)
+		if (got & trail_step::video) {
+			out.vid = at.vid;
 			out.time = at.time;
+		}
 		need &= ~got;
 	}
 	if (need & trail_step::video)
