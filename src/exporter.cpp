@@ -287,9 +287,12 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 	QSet<QString> partHead;
 	for (topics::export_item const &e : topics::export_plan(corpus)) {
 		QString const name = QString::fromStdString(e.name);
+		// Stored patterns carry their own case semantics -- the
+		// (?i:) wrap, the [Xx] idiom -- and search, evidence and
+		// dives compile them bare; a forced flag here made export
+		// disagree with all three.
 		QRegularExpression const re(
-			QString::fromStdString(e.pattern),
-			QRegularExpression::CaseInsensitiveOption);
+			QString::fromStdString(e.pattern));
 		sink k{corpus, e, grab, st, cache, partMd, partHead,
 		       outDir, outDir + QLatin1Char('/') + name, {}};
 		QDir().mkpath(k.tdir + QStringLiteral("/frames"));
