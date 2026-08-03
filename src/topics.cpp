@@ -146,7 +146,8 @@ struct parser {
 			return video_head(content.substr(kFile.size()));
 		if (!name_ok(content))
 			return fail("topic names cannot contain "
-			            "whitespace, braces or colons");
+			            "whitespace, braces, colons or path "
+			            "separators, or be dot components");
 		if (find(d, content))
 			return fail("duplicate topic");
 		d.topics.push_back({std::string(content), {}});

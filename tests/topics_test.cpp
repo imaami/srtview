@@ -149,6 +149,9 @@ void testErrors()
 	r = topics::parse("- ..\n  - x\n");
 	check(!r.error.empty() && r.line == 1,
 	      "dot components cannot name a topic");
+	r = topics::parse("- .\n  - x\n");
+	check(!r.error.empty() && r.line == 1,
+	      "the single dot cannot either");
 	r = topics::parse("- v1.2\n  - x\n- b\n  - \\{v1.2:}\n");
 	check(r.error.empty(),
 	      "dotted names stay valid and referenceable");
