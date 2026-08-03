@@ -703,7 +703,6 @@ void MainWin::rebuildCorpus(bool fresh)
 	harvestFocus();
 	queueDives(fresh);
 	updateInfo();
-	loadGloss();
 	refreshKnowledge();
 }
 
@@ -1685,6 +1684,13 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 // paths resolve against the file's own directory.
 bool MainWin::loadPlaylist(QString const &path)
 {
+	// The gloss buffer may be the only copy of its words, and the
+	// sidecar identity is about to change with the corpus: commit
+	// first, and a failed save vetoes the whole load -- the buffer
+	// stays the retry source.  (Extending the current corpus never
+	// touches gloss state: loadGloss() runs only here.)
+	if (!commitGloss())
+		return false;
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly))
 		return fail(QStringLiteral("%1: %2").arg(path,
@@ -1702,6 +1708,12 @@ bool MainWin::loadPlaylist(QString const &path)
 	m_corpusPath = path;
 	m_transcripts.clear();               // natural refresh point
 	m_facts.reset();
+	// A corpus swap orphans any export continuation: grabsIdle()
+	// must not re-run the writer against a corpus the export never
+	// saw.
+	m_exportPending = false;
+	m_exportQueued = -1;
+	loadGloss();
 	rebuildCorpus(true);
 	statusBar()->showMessage(QStringLiteral(
 		"playlist: %1 videos, %2 topics")
