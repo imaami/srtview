@@ -48,7 +48,7 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_tree.setColumnCount(3);
 	m_tree.setHeaderLabels({QStringLiteral("item"),
 	                        QStringLiteral("state"),
-	                        QStringLiteral("gloss")});
+	                        QStringLiteral("glossary")});
 	m_tree.header()->setStretchLastSection(true);
 	m_tree.header()->setSectionResizeMode(
 		0, QHeaderView::ResizeToContents);
@@ -59,7 +59,7 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_tabs.setParent(split);
 	m_hits.setColumnCount(2);
 	m_hits.setHeaderLabels({QStringLiteral("time"),
-	                        QStringLiteral("cue")});
+	                        QStringLiteral("match")});
 	m_hits.header()->setStretchLastSection(true);
 	m_hits.setRootIsDecorated(true);
 	m_hits.setUniformRowHeights(true);
@@ -67,8 +67,8 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_preview.setPlaceholderText(
 		QStringLiteral("no artifact cached yet"));
 	m_tabs.addTab(&m_hits, QStringLiteral("Evidence"));
-	m_tabs.addTab(&m_preview, QStringLiteral("Prose"));
-	m_tabs.addTab(&m_gloss, QStringLiteral("Gloss"));
+	m_tabs.addTab(&m_preview, QStringLiteral("Summary"));
+	m_tabs.addTab(&m_gloss, QStringLiteral("Glossary"));
 	split->addWidget(&m_tree);
 	split->addWidget(&m_tabs);
 	split->setStretchFactor(0, 3);
@@ -165,7 +165,7 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
 			listed = 0;
 			grp = new QTreeWidgetItem(&m_hits,
 				{QFileInfo(video).fileName(),
-				 QStringLiteral("%1 cues")
+				 QStringLiteral("%1 matches")
 				 .arg(counts.value(video))});
 			grp->setFlags(Qt::ItemIsEnabled);
 			grp->setExpanded(true);
@@ -197,11 +197,11 @@ void KnowledgePane::setGloss(QString const &text, bool editable)
 	m_gloss.setPlainText(text);
 	m_gloss.setReadOnly(!editable);
 	m_gloss.setPlaceholderText(editable
-		? QStringLiteral("no gloss yet — write one (one line "
-		                 "per point; saved beside the topic "
-		                 "file on leaving the entry)")
-		: QStringLiteral("glosses live beside the topic file "
-		                 "— none is loaded"));
+		? QStringLiteral("no glossary entry yet — write one "
+		                 "(one line per point; saved beside "
+		                 "the topic file on leaving the entry)")
+		: QStringLiteral("glossary entries live beside the "
+		                 "topic file — none is loaded"));
 	m_gloss.document()->setModified(false);
 }
 

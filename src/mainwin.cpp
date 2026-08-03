@@ -1213,6 +1213,13 @@ void MainWin::refreshKnowledge()
 		comp.insert(t->name);
 	QVector<KnowledgeRow> directory;
 	for (topics::topic const &t : m_corpus.topics) {
+		// Building blocks stay under the hood: a referenced topic
+		// is machinery for the exported combinations, not a thing
+		// to read -- listing a bare word-suffix regex as a
+		// "topic" is noise, and searching it finds no coherent
+		// subject.
+		if (comp.contains(t.name))
+			continue;
 		std::string const pat = topics::expand(m_corpus, t);
 		QString const path = QString::fromStdString(
 			m_facts.locate(diveId(pat), agenda::kind::dive));
@@ -1226,8 +1233,6 @@ void MainWin::refreshKnowledge()
 		};
 		if (m_generated.contains(t.name))
 			mark(QStringLiteral("generated"));
-		else if (comp.contains(t.name))
-			mark(QStringLiteral("supportive"));
 		if (!info.gloss.isEmpty())
 			mark(QStringLiteral("proposed"));
 		if (!cached && !m_termTopics.contains(t.name))
@@ -1621,7 +1626,7 @@ bool MainWin::commitGloss()
 		// The human's words must not vanish quietly: the flag
 		// stays up so the buffer remains the retry source, and
 		// the status line says why.
-		setState(QStringLiteral("gloss save failed (%1)")
+		errState(QStringLiteral("glossary save failed (%1)")
 		         .arg(out.errorString()));
 		return false;
 	}
