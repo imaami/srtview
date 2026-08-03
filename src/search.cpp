@@ -103,17 +103,27 @@ void SearchCtl::hideSearch()
 	m_view.setFocus();
 }
 
-// Enter in the search field: the incremental jump has already landed
-// on the match, so this hit is the destination -- sync the video
-// like F3 would, accept, and get out of the way.
+// Enter in the search field: typing was inert, so this is where the
+// landing happens -- jump to the first match at or after where the
+// search began (wrapped), sync the video like F3 would, accept, and
+// get out of the way.
 void SearchCtl::commitSearch()
 {
 	recordUse(true);
 	if (m_nav)
 		m_nav->searchCommitted();
-	// On an already-recorded pattern the state may not be current
-	// yet: hop to this hit like F3 would, minus the find.
 	if (!m_matchStarts.empty() && m_view.cueCount() > 0) {
+		QTextCursor const from = m_anchor.isNull()
+			? QTextCursor(m_view.document()) : m_anchor;
+		QTextCursor hit = m_view.document()->find(pattern(),
+		                                          from);
+		if (hit.isNull())
+			hit = m_view.document()->find(pattern(),
+				QTextCursor(m_view.document()));
+		if (!hit.isNull()) {
+			m_view.setTextCursor(hit);
+			updateCounter(hit);
+		}
 		trail_step s;
 		s.pattern = m_bar.pattern();
 		s.time = m_view.cueStart(m_view.currentCue());
@@ -126,8 +136,9 @@ void SearchCtl::commitSearch()
 	m_view.setFocus();
 }
 
-// Pattern edited: refresh highlights and jump to the first match at
-// or after where the search began.
+// Pattern edited: refresh the highlights and the counter, nothing
+// else.  Typing must not move the view, the cursor or the video --
+// the landing belongs to Enter (commitSearch) and to F3.
 void SearchCtl::searchChanged()
 {
 	if (!m_stepping && !m_trail.applying()) {
@@ -136,22 +147,6 @@ void SearchCtl::searchChanged()
 		                             // pattern and match set
 	}
 	highlightAll();
-	if (m_trail.applying() || m_quiet)
-		return;                      // undo restores text only (the
-	                                 // cursor has its own steps), and
-	                                 // quiet passes never move it
-	if (m_matchStarts.empty() || m_bar.pattern().isEmpty())
-		return;
-	QTextCursor const from = m_anchor.isNull()
-		? QTextCursor(m_view.document()) : m_anchor;
-	QTextCursor hit = m_view.document()->find(pattern(), from);
-	if (hit.isNull())
-		hit = m_view.document()->find(pattern(),
-		                              QTextCursor(m_view.document()));
-	if (!hit.isNull()) {
-		m_view.setTextCursor(hit);
-		updateCounter(hit);
-	}
 }
 
 void SearchCtl::findAgain(bool backward, bool syncVideo)

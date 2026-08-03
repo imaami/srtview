@@ -1,9 +1,9 @@
 // searchbar.hpp -- IDE-style search overlay.
 //
 // Slides in below the top edge of the view on Ctrl+F, slides away on
-// Esc or Enter (Enter accepts: the incremental search has already
-// landed on a match, so the next keystroke belongs to the view).
-// The pattern keeps working (F3, n/N) while the bar is hidden.
+// Esc or Enter.  Typing only paints highlights; Enter performs the
+// landing (first match from the anchor) and hands the keyboard back
+// to the view.  The pattern keeps working (F3, n/N) while hidden.
 //
 // Split for deduplication: search_bar_base carries the widgets,
 // styling and slide animation, compiled once in searchbar.cpp;
