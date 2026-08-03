@@ -109,9 +109,10 @@ void SearchCtl::hideSearch()
 // get out of the way.
 void SearchCtl::commitSearch()
 {
-	recordUse(true);
-	if (m_nav)
-		m_nav->searchCommitted();
+	// Land first: recordUse() syncs the video facet and anchors
+	// the ring only from on top of an actual hit, an invariant the
+	// live jump used to provide -- with typing inert, the jump is
+	// Enter's first act, and everything records from the landing.
 	if (!m_matchStarts.empty() && m_view.cueCount() > 0) {
 		QTextCursor const from = m_anchor.isNull()
 			? QTextCursor(m_view.document()) : m_anchor;
@@ -124,6 +125,11 @@ void SearchCtl::commitSearch()
 			m_view.setTextCursor(hit);
 			updateCounter(hit);
 		}
+	}
+	recordUse(true);
+	if (m_nav)
+		m_nav->searchCommitted();
+	if (!m_matchStarts.empty() && m_view.cueCount() > 0) {
 		trail_step s;
 		s.pattern = m_bar.pattern();
 		s.time = m_view.cueStart(m_view.currentCue());

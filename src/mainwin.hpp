@@ -131,10 +131,9 @@ private:
 
 	// The four zoom domains, nested: captions and the search bar
 	// chrome scale from the base (application) font, the pattern
-	// text from the chrome.  Ctrl +/-/0 act on the focused domain;
-	// Ctrl+Shift+0 resets the lot.  Clicking the menu bar or the
-	// footer focuses the footer: the base domain's mouse handle
-	// (neither bar is focusable by itself).
+	// text from the chrome.  Ctrl +/-/0 act on the domain under
+	// the pointer -- pattern field, bar, captions, base for
+	// everything else; Ctrl+Shift+0 resets the lot.
 	enum class ZoomDom { base, captions, bar, regex };
 
 	static bool droppable(QMimeData const *md);

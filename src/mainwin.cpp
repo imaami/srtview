@@ -245,10 +245,10 @@ MainWin::MainWin()
 {
 	m_grab.setListener(this, this);
 	m_exportTick.start();
-	// Clicks on the top or bottom chrome focus the footer: that is
-	// the base zoom domain's handle (neither bar is focusable by
-	// itself, and focusing the menu bar would hijack plain keys as
-	// mnemonics).
+	// Clicks on the top or bottom chrome focus the footer: neither
+	// bar is focusable by itself, and focusing the menu bar would
+	// hijack plain keys as mnemonics.  (Zoom no longer cares about
+	// focus -- the domain follows the pointer.)
 	statusBar()->installEventFilter(this);
 	menuBar()->installEventFilter(this);
 	// main() has normalized a pixel-sized platform font to integer
@@ -2005,18 +2005,22 @@ void MainWin::updateInfo()
 		parts << fmtTime(t, false);
 	if (QString const m = matchInfo(at); !m.isEmpty())
 		parts << m;
+	QString const sep = QStringLiteral("  ·  ");
 	QString const pat = m_search.patternText();
 	if (!pat.isEmpty()) {
 		// The regex leads and reads from the left; it gets
-		// whatever width the fixed parts leave free, never a
-		// fixed crumb.
-		int const used = m_info.fontMetrics().horizontalAdvance(
-			parts.join(QStringLiteral("  ·  ")));
-		parts.prepend(m_info.fontMetrics().elidedText(
+		// whatever width the fixed parts and their separator
+		// leave free, floored so a crowded footer still shows a
+		// useful head.
+		QFontMetrics const fm = m_info.fontMetrics();
+		int const used = fm.horizontalAdvance(parts.join(sep))
+		               + (parts.isEmpty()
+		                  ? 0 : fm.horizontalAdvance(sep));
+		parts.prepend(fm.elidedText(
 			pat, Qt::ElideRight,
-			std::max(160, m_info.width() - used - 48)));
+			std::max(160, m_info.width() - used)));
 	}
-	QString const text = parts.join(QStringLiteral("  ·  "));
+	QString const text = parts.join(sep);
 	if (text != m_info.text())
 		m_info.setText(text);
 }
