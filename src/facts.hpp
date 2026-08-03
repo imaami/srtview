@@ -144,6 +144,7 @@ private:
 	vault::store       m_vault;     // guarded by m_mtx
 	vault::hash8_fn    m_hash;      // H8, injected
 	agenda::id         m_inflight;  // id at the llm, or none
+	std::uint64_t      m_llmTask = 0; // llm_ask() id in flight
 	std::uint64_t      m_epoch = 0; // reset generation
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails

@@ -961,7 +961,11 @@ void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
 	// must also count -- otherwise a cached thread gets re-probed.
 	if (m_facts.cached(written)
 	    || !m_facts.locate(fid, agenda::kind::focus).empty()) {
-		m_focusPending.push_back(fid);
+		// An extension restage can revisit the pair: one pending
+		// entry per file is plenty.
+		if (std::ranges::find(m_focusPending, fid)
+		    == m_focusPending.end())
+			m_focusPending.push_back(fid);
 		return;
 	}
 	PendingFocus w;

@@ -490,6 +490,14 @@ void Facts::reset()
 {
 	std::lock_guard const lock(m_mtx);
 	++m_epoch;
+	// The epoch already condemns the in-flight reply; cancelling
+	// the request too means the new corpus never waits out a
+	// generation nobody will keep.  Lock order is sanctioned (R3:
+	// m_mtx before the client's internals), and the LLM_ERR_CANCEL
+	// delivery clears the flight slot through the ordinary discard
+	// path.
+	if (m_llmTask)
+		llm_cancel(m_llm, m_llmTask);
 	m_plan.reset();
 	m_bodies.clear();
 }
@@ -540,8 +548,10 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
                       std::uint64_t epoch, int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
-	if (m_inflight == t.id)
+	if (m_inflight == t.id) {
 		m_inflight = {};
+		m_llmTask = 0;
+	}
 	// Naming is the locked half of the write: place() computes the
 	// content-chained target, sweeps the plan id down to one file,
 	// and the rename publishes (R2).  Both vault reads go by id --
@@ -636,10 +646,12 @@ bool Facts::submit(agenda::task const &t)
 		.timeout_s   = kTimeoutS,
 		.temperature = 0.0,
 	};
-	if (!llm_ask(m_llm, &ask, deliver, ctx)) {
+	std::uint64_t const id = llm_ask(m_llm, &ask, deliver, ctx);
+	if (!id) {
 		delete ctx;
 		return false;
 	}
+	m_llmTask = id;
 	if (debug())
 		std::fprintf(stderr, "srtview: facts: ask %s %s\n",
 		             kKindName[std::size_t(t.what)],
