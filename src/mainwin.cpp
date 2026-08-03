@@ -2280,10 +2280,17 @@ void MainWin::closeEvent(QCloseEvent *ev)
 {
 	// The gloss buffer may be the only copy of the words: a failed
 	// save refuses the first close (the statusline carries the
-	// error) and a second close request overrides knowingly.
-	if (!commitGloss() && !std::exchange(m_closeAnyway, true)) {
-		ev->ignore();
-		return;
+	// error) and a second close request overrides knowingly.  The
+	// override binds to the exact failed buffer revision -- any
+	// further edit is new text and earns a fresh refusal.
+	if (!commitGloss()) {
+		int const rev =
+			m_know.glossEdit().document()->revision();
+		if (m_failedCloseRev != rev) {
+			m_failedCloseRev = rev;
+			ev->ignore();
+			return;
+		}
 	}
 	m_grab.shutdown();
 	m_link.shutdown();

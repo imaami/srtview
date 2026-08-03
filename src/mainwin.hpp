@@ -263,8 +263,8 @@ private:
 	int                             m_zoomRegex = 0;
 	int                             m_tallyTotal = -1;
 	int                             m_exportQueued = -1;
+	int                             m_failedCloseRev = -1;
 	bool                            m_exportPending = false;
-	bool                            m_closeAnyway = false;
 };
 
 #endif // SRTVIEW_SRC_MAINWIN_HPP_
