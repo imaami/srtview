@@ -43,6 +43,7 @@ public:
 	// the chrome; the caller repositions after a change.
 	void setTypeZoom(double bar, double edit);
 	bool editFocused() const { return m_edit.hasFocus(); }
+	bool editHovered() const { return m_edit.underMouse(); }
 
 protected:
 	explicit search_bar_base(QWidget *parent);

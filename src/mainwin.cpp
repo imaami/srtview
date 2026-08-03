@@ -265,7 +265,7 @@ MainWin::MainWin()
 	resize(1220, 1440);
 	setWindowTitle(QStringLiteral("srtview"));
 
-	// Zoom keys route by focus (zoomDomain), so they must fire from
+	// Zoom keys route by hover (zoomDomain), so they must fire from
 	// anywhere in the application.
 	auto const zoomKey = [this](char const *seq, auto fn) {
 		auto *sc = new QShortcut(
@@ -2098,14 +2098,15 @@ bool MainWin::barFocused() const
 
 MainWin::ZoomDom MainWin::zoomDomain() const
 {
-	QWidget const *fw = QApplication::focusWidget();
-	if (!fw)
-		return ZoomDom::base;
-	if (m_bar.editFocused())
+	// The domain is whatever the pointer hovers -- zoom acts on
+	// what the eye is on, never on which widget last took focus.
+	// Anywhere else (knowledge pane, chrome, outside) is the base
+	// domain, which scales everything at once.
+	if (m_bar.isVisible() && m_bar.editHovered())
 		return ZoomDom::regex;
-	if (barFocused())
+	if (m_bar.isVisible() && m_bar.underMouse())
 		return ZoomDom::bar;
-	if (fw == &m_view || m_view.isAncestorOf(fw))
+	if (m_view.underMouse())
 		return ZoomDom::captions;
 	return ZoomDom::base;
 }
@@ -2160,6 +2161,11 @@ void MainWin::applyZoom(ZoomDom d)
 		statusBar()->setFont(QApplication::font("QStatusBar"));
 		m_info.setFont(base);
 		m_state.setFont(base);
+		// The knowledge pane belongs to the base domain like the
+		// rest of the chrome: an explicit parent font propagates
+		// to every child and outranks whatever per-class fonts
+		// the platform theme installed.
+		m_know.setFont(base);
 	}
 	if (d == ZoomDom::base || d == ZoomDom::captions)
 		m_view.setTypeZoom(zoomFactor(m_zoomCaptions));
