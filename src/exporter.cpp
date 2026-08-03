@@ -53,10 +53,18 @@ void writeMd(QString const &path, QString const &md)
 		f.write(md.toUtf8());
 }
 
-QString frameName(source const &v, qint64 ms)
+QString frameName(source const &v, qint64 ms,
+                  QSet<QString> const &dup)
 {
-	return safeStem(v.video) + QLatin1Char('-')
-	     + QString::number(ms) + QStringLiteral(".png");
+	QString const s = safeStem(v.video);
+	// Stem twins salt with the discovery id: two videos' frames
+	// must never claim one name, or the content collapse silently
+	// cross-links their digests.
+	QString const tag = dup.contains(s)
+		? QStringLiteral("-") + v.id.left(6)
+		: QString();
+	return s + tag + QLatin1Char('-') + QString::number(ms)
+	     + QStringLiteral(".png");
 }
 
 QString mdImg(QString const &name)
@@ -94,6 +102,7 @@ struct sink {
 	transcripts               &texts;
 	QHash<QString, QString>   &partMd;
 	QSet<QString>             &partHead; // "<part>\n<video>" emitted
+	QSet<QString> const       &dup;     // colliding video stems
 	QString const             &outDir;
 	QString                    tdir;     // the grouping's directory
 	QString                    md;       // the grouping's digest
@@ -107,7 +116,8 @@ struct sink {
 // straddling several picks) become one file every digest references.
 QString frameLink(sink &k, source const &v, qint64 ms)
 {
-	QString name = frameName(v, ms);
+	QString const requested = frameName(v, ms, k.dup);
+	QString name = requested;
 	QString const src = k.grab.framePath(v.id, ms);
 	QByteArray hash = k.hashOf.value(src);
 	if (hash.isEmpty()) {
@@ -124,7 +134,7 @@ QString frameLink(sink &k, source const &v, qint64 ms)
 		else
 			name = seen;
 	}
-	k.canon.insert(frameName(v, ms), name);
+	k.canon.insert(requested, name);
 	QString const dst = k.tdir + QStringLiteral("/frames/") + name;
 	if (!QFile::exists(dst))
 		QFile::copy(src, dst);
@@ -138,8 +148,8 @@ QString partLink(sink &k, QString const &part, source const &v,
 {
 	// Resolve through the grouping's content collapse: the copy the
 	// grouping actually holds is the one worth linking.
-	QString const name = k.canon.value(frameName(v, ms),
-	                                   frameName(v, ms));
+	QString const requested = frameName(v, ms, k.dup);
+	QString const name = k.canon.value(requested, requested);
 	QString const dir = k.outDir + QLatin1Char('/') + part
 	                  + QStringLiteral("/frames");
 	QDir().mkpath(dir);
@@ -285,6 +295,17 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 	stats st;
 	QHash<QString, QString> partMd;
 	QSet<QString> partHead;
+	// Sanitized-stem twins across the video list: their frames
+	// carry the discovery id, deterministically, whatever the
+	// export order.
+	QSet<QString> dup, seen;
+	for (source const &v : videos) {
+		QString const s = safeStem(v.video);
+		if (seen.contains(s))
+			dup.insert(s);
+		else
+			seen.insert(s);
+	}
 	for (topics::export_item const &e : topics::export_plan(corpus)) {
 		QString const name = QString::fromStdString(e.name);
 		// Stored patterns carry their own case semantics -- the
@@ -293,7 +314,7 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 		// disagree with all three.
 		QRegularExpression const re(
 			QString::fromStdString(e.pattern));
-		sink k{corpus, e, grab, st, cache, partMd, partHead,
+		sink k{corpus, e, grab, st, cache, partMd, partHead, dup,
 		       outDir, outDir + QLatin1Char('/') + name, {}};
 		QDir().mkpath(k.tdir + QStringLiteral("/frames"));
 		k.md = QStringLiteral("# ") + name
