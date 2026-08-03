@@ -512,6 +512,12 @@ std::string Facts::locate(agenda::id plan, agenda::kind k) const
 	return m_vault.locate(plan, k);
 }
 
+std::string Facts::artifact(agenda::id id)
+{
+	std::lock_guard const lock(m_mtx);
+	return m_vault.resolve(id);
+}
+
 // On the llm worker thread; the tmp write stays outside the lock,
 // and the artifact is named under it in completed().
 void Facts::deliver(void *ud, std::uint64_t, int status,

@@ -239,6 +239,8 @@ private:
 	std::size_t                     m_diveAt = 0;// scan cursor
 	std::vector<FinishedDive>       m_dives;     // for pairing
 	std::vector<PendingFocus>       m_focusWork; // probe chains
+	std::vector<agenda::id>         m_focusPending; // pair-owned
+	                                             // files to harvest
 	std::set<std::string>           m_generated; // machine topic names
 	std::set<std::string>           m_harvested; // focus ids seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded

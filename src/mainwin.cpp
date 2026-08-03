@@ -656,6 +656,7 @@ void MainWin::rebuildCorpus(bool fresh)
 	if (fresh) {
 		m_dives.clear();
 		m_focusWork.clear();
+		m_focusPending.clear();
 		m_generated.clear();
 		m_harvested.clear();
 		m_termsWork.clear();
@@ -952,10 +953,17 @@ void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
 	written.id = fid;
 	written.deps = {a.id, b.id};
 	written.what = agenda::kind::focus;
-	// resolve()-backed: a stale-named focus file adopts its
-	// current name en passant.
-	if (m_facts.cached(written))
+	// A written thread re-enters the corpus only through its own
+	// pair -- this door -- so another corpus's focus files can
+	// never bleed in.  cached() adopts a stale name en passant
+	// when the dive chain is computable; on a cold start the dive
+	// prose may still be pending, so bare existence via locate()
+	// must also count -- otherwise a cached thread gets re-probed.
+	if (m_facts.cached(written)
+	    || !m_facts.locate(fid, agenda::kind::focus).empty()) {
+		m_focusPending.push_back(fid);
 		return;
+	}
 	PendingFocus w;
 	w.probe = probeId(a.id, b.id, false);
 	w.focus = fid;
@@ -1092,6 +1100,9 @@ bool MainWin::finishProbe(DiveScan const &s, PendingFocus &w)
 	t.what = agenda::kind::focus;
 	t.exported = false;
 	m_facts.offer(std::move(t), s.parts);
+	// The write lands asynchronously; the pending list lets the
+	// harvest tick pick it up once the file exists.
+	m_focusPending.push_back(w.focus);
 	return false;
 }
 
@@ -1106,8 +1117,11 @@ std::size_t MainWin::focusWorkOf(agenda::id id) const
 // Harvest completed focuses: NONE verdicts and malformed regex
 // lines are final; a valid REGEX line joins the corpus as a
 // generated topic (focusN) and dives like any other, supportive.
-// Runs on a slow tick and at every corpus rebuild, so one session's
-// hypotheses re-enter the next session's plan from the cache.
+// Runs on a slow tick and at every corpus rebuild.  Candidates come
+// from the pending list the pair flow feeds -- never from a scan of
+// the shared cache directory, whose files belong to every corpus
+// ever studied: a thread re-enters exactly the corpus that
+// re-derives its pair.
 void MainWin::harvestFocus()
 {
 	// Terms before focus, enforced: focus regexes adopt only against
@@ -1116,15 +1130,20 @@ void MainWin::harvestFocus()
 	for (TermsWork const &w : m_termsWork)
 		if (!m_termsSeen.contains(w.id.hex()))
 			return;
-	QDir const dir(QString::fromStdString(m_facts.dir())
-	               + QStringLiteral("/focus"));
-	for (QString const &name : dir.entryList(
-	     {QStringLiteral("*.txt")}, QDir::Files)) {
-		// Keyed by the 16-char plan-id prefix: a vault rename
-		// must not re-trigger the harvest.
-		if (m_harvested.insert(name.left(16).toStdString())
-		    .second)
-			harvestOne(dir.filePath(name));
+	for (std::size_t i = 0; i < m_focusPending.size();) {
+		agenda::id const id = m_focusPending[i];
+		// resolve-by-id: adopts a stale name the moment the
+		// pair's prose makes the chain computable, so the
+		// journaled adoption lands in the session that owns it.
+		std::string const p = m_facts.artifact(id);
+		if (p.empty()) {             // not yet landed or ripe
+			++i;
+			continue;
+		}
+		if (m_harvested.insert(id.hex()).second)
+			harvestOne(QString::fromStdString(p));
+		m_focusPending.erase(m_focusPending.begin()
+		                     + std::ptrdiff_t(i));
 	}
 	if (m_diveAt < m_diveScans.size())
 		m_diveTick.start();
@@ -1237,14 +1256,17 @@ void MainWin::refreshKnowledge()
 			return c ? c < 0 : a.name < b.name;
 		});
 	rows += directory;
-	QDir const fdir(QString::fromStdString(m_facts.dir())
-	                + QStringLiteral("/focus"));
-	// Distinct probes can converge on one regex: both essays stay
-	// visible, numbered apart past the first.
+	// Only threads harvested into THIS corpus list: the shared
+	// cache directory holds every corpus's essays, and strangers
+	// stay invisible.  Distinct probes can converge on one regex:
+	// both essays stay visible, numbered apart past the first.
 	QHash<QString, int> seen;
-	for (QString const &name : fdir.entryList(
-	     {QStringLiteral("*.txt")}, QDir::Files)) {
-		QString const path = fdir.filePath(name);
+	for (std::string const &hex : m_harvested) {
+		QString const path = QString::fromStdString(
+			m_facts.locate(agenda::id::from_hex(hex),
+			               agenda::kind::focus));
+		if (path.isEmpty())
+			continue;
 		QFile f(path);
 		if (!f.open(QIODevice::ReadOnly))
 			continue;

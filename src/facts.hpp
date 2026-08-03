@@ -98,6 +98,12 @@ public:
 	std::string fetch(agenda::task const &t);
 	std::string locate(agenda::id plan, agenda::kind k) const;
 
+	// The registered task's artifact path by bare id, resolving --
+	// and adopting -- under the lock; empty while the file is
+	// missing or the chain is still incomputable.  The focus
+	// harvest waits on exactly this.
+	std::string artifact(agenda::id id);
+
 	// A caller-built task with a snapshot: a dive's matched
 	// excerpts, a probe's transcript sample (plus feedback on a
 	// retry), a focus write's searched evidence.  The caller sets
