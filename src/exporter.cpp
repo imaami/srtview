@@ -299,6 +299,12 @@ transcript const &load(transcripts &cache, QString const &srtPath)
 	QByteArray const raw = f.readAll();
 	t.cues = srt::parse(srt::to_utf8({raw.constData(),
 	                                  size_t(raw.size())}));
+	if (t.cues.empty()) {
+		// Readable but not an SRT (yet): cache nothing, so a
+		// repaired file is re-read on the next touch.
+		static transcript const none;
+		return none;
+	}
 	for (srt::cue const &c : t.cues)
 		t.lines << oneLine(c.text);
 	return *cache.insert(srtPath, std::move(t));
