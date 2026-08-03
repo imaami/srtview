@@ -1421,8 +1421,12 @@ void MainWin::harvestTerms()
 // human copies it into the sidecar.
 bool MainWin::harvestTermsOne(TermsWork const &w)
 {
-	QFile f(QString::fromStdString(
-		m_facts.locate(w.id, agenda::kind::terms)));
+	std::string const path = m_facts.locate(w.id,
+	                                        agenda::kind::terms);
+	if (path.empty())
+		return false;   // unanswered: QFile("") would gripe
+		                // ("No file name specified") every tick
+	QFile f(QString::fromStdString(path));
 	if (!f.open(QIODevice::ReadOnly))
 		return false;
 	QString const text = QString::fromUtf8(f.readAll());
