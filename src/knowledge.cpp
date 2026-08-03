@@ -163,10 +163,12 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
 					  .arg(listed));
 			video = h.video;
 			listed = 0;
+			int const n = counts.value(video);
 			grp = new QTreeWidgetItem(&m_hits,
 				{QFileInfo(video).fileName(),
-				 QStringLiteral("%1 matches")
-				 .arg(counts.value(video))});
+				 n == 1 ? QStringLiteral("1 match")
+				        : QStringLiteral("%1 matches")
+				          .arg(n)});
 			grp->setFlags(Qt::ItemIsEnabled);
 			grp->setExpanded(true);
 		}
