@@ -71,8 +71,11 @@ QString frameName(source const &v, qint64 ms,
 	QString const s = safeStem(v.video);
 	// Stem twins salt with the source identity: two videos'
 	// frames must never claim one name, or the content collapse
-	// silently cross-links their digests.
-	QString const tag = dup.contains(s)
+	// silently cross-links their digests.  Twinhood is judged
+	// case-folded -- the export may land on a case-insensitive
+	// filesystem (the WSL2 /mnt/c reality), where Foo and foo
+	// are one file.
+	QString const tag = dup.contains(s.toCaseFolded())
 		? QStringLiteral("-") + sourceTag(v)
 		: QString();
 	return s + tag + QLatin1Char('-') + QString::number(ms)
@@ -307,16 +310,17 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 	stats st;
 	QHash<QString, QString> partMd;
 	QSet<QString> partHead;
-	// Sanitized-stem twins across the video list: their frames
-	// carry the discovery id, deterministically, whatever the
-	// export order.
+	// Sanitized-stem twins across the video list, judged
+	// case-folded for case-insensitive target filesystems: their
+	// frames carry the discovery id, deterministically, whatever
+	// the export order.
 	QSet<QString> dup, seen;
 	for (source const &v : videos) {
-		QString const s = safeStem(v.video);
-		if (seen.contains(s))
-			dup.insert(s);
+		QString const key = safeStem(v.video).toCaseFolded();
+		if (seen.contains(key))
+			dup.insert(key);
 		else
-			seen.insert(s);
+			seen.insert(key);
 	}
 	for (topics::export_item const &e : topics::export_plan(corpus)) {
 		QString const name = QString::fromStdString(e.name);
