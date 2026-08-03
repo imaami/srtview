@@ -53,15 +53,27 @@ void writeMd(QString const &path, QString const &md)
 		f.write(md.toUtf8());
 }
 
+// The identity a frame name leans on: the whole discovery id --
+// a truncation would reintroduce the collision it exists to kill
+// -- or a path hash when discovery could not resolve the video.
+QString sourceTag(source const &v)
+{
+	if (!v.id.isEmpty())
+		return v.id;
+	return QString::fromLatin1(QCryptographicHash::hash(
+		v.video.toUtf8(),
+		QCryptographicHash::Blake2b_256).toHex().left(16));
+}
+
 QString frameName(source const &v, qint64 ms,
                   QSet<QString> const &dup)
 {
 	QString const s = safeStem(v.video);
-	// Stem twins salt with the discovery id: two videos' frames
-	// must never claim one name, or the content collapse silently
-	// cross-links their digests.
+	// Stem twins salt with the source identity: two videos'
+	// frames must never claim one name, or the content collapse
+	// silently cross-links their digests.
 	QString const tag = dup.contains(s)
-		? QStringLiteral("-") + v.id.left(6)
+		? QStringLiteral("-") + sourceTag(v)
 		: QString();
 	return s + tag + QLatin1Char('-') + QString::number(ms)
 	     + QStringLiteral(".png");
