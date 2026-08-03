@@ -139,6 +139,19 @@ void testErrors()
 
 	r = topics::parse("- \n");
 	check(!r.error.empty() && r.line == 1, "empty item");
+
+	r = topics::parse("- a/b\n  - x\n");
+	check(!r.error.empty() && r.line == 1,
+	      "path separators cannot name a topic");
+	r = topics::parse("- a\\b\n  - x\n");
+	check(!r.error.empty() && r.line == 1,
+	      "backslashes cannot either");
+	r = topics::parse("- ..\n  - x\n");
+	check(!r.error.empty() && r.line == 1,
+	      "dot components cannot name a topic");
+	r = topics::parse("- v1.2\n  - x\n- b\n  - \\{v1.2:}\n");
+	check(r.error.empty(),
+	      "dotted names stay valid and referenceable");
 }
 
 void testExportPlan()

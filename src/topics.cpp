@@ -51,12 +51,21 @@ struct cursor {
 	}
 };
 
+bool name_char(char c)
+{
+	return !ws(c) && c != '{' && c != '}' && c != ':'
+	    && c != '/' && c != '\\';
+}
+
+// Names are identifiers, never filesystem paths: export mints a
+// directory per topic, so separators and dot components would turn
+// a crafted topic file into an arbitrary-path write primitive.
 bool name_ok(std::string_view name)
 {
-	if (name.empty())
+	if (name.empty() || name == "." || name == "..")
 		return false;
 	for (char c : name)
-		if (ws(c) || c == '{' || c == '}' || c == ':')
+		if (!name_char(c))
 			return false;
 	return true;
 }
@@ -74,7 +83,7 @@ bool next_ref(std::string_view frag, std::size_t from, ref &out)
 	for (std::size_t p = frag.find("\\{", from);
 	     p != std::string_view::npos; p = frag.find("\\{", p + 2)) {
 		std::size_t q = p + 2;
-		while (q < frag.size() && name_ok(frag.substr(q, 1)))
+		while (q < frag.size() && name_char(frag[q]))
 			++q;
 		if (q == p + 2 || !frag.substr(q).starts_with(":}"))
 			continue;
