@@ -173,12 +173,14 @@ constexpr char const *kKindName[] = {"leaf", "node", "dive",
 // A reply's context travels as the task's user data, heap-owned:
 // exactly one callback per accepted task makes adoption in
 // deliver() the release.  The path is the plan-stable tmp target;
-// the task rides whole so completed() can name the artifact by its
-// current content chain, the journal line and file head prepared
+// want is the artifact name the chain owed at submit time, so
+// completed() can tell a reply from a superseded generation apart;
+// the task rides whole, the journal line and file head prepared
 // while the task was known.
 struct reply_ctx {
 	Facts        *self;
 	std::string   path;
+	std::string   want;
 	std::string   line;
 	std::string   head;
 	agenda::task  t;
@@ -511,23 +513,28 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
 		             ctx->t.id.hex().c_str(),
 		             llm_strerror(status));
-	ctx->self->completed(ctx->t, ctx->path, ctx->line, status,
-	                     wrote);
+	ctx->self->completed(ctx->t, ctx->path, ctx->want, ctx->line,
+	                     status, wrote);
 }
 
 void Facts::completed(agenda::task const &t, std::string const &tmp,
-                      std::string const &line, int status, bool wrote)
+                      std::string const &want, std::string const &line,
+                      int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
 	if (m_inflight == t.id)
 		m_inflight = {};
 	// Naming is the locked half of the write: place() computes the
 	// content-chained target, sweeps the plan id down to one file,
-	// and the rename publishes (R2).  A place that cannot compute
-	// -- a reset raced the chain away -- discards the tmp and
-	// parks; absence retries next session.
-	std::string const target = wrote ? m_vault.place(t)
-	                                 : std::string();
+	// and the rename publishes (R2).  The reply lands only in the
+	// generation it was assembled from -- a corpus reload over an
+	// edited transcript re-keys the chain mid-flight, and a stale
+	// reply must park (absence retries next session), never wear
+	// the new generation's name.  A place that cannot compute -- a
+	// reset raced the chain away -- discards the tmp the same way.
+	std::string const target =
+		wrote && !want.empty() && m_vault.target(t) == want
+		? m_vault.place(t) : std::string();
 	if (!target.empty()
 	    && std::rename(tmp.c_str(), target.c_str()) == 0) {
 		journal(m_dir, line);
@@ -583,6 +590,7 @@ bool Facts::submit(agenda::task const &t)
 	// The context first: a leaf's snapshot is spent by assemble(),
 	// so nothing fallible may sit between spending it and the ask.
 	auto *ctx = new (std::nothrow) reply_ctx{this, m_vault.tmp(t),
+	                                         m_vault.target(t),
 	                                         journal_line(t),
 	                                         head_of(t), t};
 	if (!ctx)

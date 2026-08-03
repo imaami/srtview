@@ -116,7 +116,8 @@ private:
 	static void deliver(void *ud, std::uint64_t task, int status,
 	                    char const *text, std::size_t size);
 	void completed(agenda::task const &t, std::string const &tmp,
-	               std::string const &line, int status, bool wrote);
+	               std::string const &want, std::string const &line,
+	               int status, bool wrote);
 	void advance();
 	bool submit(agenda::task const &t);
 	std::string assemble(agenda::task const &t);

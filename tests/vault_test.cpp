@@ -164,6 +164,8 @@ int main()
 		check(!q_da.empty() && q_da != p_da
 		      && get(q_da) == "dive a",
 		      "dives over the edited leaf rename too");
+		check(s.target(tn) == q_n,
+		      "target() follows the current generation");
 		check(s.resolve(tdb) == p_db && fs::exists(p_db),
 		      "an untouched chain keeps its exact name");
 		check(count(get(dir() + "/journal.txt"), ": content")
@@ -232,6 +234,8 @@ int main()
 		put(junk1, "junk");
 		put(junk2, "junk");
 		put(s.tmp(tn), "incoming");
+		check(s.target(tn) == r_n && fs::exists(junk1),
+		      "target() names without sweeping");
 		std::string const target = s.place(tn);
 		check(target == r_n && !fs::exists(junk1)
 		      && !fs::exists(junk2) && fs::exists(s.tmp(tn))

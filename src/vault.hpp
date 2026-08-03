@@ -63,6 +63,13 @@ public:
 	// deps it knows only by id.  Unregistered ids miss.
 	std::string resolve(agenda::id id);
 
+	// The task's current expected artifact path, computed pure: no
+	// adoption, no sweep, no memo of existence.  Empty while the
+	// chain is incomputable.  The executor compares submit-time
+	// and completion-time values so a reply never publishes under
+	// a generation it was not assembled from.
+	std::string target(agenda::task const &t);
+
 	// The write target for a finished artifact; unlinks every
 	// other file of the plan id except its tmp.  Empty while the
 	// chain is incomputable.

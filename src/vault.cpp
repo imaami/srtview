@@ -288,18 +288,21 @@ std::string store::resolve(agenda::id id)
 	return at == npos ? std::string() : resolve_at(at);
 }
 
-std::string store::place(agenda::task const &t)
+std::string store::target(agenda::task const &t)
 {
 	std::size_t const at = registered(t);
-	std::string target;
-	if (t.what == agenda::kind::terms) {
-		target = flat(at);
-	} else {
-		if (!chain(at))
-			return {};
-		target = two_part(at);
-	}
-	std::string const keep = fs::path(target).filename().string();
+	if (t.what == agenda::kind::terms)
+		return flat(at);
+	return chain(at) ? two_part(at) : std::string();
+}
+
+std::string store::place(agenda::task const &t)
+{
+	std::string const targ = target(t);
+	if (targ.empty())
+		return targ;
+	std::size_t const at = index_of(t.id);
+	std::string const keep = fs::path(targ).filename().string();
 	std::string const dir = m_dir + '/'
 	                      + std::string(sub(t.what));
 	for (std::string const &n : siblings(t.id, t.what)) {
@@ -321,7 +324,7 @@ std::string store::place(agenda::task const &t)
 	m_entries[at].bytes = {};
 	m_entries[at].path.clear();
 	m_shelf[std::size_t(t.what)].fresh = false;
-	return target;
+	return targ;
 }
 
 std::string store::locate(agenda::id plan, agenda::kind k) const
