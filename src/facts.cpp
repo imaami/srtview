@@ -488,18 +488,25 @@ void Facts::decay(double keep)
 
 void Facts::reset()
 {
-	std::lock_guard const lock(m_mtx);
-	++m_epoch;
+	std::uint64_t cancel = 0;
+	{
+		std::lock_guard const lock(m_mtx);
+		++m_epoch;
+		cancel = m_llmTask;
+		m_plan.reset();
+		m_bodies.clear();
+	}
 	// The epoch already condemns the in-flight reply; cancelling
 	// the request too means the new corpus never waits out a
-	// generation nobody will keep.  Lock order is sanctioned (R3:
-	// m_mtx before the client's internals), and the LLM_ERR_CANCEL
-	// delivery clears the flight slot through the ordinary discard
-	// path.
-	if (m_llmTask)
-		llm_cancel(m_llm, m_llmTask);
-	m_plan.reset();
-	m_bodies.clear();
+	// generation nobody will keep.  The cancel runs OUTSIDE the
+	// mutex, exactly like ~Facts(): a still-queued task's callback
+	// runs synchronously on this thread inside llm_cancel(), and
+	// completed() takes the lock.  Capturing the id makes the
+	// cancel at-most-once and immune to the unlock races -- ids
+	// are never reused, a retired id no-ops, and a fresh ask
+	// submitted meanwhile carries an id this value cannot touch.
+	if (cancel)
+		llm_cancel(m_llm, cancel);
 }
 
 bool Facts::cached(agenda::task const &t)
