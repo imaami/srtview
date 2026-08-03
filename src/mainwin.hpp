@@ -264,6 +264,7 @@ private:
 	int                             m_tallyTotal = -1;
 	int                             m_exportQueued = -1;
 	bool                            m_exportPending = false;
+	bool                            m_closeAnyway = false;
 };
 
 #endif // SRTVIEW_SRC_MAINWIN_HPP_

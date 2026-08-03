@@ -2278,7 +2278,13 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
-	commitGloss();
+	// The gloss buffer may be the only copy of the words: a failed
+	// save refuses the first close (the statusline carries the
+	// error) and a second close request overrides knowingly.
+	if (!commitGloss() && !std::exchange(m_closeAnyway, true)) {
+		ev->ignore();
+		return;
+	}
 	m_grab.shutdown();
 	m_link.shutdown();
 	ev->accept();
