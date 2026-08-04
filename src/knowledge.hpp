@@ -69,12 +69,13 @@ public:
 	void setRows(QVector<KnowledgeRow> rows);
 
 	// The selected row's occurrences, grouped per video; a
-	// non-empty set raises the Evidence tab, an empty one falls
+	// non-empty set raises the Matches tab, an empty one falls
 	// back to prose.  The owner computes hits (it owns the
-	// transcripts); counts are the true per-video totals even when
-	// the listing was capped, and the group headers say so.
-	void setEvidence(QVector<KnowledgeHit> hits,
-	                 QHash<QString, int> const &counts);
+	// transcripts); counts are the true per-video totals, and a
+	// capped video row says so ("first N of M") while a complete
+	// one is just the name.
+	void setMatches(QVector<KnowledgeHit> hits,
+	                QHash<QString, int> const &counts);
 
 	// The selected topic's definition text.  Editable only when
 	// the owner says so (a topic row with a durable home to write

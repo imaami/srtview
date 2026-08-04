@@ -145,9 +145,9 @@ constexpr std::size_t kDiveBudget = std::size_t{48} * 1024;
 // enough and two sides fit beside the pair's prose.
 constexpr std::size_t kProbeSample = std::size_t{16} * 1024;
 
-// Evidence display cap per video in the knowledge pane -- display
+// Match display cap per video in the knowledge pane -- display
 // only; scans and counts always cover everything.
-constexpr int kEvidenceCap = 500;
+constexpr int kMatchCap = 500;
 
 // One terms window's worth of numbered transcript, in bytes: cue
 // boundaries always, roughly a quarter of the llm clip so prompt
@@ -360,7 +360,7 @@ MainWin::MainWin()
 	        [this](QTreeWidgetItem *cur, QTreeWidgetItem *) {
 		knowledgeSelected(cur);
 	});
-	// An evidence line is an exact cue in an exact video: switch
+	// A match line is an exact cue in an exact video: switch
 	// there if needed, park the cursor on the cue and seek -- the
 	// same trail-recorded jump a gutter click makes.
 	connect(&m_know.hits(), &QTreeWidget::itemActivated, this,
@@ -1703,7 +1703,7 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 				if (!re.match(tx.lines[i]).hasMatch())
 					continue;
 				++total;
-				if (kept >= kEvidenceCap)
+				if (kept >= kMatchCap)
 					continue;
 				hits.push_back({it.video, srt,
 				                tx.lines[i],
@@ -1716,7 +1716,7 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 				counts.insert(it.video, total);
 		}
 	}
-	m_know.setEvidence(std::move(hits), counts);
+	m_know.setMatches(std::move(hits), counts);
 }
 
 // A topic file: the corpus source of videos and composable regexes

@@ -57,16 +57,18 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_tree.setRootIsDecorated(true);
 	m_tree.setUniformRowHeights(true);
 	m_tabs.setParent(split);
+	// No header: a timestamp and a quote explain themselves.
 	m_hits.setColumnCount(2);
-	m_hits.setHeaderLabels({QStringLiteral("time"),
-	                        QStringLiteral("match")});
+	m_hits.setHeaderHidden(true);
 	m_hits.header()->setStretchLastSection(true);
+	m_hits.header()->setSectionResizeMode(
+		0, QHeaderView::ResizeToContents);
 	m_hits.setRootIsDecorated(true);
 	m_hits.setUniformRowHeights(true);
 	m_preview.setReadOnly(true);
 	m_preview.setPlaceholderText(
 		QStringLiteral("no artifact cached yet"));
-	m_tabs.addTab(&m_hits, QStringLiteral("Evidence"));
+	m_tabs.addTab(&m_hits, QStringLiteral("Matches"));
 	m_tabs.addTab(&m_preview, QStringLiteral("Summary"));
 	m_tabs.addTab(&m_gloss, QStringLiteral("Glossary"));
 	split->addWidget(&m_tree);
@@ -148,28 +150,31 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	applyFilter();
 }
 
-void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
-                                QHash<QString, int> const &counts)
+void KnowledgePane::setMatches(QVector<KnowledgeHit> hits,
+                               QHash<QString, int> const &counts)
 {
 	m_hits.clear();
 	QTreeWidgetItem *grp = nullptr;
 	QString video;
 	int listed = 0;
+	// A video row is its (long) name across the full width; only a
+	// capped listing earns a note, a complete one says nothing.
+	auto const capNote = [&counts, &video, &listed](
+		QTreeWidgetItem *g) {
+		if (g && counts.value(video) > listed)
+			g->setText(0, g->text(0)
+				+ QStringLiteral(" — first %1 of %2")
+				  .arg(listed).arg(counts.value(video)));
+	};
 	for (KnowledgeHit const &h : hits) {
 		if (!grp || h.video != video) {
-			if (grp && counts.value(video) > listed)
-				grp->setText(1, grp->text(1)
-					+ QStringLiteral(", first %1")
-					  .arg(listed));
+			capNote(grp);
 			video = h.video;
 			listed = 0;
-			int const n = counts.value(video);
 			grp = new QTreeWidgetItem(&m_hits,
-				{QFileInfo(video).fileName(),
-				 n == 1 ? QStringLiteral("1 match")
-				        : QStringLiteral("%1 matches")
-				          .arg(n)});
+				{QFileInfo(video).fileName()});
 			grp->setFlags(Qt::ItemIsEnabled);
+			grp->setFirstColumnSpanned(true);
 			grp->setExpanded(true);
 		}
 		++listed;
@@ -185,9 +190,7 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
 		it->setData(0, kCue, h.cue);
 		it->setToolTip(1, h.line);
 	}
-	if (grp && counts.value(video) > listed)
-		grp->setText(1, grp->text(1)
-			+ QStringLiteral(", first %1").arg(listed));
+	capNote(grp);
 	if (!hits.isEmpty())
 		m_tabs.setCurrentWidget(&m_hits);
 	else
