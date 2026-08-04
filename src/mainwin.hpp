@@ -230,7 +230,8 @@ private:
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
-	QLabel                          m_info;      // the live status line
+	QLabel                          m_info;      // video/time/match, right
+	QLabel                          m_pattern;   // live regex, left edge
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
 	QTimer                          m_diveTick;  // topic scan pump

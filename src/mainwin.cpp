@@ -420,10 +420,11 @@ MainWin::MainWin()
 	search->addAction(&m_search.prevTextAction());
 
 	// --- status bar ---
-	// The info line owns the left of the footer and stretches, so
-	// the regex reads from the left edge instead of being crammed
-	// against the right; only the (rare) state text sits right.
-	statusBar()->addWidget(&m_info, 1);
+	// The pattern owns the left of the footer and stretches with
+	// the window; everything else -- video/time/match and the
+	// (rare) state text -- keeps to the right edge.
+	statusBar()->addWidget(&m_pattern, 1);
+	statusBar()->addPermanentWidget(&m_info);
 	statusBar()->addPermanentWidget(&m_state);
 	setState(QStringLiteral("no file"));
 	// Search-side changes push updates (searchInfoChanged); the
@@ -2005,24 +2006,20 @@ void MainWin::updateInfo()
 		parts << fmtTime(t, false);
 	if (QString const m = matchInfo(at); !m.isEmpty())
 		parts << m;
-	QString const sep = QStringLiteral("  ·  ");
-	QString const pat = m_search.patternText();
-	if (!pat.isEmpty()) {
-		// The regex leads and reads from the left; it gets
-		// whatever width the fixed parts and their separator
-		// leave free, floored so a crowded footer still shows a
-		// useful head.
-		QFontMetrics const fm = m_info.fontMetrics();
-		int const used = fm.horizontalAdvance(parts.join(sep))
-		               + (parts.isEmpty()
-		                  ? 0 : fm.horizontalAdvance(sep));
-		parts.prepend(fm.elidedText(
-			pat, Qt::ElideRight,
-			std::max(160, m_info.width() - used)));
-	}
-	QString const text = parts.join(sep);
+	QString const text = parts.join(QStringLiteral("  ·  "));
 	if (text != m_info.text())
 		m_info.setText(text);
+	// The regex reads from the left and elides into its own label,
+	// which the stretch hands exactly the width the fixed parts
+	// leave free; floored so a crowded footer still shows a useful
+	// head.
+	QString const pat = m_search.patternText();
+	QString const shown = pat.isEmpty() ? QString()
+		: m_pattern.fontMetrics().elidedText(
+			pat, Qt::ElideRight,
+			std::max(160, m_pattern.width()));
+	if (shown != m_pattern.text())
+		m_pattern.setText(shown);
 }
 
 // "Match 3/18 (11/23)": active/total in this video, and across the
@@ -2168,6 +2165,7 @@ void MainWin::applyZoom(ZoomDom d)
 		// scales.
 		menuBar()->setFont(QApplication::font("QMenuBar"));
 		statusBar()->setFont(QApplication::font("QStatusBar"));
+		m_pattern.setFont(base);
 		m_info.setFont(base);
 		m_state.setFont(base);
 		// The knowledge pane belongs to the base domain like the
