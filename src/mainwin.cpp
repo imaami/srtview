@@ -1189,20 +1189,36 @@ void MainWin::refreshKnowledge()
 		if (comp.contains(t.name))
 			continue;
 		std::string const pat = topics::expand(m_corpus, t);
+		agenda::id const did = diveId(pat);
 		QString const path = QString::fromStdString(
-			m_facts.locate(diveId(pat), agenda::kind::dive));
+			m_facts.locate(did, agenda::kind::dive));
 		bool const cached = !path.isEmpty();
 		QString const name = QString::fromStdString(t.name);
 		TermInfo const info = m_termInfo.value(name);
-		QString badge = info.kind;
-		auto const mark = [&badge](QString const &m) {
-			badge += badge.isEmpty()
-				? m : QStringLiteral(" · ") + m;
-		};
+		// Bar phases: the corpus scan (a unit per video), then the
+		// essay ask.  Scans re-run each session; a scan behind the
+		// cursor is complete, at it mid-flight, past it unstarted,
+		// and a cleared list means they all finished.
+		int const vids = int(m_playlist.size());
+		int scanned = vids;
+		for (std::size_t k = 0; k < m_diveScans.size(); ++k) {
+			if (m_diveScans[k].id != did)
+				continue;
+			scanned = k < m_diveAt ? vids
+			        : k == m_diveAt
+			          ? int(m_diveScans[k].video) : 0;
+			break;
+		}
+		QStringList words;
+		if (!info.kind.isEmpty())
+			words << info.kind;
 		if (m_generated.contains(t.name))
-			mark(QStringLiteral("generated"));
-		if (!cached && !m_termTopics.contains(t.name))
-			mark(QStringLiteral("pending"));
+			words << QStringLiteral("generated");
+		words << (cached ? QStringLiteral("essay cached")
+		                 : QStringLiteral("essay pending"));
+		if (scanned < vids)
+			words << QStringLiteral("scan %1/%2")
+			         .arg(scanned).arg(vids);
 		QString gloss = info.gloss;
 		// Sidecar entries key on the display title -- the human-
 		// readable term for term topics, the name otherwise --
@@ -1221,8 +1237,11 @@ void MainWin::refreshKnowledge()
 		                                         : info.term,
 		                     QString::fromStdString(pat),
 		                     cached ? path : QString(),
-		                     {}, {}, badge,
-		                     gloss.left(120), name});
+		                     {}, {},
+		                     words.join(QStringLiteral(" · ")),
+		                     gloss.left(120), name,
+		                     {scanned, cached ? 1 : 0},
+		                     {vids, 1}});
 	}
 	// Alphabetical within the directory, the corpus name breaking
 	// title ties into a total order (an unstable sort must not
@@ -1268,13 +1287,21 @@ void MainWin::refreshKnowledge()
 		if (int const n = ++seen[qpat]; n > 1)
 			title += QStringLiteral(" (%1)").arg(n);
 		rows.push_back({QStringLiteral("Focuses"), title, qpat,
-		                path, {}, {}, {}, {}, path});
+		                path, {}, {}, {}, {}, path, {}, {}});
 	}
 	// The same basename twice in the playlist: the parent
 	// directory tells the rows apart.
 	QHash<QString, int> bases;
 	for (PlayItem const &it : m_playlist)
 		++bases[QFileInfo(it.video).fileName()];
+	// Per-video terms progress in one pass: staged windows against
+	// the ones the harvest has actually seen answered.
+	QHash<QString, QPair<int, int>> tw;
+	for (TermsWork const &w : m_termsWork) {
+		auto &[d, n] = tw[w.video];
+		++n;
+		d += m_termsSeen.contains(w.id.hex());
+	}
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		QString path;
@@ -1291,12 +1318,20 @@ void MainWin::refreshKnowledge()
 		QString title = fi.fileName();
 		if (bases.value(title) > 1)
 			title += QStringLiteral(" — ") + fi.dir().dirName();
+		auto const [tdone, ttotal] = tw.value(it.video);
+		QStringList words;
+		words << (cached ? QStringLiteral("summary cached")
+		                 : QStringLiteral("summary pending"));
+		if (ttotal)
+			words << QStringLiteral("terms %1/%2")
+			         .arg(tdone).arg(ttotal);
 		rows.push_back({QStringLiteral("Videos"), title, {},
 		                cached ? path : QString(),
 		                it.video, it.srt,
-		                cached ? QString()
-		                       : QStringLiteral("pending"),
-		                {}, it.video});
+		                words.join(QStringLiteral(" · ")),
+		                {}, it.video,
+		                {cached ? 1 : 0, tdone},
+		                {1, ttotal}});
 	}
 	m_know.setRows(std::move(rows));
 }

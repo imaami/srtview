@@ -27,17 +27,21 @@
 
 // One presentable artifact.  pattern and video/srt are activation
 // payloads (either may be empty); path is the cache artifact to
-// preview, empty when nothing is cached yet.
+// preview, empty when nothing is cached yet.  done/total drive the
+// progress column's bar, one pair entry per phase (empty = no
+// bar); tip is that cell's tooltip -- the words behind the bar.
 struct KnowledgeRow {
-	QString group;    // tree section: "Topics", "Focuses", ...
-	QString title;
-	QString pattern;  // exact pattern text, never rewritten
-	QString path;     // artifact file for the preview pane
-	QString video;    // playback activation target
-	QString srt;
-	QString badge;    // "generated", "pending", ...
-	QString gloss;    // first line, shown inline in the directory
-	QString name;     // corpus name behind a retitled row ("term3")
+	QString    group;    // tree section: "Topics", "Focuses", ...
+	QString    title;
+	QString    pattern;  // exact pattern text, never rewritten
+	QString    path;     // artifact file for the preview pane
+	QString    video;    // playback activation target
+	QString    srt;
+	QString    tip;      // progress tooltip: "acronym · terms 3/7"
+	QString    gloss;    // first line, shown inline
+	QString    name;     // corpus name behind a retitled row
+	QList<int> done;     // per-phase finished units
+	QList<int> total;    // per-phase staged units
 
 	bool operator==(KnowledgeRow const &) const = default;
 };
@@ -102,6 +106,8 @@ public:
 		kSrt,
 		kCue,
 		kName,
+		kBarDone,
+		kBarTotal,
 	};
 
 private:

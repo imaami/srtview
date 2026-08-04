@@ -2,10 +2,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QPainter>
 #include <QRegularExpression>
 #include <QSplitter>
+#include <QStyledItemDelegate>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <algorithm>
 
 #include "knowledge.hpp"
 
@@ -14,6 +18,82 @@ namespace {
 // Preview no more than this many bytes of an artifact: the pane is
 // a reading aid, not a pager, and cache files are small anyway.
 constexpr qint64 kPreviewCap = 64 * 1024;
+
+// The progress column is a bar, not a word: phases concatenate left
+// to right, each sized by its share of the row's units.  Few units
+// draw as discrete cells, many as a continuous fill; rows without
+// bar data (group headers, focus threads) paint plainly.
+class BarDelegate final : public QStyledItemDelegate
+{
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+
+	void paint(QPainter *p, QStyleOptionViewItem const &opt,
+	           QModelIndex const &idx) const override
+	{
+		QStyledItemDelegate::paint(p, opt, idx);
+		auto const done = idx.data(KnowledgePane::kBarDone)
+		                     .value<QList<int>>();
+		auto const total = idx.data(KnowledgePane::kBarTotal)
+		                      .value<QList<int>>();
+		int units = 0;
+		for (int const t : total)
+			units += t;
+		if (!units || done.size() != total.size())
+			return;
+		static QColor const phase[]{
+			{0x3d, 0xae, 0xe9},   // work toward the artifact
+			{0xf6, 0x74, 0x00},   // follow-on band
+			{0x9b, 0x59, 0xb6}};
+		QColor const track = opt.palette.color(QPalette::Mid);
+		QRect const r = opt.rect.adjusted(3, 5, -7, -5);
+		p->save();
+		p->setPen(Qt::NoPen);
+		int x = r.x();
+		if (units <= 16) {
+			int const gap = 2;
+			int const cw = std::max(2,
+				(r.width() - gap * (units - 1)) / units);
+			for (std::size_t i = 0;
+			     i < std::size_t(total.size()); ++i)
+				for (int k = 0; k < total[qsizetype(i)];
+				     ++k) {
+					p->setBrush(k < done[qsizetype(i)]
+						? phase[i % 3] : track);
+					p->drawRect(x, r.y(), cw,
+					            r.height());
+					x += cw + gap;
+				}
+		} else {
+			for (std::size_t i = 0;
+			     i < std::size_t(total.size()); ++i) {
+				int const t = total[qsizetype(i)];
+				int const w = r.width() * t / units;
+				if (!w)
+					continue;
+				p->setBrush(track);
+				p->drawRect(x, r.y(), w, r.height());
+				p->setBrush(phase[i % 3]);
+				p->drawRect(x, r.y(),
+				            w * done[qsizetype(i)]
+				              / std::max(1, t),
+				            r.height());
+				x += w + 1;
+			}
+		}
+		p->restore();
+	}
+
+	QSize sizeHint(QStyleOptionViewItem const &opt,
+	               QModelIndex const &idx) const override
+	{
+		QSize s = QStyledItemDelegate::sizeHint(opt, idx);
+		if (idx.data(KnowledgePane::kBarDone).isValid())
+			s.setWidth(std::max(s.width(),
+				6 * opt.fontMetrics.height()));
+		return s;
+	}
+};
 
 QTreeWidgetItem *groupItem(QTreeWidget &tree, QString const &name)
 {
@@ -47,8 +127,9 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_tree.setParent(split);
 	m_tree.setColumnCount(3);
 	m_tree.setHeaderLabels({QStringLiteral("item"),
-	                        QStringLiteral("state"),
+	                        QStringLiteral("progress"),
 	                        QStringLiteral("glossary")});
+	m_tree.setItemDelegateForColumn(1, new BarDelegate(&m_tree));
 	m_tree.header()->setStretchLastSection(true);
 	m_tree.header()->setSectionResizeMode(
 		0, QHeaderView::ResizeToContents);
@@ -128,12 +209,20 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	for (KnowledgeRow const &r : m_rows) {
 		auto *it = new QTreeWidgetItem(
 			groupItem(m_tree, r.group),
-			{r.title, r.badge, r.gloss});
+			{r.title, QString(), r.gloss});
 		it->setData(0, kPattern, r.pattern);
 		it->setData(0, kPath, r.path);
 		it->setData(0, kVideo, r.video);
 		it->setData(0, kSrt, r.srt);
 		it->setData(0, kName, r.name);
+		if (!r.total.isEmpty()) {
+			it->setData(1, kBarDone,
+			            QVariant::fromValue(r.done));
+			it->setData(1, kBarTotal,
+			            QVariant::fromValue(r.total));
+		}
+		if (!r.tip.isEmpty())
+			it->setToolTip(1, r.tip);
 		it->setToolTip(0, r.pattern.isEmpty() ? r.title
 		                                      : r.pattern);
 		if (!r.gloss.isEmpty())
@@ -241,7 +330,6 @@ void KnowledgePane::applyFilter()
 			QTreeWidgetItem *it = grp->child(i);
 			bool const hit = all
 				|| re.match(it->text(0)).hasMatch()
-				|| re.match(it->text(1)).hasMatch()
 				|| re.match(it->text(2)).hasMatch()
 				|| re.match(it->data(0, kPattern)
 				              .toString()).hasMatch();
