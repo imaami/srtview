@@ -18,7 +18,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
-#include <QSaveFile>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
@@ -379,37 +378,6 @@ MainWin::MainWin()
 		m_view.showCue(cue);
 		m_playback.seekCue(cue, false);
 	});
-	// Gloss proposals: Ctrl+Return accepts the shown text into the
-	// sidecar verbatim -- the copy that makes it human-owned --
-	// and Ctrl+Backspace discards the proposal for this session.
-	auto *ga = new QShortcut(
-		QKeySequence(QStringLiteral("Ctrl+Return")), &m_know);
-	ga->setContext(Qt::WidgetWithChildrenShortcut);
-	connect(ga, &QShortcut::activated, this, [this] {
-		if (m_glossName.isEmpty())
-			return;
-		m_know.glossEdit().document()->setModified(true);
-		if (!commitGloss())
-			return;
-		if (auto const at = m_termInfo.find(m_glossTopic);
-		    at != m_termInfo.end())
-			at->gloss.clear();
-		refreshKnowledge();
-	});
-	auto *gd = new QShortcut(
-		QKeySequence(QStringLiteral("Ctrl+Backspace")), &m_know);
-	gd->setContext(Qt::WidgetWithChildrenShortcut);
-	connect(gd, &QShortcut::activated, this, [this] {
-		auto const at = m_termInfo.find(m_glossTopic);
-		if (m_glossName.isEmpty() || at == m_termInfo.end()
-		    || at->gloss.isEmpty())
-			return;
-		at->gloss.clear();
-		m_know.glossEdit().document()->setModified(false);
-		showGloss(m_know.tree().currentItem());
-		refreshKnowledge();
-	});
-
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
 	                  this, [this] { m_search.showSearch(); });
@@ -1234,8 +1202,6 @@ void MainWin::refreshKnowledge()
 		};
 		if (m_generated.contains(t.name))
 			mark(QStringLiteral("generated"));
-		if (!info.gloss.isEmpty())
-			mark(QStringLiteral("proposed"));
 		if (!cached && !m_termTopics.contains(t.name))
 			mark(QStringLiteral("pending"));
 		QString gloss = info.gloss;
@@ -1567,7 +1533,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 }
 
 // The gloss sidecar sits beside the corpus file; an implicit corpus
-// has no durable home, so editing waits for one.
+// has none.
 QString MainWin::glossPath() const
 {
 	if (m_corpusPath.isEmpty())
@@ -1580,83 +1546,24 @@ QString MainWin::glossPath() const
 void MainWin::loadGloss()
 {
 	m_gloss.clear();
-	m_glossName.clear();
-	m_glossTopic.clear();
 	QFile f(glossPath());
 	if (!glossPath().isEmpty() && f.open(QIODevice::ReadOnly))
 		m_gloss = topics::parse_gloss(
 			f.readAll().toStdString());
 }
 
-// Persist the entry being edited, if it changed: the file is the
-// human's -- whole-list canonical rewrite, entries preserved even
-// when their name is not currently a topic.  False only when a
-// needed write failed: the editor still holds the words, and the
-// caller must leave it and the gloss keys alone -- together they
-// are the retry source.
-bool MainWin::commitGloss()
-{
-	if (m_glossName.isEmpty()
-	    || !m_know.glossEdit().document()->isModified())
-		return true;
-	std::vector<std::string> lines;
-	for (QString const &l : m_know.glossEdit().toPlainText()
-	                        .split(QLatin1Char('\n')))
-		if (QString const t = l.trimmed(); !t.isEmpty())
-			lines.push_back(t.toStdString());
-	std::string const name = m_glossName.toStdString();
-	auto const at = std::ranges::find_if(m_gloss,
-		[&name](topics::gloss_entry const &e) {
-			return e.name == name;
-		});
-	if (at != m_gloss.end()) {
-		if (lines.empty())
-			m_gloss.erase(at);
-		else
-			at->lines = std::move(lines);
-	} else if (!lines.empty()) {
-		m_gloss.push_back({name, std::move(lines)});
-	}
-	QSaveFile out(glossPath());
-	std::string const text = topics::write_gloss(m_gloss);
-	bool const ok = out.open(QIODevice::WriteOnly)
-	             && out.write(text.data(), qint64(text.size()))
-	                == qint64(text.size())
-	             && out.commit();
-	if (!ok) {
-		// The human's words must not vanish quietly: the flag
-		// stays up so the buffer remains the retry source, and
-		// the status line says why.
-		errState(QStringLiteral("glossary save failed (%1)")
-		         .arg(out.errorString()));
-		return false;
-	}
-	m_know.glossEdit().document()->setModified(false);
-	return true;
-}
-
-// Load the selected topic's gloss into the pane, committing the
-// previous entry first.  Only topic rows carry glosses; a durable
-// home requires a corpus file.
+// Show the selected topic's gloss.  Only topic rows carry glosses.
+// Two keys per row: the display title keys the human sidecar
+// ("- etcd", renumber-proof), the corpus name keys m_termInfo (a
+// term topic's title is the term, never its termN name).
 void MainWin::showGloss(QTreeWidgetItem const *item)
 {
-	// A failed save keeps the pane on the unsaved entry: switching
-	// keys or repainting the editor would wipe the retry source.
-	if (!commitGloss())
-		return;
-	// Two keys per row: the display title keys the human sidecar
-	// ("- etcd", renumber-proof), the corpus name keys m_termInfo
-	// (a term topic's title is the term, never its termN name).
 	QString name, topic;
 	if (item && item->parent()
 	    && item->parent()->text(0) == QStringLiteral("Topics")) {
 		name = item->text(0);
 		topic = item->data(0, KnowledgePane::kName).toString();
 	}
-	bool const editable = !name.isEmpty()
-	                   && !glossPath().isEmpty();
-	m_glossName = editable ? name : QString();
-	m_glossTopic = editable ? topic : QString();
 	QString text;
 	std::string const key = name.toStdString();
 	for (topics::gloss_entry const &e : m_gloss) {
@@ -1669,12 +1576,11 @@ void MainWin::showGloss(QTreeWidgetItem const *item)
 		}
 		break;
 	}
-	// A machine proposal fills the void only until a human accepts
-	// (Ctrl+Return copies it into the sidecar) or edits; the
-	// sidecar always wins once an entry exists.
+	// The machine's gloss fills the void; the sidecar -- external,
+	// human-owned -- always wins once an entry exists.
 	if (text.isEmpty())
 		text = m_termInfo.value(topic).gloss;
-	m_know.setGloss(text, editable);
+	m_know.setGloss(text);
 }
 
 // Occurrences of the selected pattern, computed over the shared
@@ -1724,13 +1630,6 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 // paths resolve against the file's own directory.
 bool MainWin::loadPlaylist(QString const &path)
 {
-	// The gloss buffer may be the only copy of its words, and the
-	// sidecar identity is about to change with the corpus: commit
-	// first, and a failed save vetoes the whole load -- the buffer
-	// stays the retry source.  (Extending the current corpus never
-	// touches gloss state: loadGloss() runs only here.)
-	if (!commitGloss())
-		return false;
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly))
 		return fail(QStringLiteral("%1: %2").arg(path,
@@ -2342,20 +2241,6 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
-	// The gloss buffer may be the only copy of the words: a failed
-	// save refuses the first close (the statusline carries the
-	// error) and a second close request overrides knowingly.  The
-	// override binds to the exact failed buffer revision -- any
-	// further edit is new text and earns a fresh refusal.
-	if (!commitGloss()) {
-		int const rev =
-			m_know.glossEdit().document()->revision();
-		if (m_failedCloseRev != rev) {
-			m_failedCloseRev = rev;
-			ev->ignore();
-			return;
-		}
-	}
 	m_grab.shutdown();
 	m_link.shutdown();
 	ev->accept();

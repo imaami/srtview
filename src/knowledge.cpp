@@ -68,6 +68,9 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_preview.setReadOnly(true);
 	m_preview.setPlaceholderText(
 		QStringLiteral("no artifact cached yet"));
+	m_gloss.setReadOnly(true);
+	m_gloss.setPlaceholderText(
+		QStringLiteral("no glossary entry yet"));
 	m_tabs.addTab(&m_hits, QStringLiteral("Matches"));
 	m_tabs.addTab(&m_preview, QStringLiteral("Summary"));
 	m_tabs.addTab(&m_gloss, QStringLiteral("Glossary"));
@@ -197,17 +200,9 @@ void KnowledgePane::setMatches(QVector<KnowledgeHit> hits,
 		m_tabs.setCurrentWidget(&m_preview);
 }
 
-void KnowledgePane::setGloss(QString const &text, bool editable)
+void KnowledgePane::setGloss(QString const &text)
 {
 	m_gloss.setPlainText(text);
-	m_gloss.setReadOnly(!editable);
-	m_gloss.setPlaceholderText(editable
-		? QStringLiteral("no glossary entry yet — write one "
-		                 "(one line per point; saved beside "
-		                 "the topic file on leaving the entry)")
-		: QStringLiteral("glossary entries live beside the "
-		                 "topic file — none is loaded"));
-	m_gloss.document()->setModified(false);
 }
 
 void KnowledgePane::summon()

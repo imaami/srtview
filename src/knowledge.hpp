@@ -35,7 +35,7 @@ struct KnowledgeRow {
 	QString path;     // artifact file for the preview pane
 	QString video;    // playback activation target
 	QString srt;
-	QString badge;    // "generated", "supportive", "pending", ...
+	QString badge;    // "generated", "pending", ...
 	QString gloss;    // first line, shown inline in the directory
 	QString name;     // corpus name behind a retitled row ("term3")
 
@@ -64,8 +64,7 @@ public:
 	// scale (dozens of rows), so refresh is rebuild -- except an
 	// unchanged model, which is a no-op: the owner refreshes on a
 	// timer, and a gratuitous rebuild would re-emit the selection
-	// (rescanning transcripts) and disturb an in-progress gloss
-	// edit.
+	// (rescanning transcripts).
 	void setRows(QVector<KnowledgeRow> rows);
 
 	// The selected row's occurrences, grouped per video; a
@@ -77,12 +76,11 @@ public:
 	void setMatches(QVector<KnowledgeHit> hits,
 	                QHash<QString, int> const &counts);
 
-	// The selected topic's definition text.  Editable only when
-	// the owner says so (a topic row with a durable home to write
-	// to); the owner reads the edit back through glossEdit() and
-	// its modified flag.
-	void setGloss(QString const &text, bool editable);
-	QPlainTextEdit &glossEdit() { return m_gloss; }
+	// The selected topic's glossary text: the sidecar entry beside
+	// the topic file when one exists (external edits always win),
+	// else the machine's.  Read-only -- glossary text is generated
+	// or edited outside the app, never typed here.
+	void setGloss(QString const &text);
 
 	// Activation surfaces for the owner: Enter / double-click.
 	// Payload rides in item data (roles below).
