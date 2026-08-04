@@ -218,6 +218,19 @@ void KnowledgePane::summon()
 	m_filter.selectAll();
 }
 
+void KnowledgePane::setUiFont(QFont const &f)
+{
+	setFont(f);
+	m_filter.setFont(f);
+	m_tree.setFont(f);
+	m_tree.header()->setFont(f);
+	m_tabs.setFont(f);
+	m_tabs.tabBar()->setFont(f);
+	m_hits.setFont(f);
+	m_preview.setFont(f);
+	m_gloss.setFont(f);
+}
+
 // Hide what the pattern misses, in the app's own dialect; an
 // invalid or empty pattern hides nothing.  Groups follow their
 // children.

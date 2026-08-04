@@ -92,6 +92,11 @@ public:
 	// Show, raise and put the keyboard in the filter box.
 	void summon();
 
+	// Base-domain chrome scaling, child by child: platform themes
+	// pin per-class fonts that outrank parent propagation, so a
+	// font handed to the dock alone moves nothing inside it.
+	void setUiFont(QFont const &f);
+
 	enum Role {
 		kPattern = Qt::UserRole,
 		kPath,

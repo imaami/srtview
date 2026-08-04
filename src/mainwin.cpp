@@ -2169,10 +2169,10 @@ void MainWin::applyZoom(ZoomDom d)
 		m_info.setFont(base);
 		m_state.setFont(base);
 		// The knowledge pane belongs to the base domain like the
-		// rest of the chrome: an explicit parent font propagates
-		// to every child and outranks whatever per-class fonts
-		// the platform theme installed.
-		m_know.setFont(base);
+		// rest of the chrome, and scales the same way -- child by
+		// child: a font set on the dock alone loses to the theme's
+		// per-class fonts before it reaches any child.
+		m_know.setUiFont(base);
 	}
 	if (d == ZoomDom::base || d == ZoomDom::captions)
 		m_view.setTypeZoom(zoomFactor(m_zoomCaptions));
