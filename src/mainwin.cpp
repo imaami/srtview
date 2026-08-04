@@ -18,7 +18,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
-#include <QSaveFile>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
@@ -145,9 +144,9 @@ constexpr std::size_t kDiveBudget = std::size_t{48} * 1024;
 // enough and two sides fit beside the pair's prose.
 constexpr std::size_t kProbeSample = std::size_t{16} * 1024;
 
-// Evidence display cap per video in the knowledge pane -- display
+// Match display cap per video in the knowledge pane -- display
 // only; scans and counts always cover everything.
-constexpr int kEvidenceCap = 500;
+constexpr int kMatchCap = 500;
 
 // One terms window's worth of numbered transcript, in bytes: cue
 // boundaries always, roughly a quarter of the llm clip so prompt
@@ -360,7 +359,7 @@ MainWin::MainWin()
 	        [this](QTreeWidgetItem *cur, QTreeWidgetItem *) {
 		knowledgeSelected(cur);
 	});
-	// An evidence line is an exact cue in an exact video: switch
+	// A match line is an exact cue in an exact video: switch
 	// there if needed, park the cursor on the cue and seek -- the
 	// same trail-recorded jump a gutter click makes.
 	connect(&m_know.hits(), &QTreeWidget::itemActivated, this,
@@ -379,37 +378,6 @@ MainWin::MainWin()
 		m_view.showCue(cue);
 		m_playback.seekCue(cue, false);
 	});
-	// Gloss proposals: Ctrl+Return accepts the shown text into the
-	// sidecar verbatim -- the copy that makes it human-owned --
-	// and Ctrl+Backspace discards the proposal for this session.
-	auto *ga = new QShortcut(
-		QKeySequence(QStringLiteral("Ctrl+Return")), &m_know);
-	ga->setContext(Qt::WidgetWithChildrenShortcut);
-	connect(ga, &QShortcut::activated, this, [this] {
-		if (m_glossName.isEmpty())
-			return;
-		m_know.glossEdit().document()->setModified(true);
-		if (!commitGloss())
-			return;
-		if (auto const at = m_termInfo.find(m_glossTopic);
-		    at != m_termInfo.end())
-			at->gloss.clear();
-		refreshKnowledge();
-	});
-	auto *gd = new QShortcut(
-		QKeySequence(QStringLiteral("Ctrl+Backspace")), &m_know);
-	gd->setContext(Qt::WidgetWithChildrenShortcut);
-	connect(gd, &QShortcut::activated, this, [this] {
-		auto const at = m_termInfo.find(m_glossTopic);
-		if (m_glossName.isEmpty() || at == m_termInfo.end()
-		    || at->gloss.isEmpty())
-			return;
-		at->gloss.clear();
-		m_know.glossEdit().document()->setModified(false);
-		showGloss(m_know.tree().currentItem());
-		refreshKnowledge();
-	});
-
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
 	                  this, [this] { m_search.showSearch(); });
@@ -420,10 +388,11 @@ MainWin::MainWin()
 	search->addAction(&m_search.prevTextAction());
 
 	// --- status bar ---
-	// The info line owns the left of the footer and stretches, so
-	// the regex reads from the left edge instead of being crammed
-	// against the right; only the (rare) state text sits right.
-	statusBar()->addWidget(&m_info, 1);
+	// The pattern owns the left of the footer and stretches with
+	// the window; everything else -- video/time/match and the
+	// (rare) state text -- keeps to the right edge.
+	statusBar()->addWidget(&m_pattern, 1);
+	statusBar()->addPermanentWidget(&m_info);
 	statusBar()->addPermanentWidget(&m_state);
 	setState(QStringLiteral("no file"));
 	// Search-side changes push updates (searchInfoChanged); the
@@ -698,11 +667,11 @@ void MainWin::rebuildCorpus(bool fresh)
 	m_facts.corpus(std::move(nodes));
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
-	// Terms before focus, here and on the tick: in-session the
-	// terms band completes first, so focus regexes always adopt
-	// against a corpus that already holds the term subtractions --
-	// replaying that order over a warm cache reproduces the same
-	// topics, the same dive ids, and zero asks.
+	// Terms before focus, here and on the tick: whatever terms
+	// have answered adopt before any focus does, so a COMPLETE
+	// cache replays the same topics, the same dive ids, and zero
+	// asks; a partial band adopts what exists and converges as
+	// the rest answers.
 	queueTerms();
 	harvestTerms();
 	harvestFocus();
@@ -1132,12 +1101,11 @@ std::size_t MainWin::focusWorkOf(agenda::id id) const
 // re-derives its pair.
 void MainWin::harvestFocus()
 {
-	// Terms before focus, enforced: focus regexes adopt only against
-	// a corpus already holding every staged term adoption -- the
-	// order a warm replay reproduces.
-	for (TermsWork const &w : m_termsWork)
-		if (!m_termsSeen.contains(w.id.hex()))
-			return;
+	// Terms before focus is the CALL order, per tick and at load:
+	// every answered window has adopted by the time this runs.  A
+	// complete cache thus still replays terms-then-focus exactly;
+	// only a partial band lets a focus adopt against not-yet-
+	// complete term subtractions, which beats adopting nothing.
 	for (std::size_t i = 0; i < m_focusPending.size();) {
 		agenda::id const id = m_focusPending[i];
 		// resolve-by-id: adopts a stale name the moment the
@@ -1221,22 +1189,36 @@ void MainWin::refreshKnowledge()
 		if (comp.contains(t.name))
 			continue;
 		std::string const pat = topics::expand(m_corpus, t);
+		agenda::id const did = diveId(pat);
 		QString const path = QString::fromStdString(
-			m_facts.locate(diveId(pat), agenda::kind::dive));
+			m_facts.locate(did, agenda::kind::dive));
 		bool const cached = !path.isEmpty();
 		QString const name = QString::fromStdString(t.name);
 		TermInfo const info = m_termInfo.value(name);
-		QString badge = info.kind;
-		auto const mark = [&badge](QString const &m) {
-			badge += badge.isEmpty()
-				? m : QStringLiteral(" · ") + m;
-		};
+		// Bar phases: the corpus scan (a unit per video), then the
+		// essay ask.  Scans re-run each session; a scan behind the
+		// cursor is complete, at it mid-flight, past it unstarted,
+		// and a cleared list means they all finished.
+		int const vids = int(m_playlist.size());
+		int scanned = vids;
+		for (std::size_t k = 0; k < m_diveScans.size(); ++k) {
+			if (m_diveScans[k].id != did)
+				continue;
+			scanned = k < m_diveAt ? vids
+			        : k == m_diveAt
+			          ? int(m_diveScans[k].video) : 0;
+			break;
+		}
+		QStringList words;
+		if (!info.kind.isEmpty())
+			words << info.kind;
 		if (m_generated.contains(t.name))
-			mark(QStringLiteral("generated"));
-		if (!info.gloss.isEmpty())
-			mark(QStringLiteral("proposed"));
-		if (!cached && !m_termTopics.contains(t.name))
-			mark(QStringLiteral("pending"));
+			words << QStringLiteral("generated");
+		words << (cached ? QStringLiteral("essay cached")
+		                 : QStringLiteral("essay pending"));
+		if (scanned < vids)
+			words << QStringLiteral("scan %1/%2")
+			         .arg(scanned).arg(vids);
 		QString gloss = info.gloss;
 		// Sidecar entries key on the display title -- the human-
 		// readable term for term topics, the name otherwise --
@@ -1255,8 +1237,11 @@ void MainWin::refreshKnowledge()
 		                                         : info.term,
 		                     QString::fromStdString(pat),
 		                     cached ? path : QString(),
-		                     {}, {}, badge,
-		                     gloss.left(120), name});
+		                     {}, {},
+		                     words.join(QStringLiteral(" · ")),
+		                     gloss.left(120), name,
+		                     {scanned, cached ? 1 : 0},
+		                     {vids, 1}});
 	}
 	// Alphabetical within the directory, the corpus name breaking
 	// title ties into a total order (an unstable sort must not
@@ -1302,13 +1287,21 @@ void MainWin::refreshKnowledge()
 		if (int const n = ++seen[qpat]; n > 1)
 			title += QStringLiteral(" (%1)").arg(n);
 		rows.push_back({QStringLiteral("Focuses"), title, qpat,
-		                path, {}, {}, {}, {}, path});
+		                path, {}, {}, {}, {}, path, {}, {}});
 	}
 	// The same basename twice in the playlist: the parent
 	// directory tells the rows apart.
 	QHash<QString, int> bases;
 	for (PlayItem const &it : m_playlist)
 		++bases[QFileInfo(it.video).fileName()];
+	// Per-video terms progress in one pass: staged windows against
+	// the ones the harvest has actually seen answered.
+	QHash<QString, QPair<int, int>> tw;
+	for (TermsWork const &w : m_termsWork) {
+		auto &[d, n] = tw[w.video];
+		++n;
+		d += m_termsSeen.contains(w.id.hex());
+	}
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		QString path;
@@ -1325,12 +1318,20 @@ void MainWin::refreshKnowledge()
 		QString title = fi.fileName();
 		if (bases.value(title) > 1)
 			title += QStringLiteral(" — ") + fi.dir().dirName();
+		auto const [tdone, ttotal] = tw.value(it.video);
+		QStringList words;
+		words << (cached ? QStringLiteral("summary cached")
+		                 : QStringLiteral("summary pending"));
+		if (ttotal)
+			words << QStringLiteral("terms %1/%2")
+			         .arg(tdone).arg(ttotal);
 		rows.push_back({QStringLiteral("Videos"), title, {},
 		                cached ? path : QString(),
 		                it.video, it.srt,
-		                cached ? QString()
-		                       : QStringLiteral("pending"),
-		                {}, it.video});
+		                words.join(QStringLiteral(" · ")),
+		                {}, it.video,
+		                {cached ? 1 : 0, tdone},
+		                {1, ttotal}});
 	}
 	m_know.setRows(std::move(rows));
 }
@@ -1408,12 +1409,19 @@ void MainWin::queueTerms()
 // re-asks it -- determinism bought with latency.
 void MainWin::harvestTerms()
 {
+	// Staging order, gaps skipped: the agenda answers windows in
+	// heat order, so waiting for a strict prefix starves adoption
+	// behind whichever window the scheduler felt like deferring --
+	// with a large corpus that meant a full band of finished
+	// replies and zero visible knowledge.  A skipped window adopts
+	// on a later tick or session; until the band completes,
+	// machine topic names may shift between sessions, and settle
+	// once it has.
 	for (TermsWork const &w : m_termsWork) {
 		if (m_termsSeen.contains(w.id.hex()))
 			continue;
-		if (!harvestTermsOne(w))
-			return;
-		m_termsSeen.insert(w.id.hex());
+		if (harvestTermsOne(w))
+			m_termsSeen.insert(w.id.hex());
 	}
 }
 
@@ -1566,7 +1574,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 }
 
 // The gloss sidecar sits beside the corpus file; an implicit corpus
-// has no durable home, so editing waits for one.
+// has none.
 QString MainWin::glossPath() const
 {
 	if (m_corpusPath.isEmpty())
@@ -1579,83 +1587,24 @@ QString MainWin::glossPath() const
 void MainWin::loadGloss()
 {
 	m_gloss.clear();
-	m_glossName.clear();
-	m_glossTopic.clear();
 	QFile f(glossPath());
 	if (!glossPath().isEmpty() && f.open(QIODevice::ReadOnly))
 		m_gloss = topics::parse_gloss(
 			f.readAll().toStdString());
 }
 
-// Persist the entry being edited, if it changed: the file is the
-// human's -- whole-list canonical rewrite, entries preserved even
-// when their name is not currently a topic.  False only when a
-// needed write failed: the editor still holds the words, and the
-// caller must leave it and the gloss keys alone -- together they
-// are the retry source.
-bool MainWin::commitGloss()
-{
-	if (m_glossName.isEmpty()
-	    || !m_know.glossEdit().document()->isModified())
-		return true;
-	std::vector<std::string> lines;
-	for (QString const &l : m_know.glossEdit().toPlainText()
-	                        .split(QLatin1Char('\n')))
-		if (QString const t = l.trimmed(); !t.isEmpty())
-			lines.push_back(t.toStdString());
-	std::string const name = m_glossName.toStdString();
-	auto const at = std::ranges::find_if(m_gloss,
-		[&name](topics::gloss_entry const &e) {
-			return e.name == name;
-		});
-	if (at != m_gloss.end()) {
-		if (lines.empty())
-			m_gloss.erase(at);
-		else
-			at->lines = std::move(lines);
-	} else if (!lines.empty()) {
-		m_gloss.push_back({name, std::move(lines)});
-	}
-	QSaveFile out(glossPath());
-	std::string const text = topics::write_gloss(m_gloss);
-	bool const ok = out.open(QIODevice::WriteOnly)
-	             && out.write(text.data(), qint64(text.size()))
-	                == qint64(text.size())
-	             && out.commit();
-	if (!ok) {
-		// The human's words must not vanish quietly: the flag
-		// stays up so the buffer remains the retry source, and
-		// the status line says why.
-		errState(QStringLiteral("glossary save failed (%1)")
-		         .arg(out.errorString()));
-		return false;
-	}
-	m_know.glossEdit().document()->setModified(false);
-	return true;
-}
-
-// Load the selected topic's gloss into the pane, committing the
-// previous entry first.  Only topic rows carry glosses; a durable
-// home requires a corpus file.
+// Show the selected topic's gloss.  Only topic rows carry glosses.
+// Two keys per row: the display title keys the human sidecar
+// ("- etcd", renumber-proof), the corpus name keys m_termInfo (a
+// term topic's title is the term, never its termN name).
 void MainWin::showGloss(QTreeWidgetItem const *item)
 {
-	// A failed save keeps the pane on the unsaved entry: switching
-	// keys or repainting the editor would wipe the retry source.
-	if (!commitGloss())
-		return;
-	// Two keys per row: the display title keys the human sidecar
-	// ("- etcd", renumber-proof), the corpus name keys m_termInfo
-	// (a term topic's title is the term, never its termN name).
 	QString name, topic;
 	if (item && item->parent()
 	    && item->parent()->text(0) == QStringLiteral("Topics")) {
 		name = item->text(0);
 		topic = item->data(0, KnowledgePane::kName).toString();
 	}
-	bool const editable = !name.isEmpty()
-	                   && !glossPath().isEmpty();
-	m_glossName = editable ? name : QString();
-	m_glossTopic = editable ? topic : QString();
 	QString text;
 	std::string const key = name.toStdString();
 	for (topics::gloss_entry const &e : m_gloss) {
@@ -1668,12 +1617,11 @@ void MainWin::showGloss(QTreeWidgetItem const *item)
 		}
 		break;
 	}
-	// A machine proposal fills the void only until a human accepts
-	// (Ctrl+Return copies it into the sidecar) or edits; the
-	// sidecar always wins once an entry exists.
+	// The machine's gloss fills the void; the sidecar -- external,
+	// human-owned -- always wins once an entry exists.
 	if (text.isEmpty())
 		text = m_termInfo.value(topic).gloss;
-	m_know.setGloss(text, editable);
+	m_know.setGloss(text);
 }
 
 // Occurrences of the selected pattern, computed over the shared
@@ -1702,7 +1650,7 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 				if (!re.match(tx.lines[i]).hasMatch())
 					continue;
 				++total;
-				if (kept >= kEvidenceCap)
+				if (kept >= kMatchCap)
 					continue;
 				hits.push_back({it.video, srt,
 				                tx.lines[i],
@@ -1715,7 +1663,7 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 				counts.insert(it.video, total);
 		}
 	}
-	m_know.setEvidence(std::move(hits), counts);
+	m_know.setMatches(std::move(hits), counts);
 }
 
 // A topic file: the corpus source of videos and composable regexes
@@ -1723,13 +1671,6 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 // paths resolve against the file's own directory.
 bool MainWin::loadPlaylist(QString const &path)
 {
-	// The gloss buffer may be the only copy of its words, and the
-	// sidecar identity is about to change with the corpus: commit
-	// first, and a failed save vetoes the whole load -- the buffer
-	// stays the retry source.  (Extending the current corpus never
-	// touches gloss state: loadGloss() runs only here.)
-	if (!commitGloss())
-		return false;
 	QFile f(path);
 	if (!f.open(QIODevice::ReadOnly))
 		return fail(QStringLiteral("%1: %2").arg(path,
@@ -2005,24 +1946,20 @@ void MainWin::updateInfo()
 		parts << fmtTime(t, false);
 	if (QString const m = matchInfo(at); !m.isEmpty())
 		parts << m;
-	QString const sep = QStringLiteral("  ·  ");
-	QString const pat = m_search.patternText();
-	if (!pat.isEmpty()) {
-		// The regex leads and reads from the left; it gets
-		// whatever width the fixed parts and their separator
-		// leave free, floored so a crowded footer still shows a
-		// useful head.
-		QFontMetrics const fm = m_info.fontMetrics();
-		int const used = fm.horizontalAdvance(parts.join(sep))
-		               + (parts.isEmpty()
-		                  ? 0 : fm.horizontalAdvance(sep));
-		parts.prepend(fm.elidedText(
-			pat, Qt::ElideRight,
-			std::max(160, m_info.width() - used)));
-	}
-	QString const text = parts.join(sep);
+	QString const text = parts.join(QStringLiteral("  ·  "));
 	if (text != m_info.text())
 		m_info.setText(text);
+	// The regex reads from the left and elides into its own label,
+	// which the stretch hands exactly the width the fixed parts
+	// leave free; floored so a crowded footer still shows a useful
+	// head.
+	QString const pat = m_search.patternText();
+	QString const shown = pat.isEmpty() ? QString()
+		: m_pattern.fontMetrics().elidedText(
+			pat, Qt::ElideRight,
+			std::max(160, m_pattern.width()));
+	if (shown != m_pattern.text())
+		m_pattern.setText(shown);
 }
 
 // "Match 3/18 (11/23)": active/total in this video, and across the
@@ -2168,13 +2105,14 @@ void MainWin::applyZoom(ZoomDom d)
 		// scales.
 		menuBar()->setFont(QApplication::font("QMenuBar"));
 		statusBar()->setFont(QApplication::font("QStatusBar"));
+		m_pattern.setFont(base);
 		m_info.setFont(base);
 		m_state.setFont(base);
 		// The knowledge pane belongs to the base domain like the
-		// rest of the chrome: an explicit parent font propagates
-		// to every child and outranks whatever per-class fonts
-		// the platform theme installed.
-		m_know.setFont(base);
+		// rest of the chrome, and scales the same way -- child by
+		// child: a font set on the dock alone loses to the theme's
+		// per-class fonts before it reaches any child.
+		m_know.setUiFont(base);
 	}
 	if (d == ZoomDom::base || d == ZoomDom::captions)
 		m_view.setTypeZoom(zoomFactor(m_zoomCaptions));
@@ -2344,20 +2282,6 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
-	// The gloss buffer may be the only copy of the words: a failed
-	// save refuses the first close (the statusline carries the
-	// error) and a second close request overrides knowingly.  The
-	// override binds to the exact failed buffer revision -- any
-	// further edit is new text and earns a fresh refusal.
-	if (!commitGloss()) {
-		int const rev =
-			m_know.glossEdit().document()->revision();
-		if (m_failedCloseRev != rev) {
-			m_failedCloseRev = rev;
-			ev->ignore();
-			return;
-		}
-	}
 	m_grab.shutdown();
 	m_link.shutdown();
 	ev->accept();

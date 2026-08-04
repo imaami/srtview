@@ -196,11 +196,10 @@ std::string write(doc const &d);
 // The gloss sidecar dialect: name -> definition text in the same
 // two-level dash list as the topic file, children being prose lines
 // (blank lines cannot be represented; edge whitespace strips).  The
-// file lives beside the corpus as <stem>.gloss and belongs to the
-// human: tolerant parse (junk skipped), canonical write, entries
-// preserved whether or not their name is currently a topic.
-// Machine-proposed definitions never write here -- acceptance
-// copies them in, and that copy is what makes a gloss human-owned.
+// file lives beside the corpus as <stem>.gloss and is edited only
+// outside the app, so this side only reads: tolerant parse (junk
+// skipped), entries usable whether or not their name is currently
+// a topic.
 struct gloss_entry {
 	std::string              name;
 	std::vector<std::string> lines;
@@ -209,7 +208,6 @@ struct gloss_entry {
 };
 
 std::vector<gloss_entry> parse_gloss(std::string_view text);
-std::string write_gloss(std::vector<gloss_entry> const &g);
 
 } // namespace topics
 

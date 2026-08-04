@@ -27,17 +27,21 @@
 
 // One presentable artifact.  pattern and video/srt are activation
 // payloads (either may be empty); path is the cache artifact to
-// preview, empty when nothing is cached yet.
+// preview, empty when nothing is cached yet.  done/total drive the
+// progress column's bar, one pair entry per phase (empty = no
+// bar); tip is that cell's tooltip -- the words behind the bar.
 struct KnowledgeRow {
-	QString group;    // tree section: "Topics", "Focuses", ...
-	QString title;
-	QString pattern;  // exact pattern text, never rewritten
-	QString path;     // artifact file for the preview pane
-	QString video;    // playback activation target
-	QString srt;
-	QString badge;    // "generated", "supportive", "pending", ...
-	QString gloss;    // first line, shown inline in the directory
-	QString name;     // corpus name behind a retitled row ("term3")
+	QString    group;    // tree section: "Topics", "Focuses", ...
+	QString    title;
+	QString    pattern;  // exact pattern text, never rewritten
+	QString    path;     // artifact file for the preview pane
+	QString    video;    // playback activation target
+	QString    srt;
+	QString    tip;      // progress tooltip: "acronym · terms 3/7"
+	QString    gloss;    // first line, shown inline
+	QString    name;     // corpus name behind a retitled row
+	QList<int> done;     // per-phase finished units
+	QList<int> total;    // per-phase staged units
 
 	bool operator==(KnowledgeRow const &) const = default;
 };
@@ -64,24 +68,23 @@ public:
 	// scale (dozens of rows), so refresh is rebuild -- except an
 	// unchanged model, which is a no-op: the owner refreshes on a
 	// timer, and a gratuitous rebuild would re-emit the selection
-	// (rescanning transcripts) and disturb an in-progress gloss
-	// edit.
+	// (rescanning transcripts).
 	void setRows(QVector<KnowledgeRow> rows);
 
 	// The selected row's occurrences, grouped per video; a
-	// non-empty set raises the Evidence tab, an empty one falls
+	// non-empty set raises the Matches tab, an empty one falls
 	// back to prose.  The owner computes hits (it owns the
-	// transcripts); counts are the true per-video totals even when
-	// the listing was capped, and the group headers say so.
-	void setEvidence(QVector<KnowledgeHit> hits,
-	                 QHash<QString, int> const &counts);
+	// transcripts); counts are the true per-video totals, and a
+	// capped video row says so ("first N of M") while a complete
+	// one is just the name.
+	void setMatches(QVector<KnowledgeHit> hits,
+	                QHash<QString, int> const &counts);
 
-	// The selected topic's definition text.  Editable only when
-	// the owner says so (a topic row with a durable home to write
-	// to); the owner reads the edit back through glossEdit() and
-	// its modified flag.
-	void setGloss(QString const &text, bool editable);
-	QPlainTextEdit &glossEdit() { return m_gloss; }
+	// The selected topic's glossary text: the sidecar entry beside
+	// the topic file when one exists (external edits always win),
+	// else the machine's.  Read-only -- glossary text is generated
+	// or edited outside the app, never typed here.
+	void setGloss(QString const &text);
 
 	// Activation surfaces for the owner: Enter / double-click.
 	// Payload rides in item data (roles below).
@@ -91,6 +94,11 @@ public:
 	// Show, raise and put the keyboard in the filter box.
 	void summon();
 
+	// Base-domain chrome scaling, child by child: platform themes
+	// pin per-class fonts that outrank parent propagation, so a
+	// font handed to the dock alone moves nothing inside it.
+	void setUiFont(QFont const &f);
+
 	enum Role {
 		kPattern = Qt::UserRole,
 		kPath,
@@ -98,6 +106,8 @@ public:
 		kSrt,
 		kCue,
 		kName,
+		kBarDone,
+		kBarTotal,
 	};
 
 private:

@@ -104,7 +104,8 @@ private:
 	// Directory metadata for one term topic, rebuilt every session
 	// from the cached replies by the same harvest that adopts: the
 	// display term (the topic name is an opaque termN), its kind,
-	// and the proposed gloss awaiting acceptance.
+	// and the machine's gloss (shown unless the external sidecar
+	// overrides it).
 	struct TermInfo {
 		QString term;
 		QString kind;
@@ -182,7 +183,6 @@ private:
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	QString glossPath() const;
 	void loadGloss();
-	bool commitGloss();
 	void showGloss(QTreeWidgetItem const *item);
 	qsizetype playlistIndex(QString const &video);
 	qsizetype indexOfId(QString const &id) const;
@@ -230,7 +230,8 @@ private:
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
-	QLabel                          m_info;      // the live status line
+	QLabel                          m_info;      // video/time/match, right
+	QLabel                          m_pattern;   // live regex, left edge
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
 	QTimer                          m_diveTick;  // topic scan pump
@@ -244,8 +245,6 @@ private:
 	std::set<std::string>           m_generated; // machine topic names
 	std::set<std::string>           m_harvested; // focus ids seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
-	QString                         m_glossName; // entry being edited
-	QString                         m_glossTopic;// its corpus name
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
 	std::set<std::string>           m_termTopics;// index-only names
@@ -265,7 +264,6 @@ private:
 	int                             m_zoomRegex = 0;
 	int                             m_tallyTotal = -1;
 	int                             m_exportQueued = -1;
-	int                             m_failedCloseRev = -1;
 	bool                            m_exportPending = false;
 };
 

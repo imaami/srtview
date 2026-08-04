@@ -503,10 +503,6 @@ void testGloss()
 	      && g[0].lines.size() == 2 && g[1].name == "quorum"
 	      && g[1].lines.empty(),
 	      "tolerant parse: junk, comments, orphans, empty heads");
-	check(topics::parse_gloss(topics::write_gloss(g)) == g,
-	      "gloss round-trips through canonical write");
-	check(topics::write_gloss({{"", {"dropped"}}}).empty(),
-	      "nameless entries never write");
 	auto const lf = topics::parse_gloss("- a\n  - x\n- b\n");
 	check(lf.size() == 2
 	      && topics::parse_gloss(

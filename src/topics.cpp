@@ -1046,21 +1046,6 @@ std::vector<gloss_entry> parse_gloss(std::string_view text)
 	return out;
 }
 
-std::string write_gloss(std::vector<gloss_entry> const &g)
-{
-	std::string out;
-	for (gloss_entry const &e : g) {
-		if (e.name.empty())
-			continue;
-		if (!out.empty())
-			out += '\n';
-		out += "- " + e.name + '\n';
-		for (std::string const &l : e.lines)
-			out += "  - " + l + '\n';
-	}
-	return out;
-}
-
 std::string write(doc const &d)
 {
 	std::string out;

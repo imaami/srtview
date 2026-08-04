@@ -2,10 +2,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QPainter>
 #include <QRegularExpression>
 #include <QSplitter>
+#include <QStyledItemDelegate>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <algorithm>
 
 #include "knowledge.hpp"
 
@@ -14,6 +18,82 @@ namespace {
 // Preview no more than this many bytes of an artifact: the pane is
 // a reading aid, not a pager, and cache files are small anyway.
 constexpr qint64 kPreviewCap = 64 * 1024;
+
+// The progress column is a bar, not a word: phases concatenate left
+// to right, each sized by its share of the row's units.  Few units
+// draw as discrete cells, many as a continuous fill; rows without
+// bar data (group headers, focus threads) paint plainly.
+class BarDelegate final : public QStyledItemDelegate
+{
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+
+	void paint(QPainter *p, QStyleOptionViewItem const &opt,
+	           QModelIndex const &idx) const override
+	{
+		QStyledItemDelegate::paint(p, opt, idx);
+		auto const done = idx.data(KnowledgePane::kBarDone)
+		                     .value<QList<int>>();
+		auto const total = idx.data(KnowledgePane::kBarTotal)
+		                      .value<QList<int>>();
+		int units = 0;
+		for (int const t : total)
+			units += t;
+		if (!units || done.size() != total.size())
+			return;
+		static QColor const phase[]{
+			{0x3d, 0xae, 0xe9},   // work toward the artifact
+			{0xf6, 0x74, 0x00},   // follow-on band
+			{0x9b, 0x59, 0xb6}};
+		QColor const track = opt.palette.color(QPalette::Mid);
+		QRect const r = opt.rect.adjusted(3, 5, -7, -5);
+		p->save();
+		p->setPen(Qt::NoPen);
+		int x = r.x();
+		if (units <= 16) {
+			int const gap = 2;
+			int const cw = std::max(2,
+				(r.width() - gap * (units - 1)) / units);
+			for (std::size_t i = 0;
+			     i < std::size_t(total.size()); ++i)
+				for (int k = 0; k < total[qsizetype(i)];
+				     ++k) {
+					p->setBrush(k < done[qsizetype(i)]
+						? phase[i % 3] : track);
+					p->drawRect(x, r.y(), cw,
+					            r.height());
+					x += cw + gap;
+				}
+		} else {
+			for (std::size_t i = 0;
+			     i < std::size_t(total.size()); ++i) {
+				int const t = total[qsizetype(i)];
+				int const w = r.width() * t / units;
+				if (!w)
+					continue;
+				p->setBrush(track);
+				p->drawRect(x, r.y(), w, r.height());
+				p->setBrush(phase[i % 3]);
+				p->drawRect(x, r.y(),
+				            w * done[qsizetype(i)]
+				              / std::max(1, t),
+				            r.height());
+				x += w + 1;
+			}
+		}
+		p->restore();
+	}
+
+	QSize sizeHint(QStyleOptionViewItem const &opt,
+	               QModelIndex const &idx) const override
+	{
+		QSize s = QStyledItemDelegate::sizeHint(opt, idx);
+		if (idx.data(KnowledgePane::kBarDone).isValid())
+			s.setWidth(std::max(s.width(),
+				6 * opt.fontMetrics.height()));
+		return s;
+	}
+};
 
 QTreeWidgetItem *groupItem(QTreeWidget &tree, QString const &name)
 {
@@ -47,8 +127,9 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_tree.setParent(split);
 	m_tree.setColumnCount(3);
 	m_tree.setHeaderLabels({QStringLiteral("item"),
-	                        QStringLiteral("state"),
+	                        QStringLiteral("progress"),
 	                        QStringLiteral("glossary")});
+	m_tree.setItemDelegateForColumn(1, new BarDelegate(&m_tree));
 	m_tree.header()->setStretchLastSection(true);
 	m_tree.header()->setSectionResizeMode(
 		0, QHeaderView::ResizeToContents);
@@ -57,16 +138,21 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_tree.setRootIsDecorated(true);
 	m_tree.setUniformRowHeights(true);
 	m_tabs.setParent(split);
+	// No header: a timestamp and a quote explain themselves.
 	m_hits.setColumnCount(2);
-	m_hits.setHeaderLabels({QStringLiteral("time"),
-	                        QStringLiteral("match")});
+	m_hits.setHeaderHidden(true);
 	m_hits.header()->setStretchLastSection(true);
+	m_hits.header()->setSectionResizeMode(
+		0, QHeaderView::ResizeToContents);
 	m_hits.setRootIsDecorated(true);
 	m_hits.setUniformRowHeights(true);
 	m_preview.setReadOnly(true);
 	m_preview.setPlaceholderText(
 		QStringLiteral("no artifact cached yet"));
-	m_tabs.addTab(&m_hits, QStringLiteral("Evidence"));
+	m_gloss.setReadOnly(true);
+	m_gloss.setPlaceholderText(
+		QStringLiteral("no glossary entry yet"));
+	m_tabs.addTab(&m_hits, QStringLiteral("Matches"));
 	m_tabs.addTab(&m_preview, QStringLiteral("Summary"));
 	m_tabs.addTab(&m_gloss, QStringLiteral("Glossary"));
 	split->addWidget(&m_tree);
@@ -123,12 +209,20 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	for (KnowledgeRow const &r : m_rows) {
 		auto *it = new QTreeWidgetItem(
 			groupItem(m_tree, r.group),
-			{r.title, r.badge, r.gloss});
+			{r.title, QString(), r.gloss});
 		it->setData(0, kPattern, r.pattern);
 		it->setData(0, kPath, r.path);
 		it->setData(0, kVideo, r.video);
 		it->setData(0, kSrt, r.srt);
 		it->setData(0, kName, r.name);
+		if (!r.total.isEmpty()) {
+			it->setData(1, kBarDone,
+			            QVariant::fromValue(r.done));
+			it->setData(1, kBarTotal,
+			            QVariant::fromValue(r.total));
+		}
+		if (!r.tip.isEmpty())
+			it->setToolTip(1, r.tip);
 		it->setToolTip(0, r.pattern.isEmpty() ? r.title
 		                                      : r.pattern);
 		if (!r.gloss.isEmpty())
@@ -148,28 +242,31 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	applyFilter();
 }
 
-void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
-                                QHash<QString, int> const &counts)
+void KnowledgePane::setMatches(QVector<KnowledgeHit> hits,
+                               QHash<QString, int> const &counts)
 {
 	m_hits.clear();
 	QTreeWidgetItem *grp = nullptr;
 	QString video;
 	int listed = 0;
+	// A video row is its (long) name across the full width; only a
+	// capped listing earns a note, a complete one says nothing.
+	auto const capNote = [&counts, &video, &listed](
+		QTreeWidgetItem *g) {
+		if (g && counts.value(video) > listed)
+			g->setText(0, g->text(0)
+				+ QStringLiteral(" — first %1 of %2")
+				  .arg(listed).arg(counts.value(video)));
+	};
 	for (KnowledgeHit const &h : hits) {
 		if (!grp || h.video != video) {
-			if (grp && counts.value(video) > listed)
-				grp->setText(1, grp->text(1)
-					+ QStringLiteral(", first %1")
-					  .arg(listed));
+			capNote(grp);
 			video = h.video;
 			listed = 0;
-			int const n = counts.value(video);
 			grp = new QTreeWidgetItem(&m_hits,
-				{QFileInfo(video).fileName(),
-				 n == 1 ? QStringLiteral("1 match")
-				        : QStringLiteral("%1 matches")
-				          .arg(n)});
+				{QFileInfo(video).fileName()});
 			grp->setFlags(Qt::ItemIsEnabled);
+			grp->setFirstColumnSpanned(true);
 			grp->setExpanded(true);
 		}
 		++listed;
@@ -185,26 +282,16 @@ void KnowledgePane::setEvidence(QVector<KnowledgeHit> hits,
 		it->setData(0, kCue, h.cue);
 		it->setToolTip(1, h.line);
 	}
-	if (grp && counts.value(video) > listed)
-		grp->setText(1, grp->text(1)
-			+ QStringLiteral(", first %1").arg(listed));
+	capNote(grp);
 	if (!hits.isEmpty())
 		m_tabs.setCurrentWidget(&m_hits);
 	else
 		m_tabs.setCurrentWidget(&m_preview);
 }
 
-void KnowledgePane::setGloss(QString const &text, bool editable)
+void KnowledgePane::setGloss(QString const &text)
 {
 	m_gloss.setPlainText(text);
-	m_gloss.setReadOnly(!editable);
-	m_gloss.setPlaceholderText(editable
-		? QStringLiteral("no glossary entry yet — write one "
-		                 "(one line per point; saved beside "
-		                 "the topic file on leaving the entry)")
-		: QStringLiteral("glossary entries live beside the "
-		                 "topic file — none is loaded"));
-	m_gloss.document()->setModified(false);
 }
 
 void KnowledgePane::summon()
@@ -213,6 +300,19 @@ void KnowledgePane::summon()
 	raise();
 	m_filter.setFocus();
 	m_filter.selectAll();
+}
+
+void KnowledgePane::setUiFont(QFont const &f)
+{
+	setFont(f);
+	m_filter.setFont(f);
+	m_tree.setFont(f);
+	m_tree.header()->setFont(f);
+	m_tabs.setFont(f);
+	m_tabs.tabBar()->setFont(f);
+	m_hits.setFont(f);
+	m_preview.setFont(f);
+	m_gloss.setFont(f);
 }
 
 // Hide what the pattern misses, in the app's own dialect; an
@@ -230,7 +330,6 @@ void KnowledgePane::applyFilter()
 			QTreeWidgetItem *it = grp->child(i);
 			bool const hit = all
 				|| re.match(it->text(0)).hasMatch()
-				|| re.match(it->text(1)).hasMatch()
 				|| re.match(it->text(2)).hasMatch()
 				|| re.match(it->data(0, kPattern)
 				              .toString()).hasMatch();
