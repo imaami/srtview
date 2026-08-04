@@ -667,11 +667,11 @@ void MainWin::rebuildCorpus(bool fresh)
 	m_facts.corpus(std::move(nodes));
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
-	// Terms before focus, here and on the tick: in-session the
-	// terms band completes first, so focus regexes always adopt
-	// against a corpus that already holds the term subtractions --
-	// replaying that order over a warm cache reproduces the same
-	// topics, the same dive ids, and zero asks.
+	// Terms before focus, here and on the tick: whatever terms
+	// have answered adopt before any focus does, so a COMPLETE
+	// cache replays the same topics, the same dive ids, and zero
+	// asks; a partial band adopts what exists and converges as
+	// the rest answers.
 	queueTerms();
 	harvestTerms();
 	harvestFocus();
@@ -1101,12 +1101,11 @@ std::size_t MainWin::focusWorkOf(agenda::id id) const
 // re-derives its pair.
 void MainWin::harvestFocus()
 {
-	// Terms before focus, enforced: focus regexes adopt only against
-	// a corpus already holding every staged term adoption -- the
-	// order a warm replay reproduces.
-	for (TermsWork const &w : m_termsWork)
-		if (!m_termsSeen.contains(w.id.hex()))
-			return;
+	// Terms before focus is the CALL order, per tick and at load:
+	// every answered window has adopted by the time this runs.  A
+	// complete cache thus still replays terms-then-focus exactly;
+	// only a partial band lets a focus adopt against not-yet-
+	// complete term subtractions, which beats adopting nothing.
 	for (std::size_t i = 0; i < m_focusPending.size();) {
 		agenda::id const id = m_focusPending[i];
 		// resolve-by-id: adopts a stale name the moment the
@@ -1375,12 +1374,19 @@ void MainWin::queueTerms()
 // re-asks it -- determinism bought with latency.
 void MainWin::harvestTerms()
 {
+	// Staging order, gaps skipped: the agenda answers windows in
+	// heat order, so waiting for a strict prefix starves adoption
+	// behind whichever window the scheduler felt like deferring --
+	// with a large corpus that meant a full band of finished
+	// replies and zero visible knowledge.  A skipped window adopts
+	// on a later tick or session; until the band completes,
+	// machine topic names may shift between sessions, and settle
+	// once it has.
 	for (TermsWork const &w : m_termsWork) {
 		if (m_termsSeen.contains(w.id.hex()))
 			continue;
-		if (!harvestTermsOne(w))
-			return;
-		m_termsSeen.insert(w.id.hex());
+		if (harvestTermsOne(w))
+			m_termsSeen.insert(w.id.hex());
 	}
 }
 
