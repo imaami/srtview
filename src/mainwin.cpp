@@ -1557,20 +1557,32 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 			: term + QStringLiteral(" = ") + means
 			  + QStringLiteral(". ") + gloss;
 		QString const folded = term.toCaseFolded();
-		// One term, one topic: a known term's novel spellings
-		// grow its owner instead of minting a titled twin;
-		// kind, casing and gloss keep the first non-empty word.
-		if (QString const own = m_termIndex.value(folded);
-		    !own.isEmpty()) {
+		// One term, one topic: an entry whose term is known, or
+		// whose branches overlap an existing term topic at all
+		// (cover_of), grows that owner instead of founding a
+		// twin from the leftover.  Kind, casing and gloss keep
+		// the first non-empty word; a bare re-cover of a fresh
+		// owner is the reload re-attach.
+		QString own = m_termIndex.value(folded);
+		if (own.isEmpty())
+			own = QString::fromStdString(
+				topics::cover_of(m_corpus, tidied,
+				                 "term"));
+		if (!own.isEmpty()) {
+			bool const fresh = !m_termInfo.contains(own);
 			std::string const before =
 				expand_of(own.toStdString());
 			std::string const grown = topics::extend(
 				m_corpus, own.toStdString(), tidied);
 			TermInfo &info = m_termInfo[own];
+			if (info.term.isEmpty())
+				info.term = term;
 			if (info.kind.isEmpty())
 				info.kind = kind;
 			if (info.gloss.isEmpty())
 				info.gloss = shown;
+			if (!m_termIndex.contains(folded))
+				m_termIndex.insert(folded, own);
 			index(kept, own);
 			if (!grown.empty()) {
 				dbgHop(QStringLiteral(
@@ -1584,29 +1596,17 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 						return d.id == old;
 					});
 				stage(own.toStdString());
+			} else if (fresh) {
+				dbgHop(QStringLiteral(
+					"terms: attached %1 [%2]")
+				       .arg(own, term));
 			}
 			continue;
 		}
 		std::string const adopted = topics::adopt_novel(
 			m_corpus, tidied, "term");
-		if (adopted.empty()) {
-			// Fully covered: re-attach the directory entry
-			// to the covering term topic, so a reloaded
-			// exported corpus regains its titles and gloss
-			// proposals.
-			QString const owner = QString::fromStdString(
-				topics::cover_of(m_corpus, tidied,
-				                 "term"));
-			if (owner.isEmpty()
-			    || m_termInfo.contains(owner))
-				continue;
-			m_termInfo.insert(owner, {term, kind, shown});
-			m_termIndex.insert(folded, owner);
-			index(kept, owner);
-			dbgHop(QStringLiteral("terms: attached %1 [%2]")
-			       .arg(owner, term));
-			continue;
-		}
+		if (adopted.empty())
+			continue;    // hand-covered whole: no twin, no title
 		QString const name = QString::fromStdString(
 			m_corpus.topics.back().name);
 		m_generated.insert(name.toStdString());
