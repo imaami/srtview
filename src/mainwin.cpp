@@ -1552,10 +1552,11 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		pat += QLatin1Char(')');
 		std::string const tidied =
 			topics::tidy(pat.toStdString());
+		// The row's title already IS the term: the gloss text
+		// never repeats it, an acronym's expansion just leads.
 		QString const shown = means.isEmpty()
 			? gloss
-			: term + QStringLiteral(" = ") + means
-			  + QStringLiteral(". ") + gloss;
+			: means + QStringLiteral(". ") + gloss;
 		QString const folded = term.toCaseFolded();
 		// One term, one topic: an entry whose term is known, or
 		// whose branches overlap an existing term topic at all
