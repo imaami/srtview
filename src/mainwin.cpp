@@ -1479,6 +1479,17 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		if (std::string const pat = expand_of(nm); !pat.empty())
 			stageDive(pat, false, false);
 	};
+	// Every validated spelling joins the index, first owner wins:
+	// a later window proposing a known VARIANT as its term ("TERM:
+	// gidger" after gidger was seen under ghidra) must grow the
+	// owner, not mint a titled twin.
+	auto const index = [this](QStringList const &seen,
+	                          QString const &owner) {
+		for (QString const &v : seen)
+			if (QString const k = v.toCaseFolded();
+			    !m_termIndex.contains(k))
+				m_termIndex.insert(k, owner);
+	};
 	for (QString const &block :
 	     text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
 		QString term, kind, gloss, means;
@@ -1560,6 +1571,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 				info.kind = kind;
 			if (info.gloss.isEmpty())
 				info.gloss = shown;
+			index(kept, own);
 			if (!grown.empty()) {
 				dbgHop(QStringLiteral(
 					"terms: extended %1 [%2]")
@@ -1590,6 +1602,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 				continue;
 			m_termInfo.insert(owner, {term, kind, shown});
 			m_termIndex.insert(folded, owner);
+			index(kept, owner);
 			dbgHop(QStringLiteral("terms: attached %1 [%2]")
 			       .arg(owner, term));
 			continue;
@@ -1600,6 +1613,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		m_termTopics.insert(name.toStdString());
 		m_termInfo.insert(name, {term, kind, shown});
 		m_termIndex.insert(folded, name);
+		index(kept, name);
 		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
 		       .arg(name, QString::fromStdString(adopted)));
 		stage(m_corpus.topics.back().name);
