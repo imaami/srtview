@@ -135,6 +135,10 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 		0, QHeaderView::ResizeToContents);
 	m_tree.header()->setSectionResizeMode(
 		1, QHeaderView::ResizeToContents);
+	// A long video name elides instead of shoving the progress
+	// and glossary columns off to the right.
+	m_tree.header()->setMaximumSectionSize(
+		24 * fontMetrics().height());
 	m_tree.setRootIsDecorated(true);
 	m_tree.setUniformRowHeights(true);
 	m_tabs.setParent(split);
@@ -308,6 +312,8 @@ void KnowledgePane::setUiFont(QFont const &f)
 	m_filter.setFont(f);
 	m_tree.setFont(f);
 	m_tree.header()->setFont(f);
+	m_tree.header()->setMaximumSectionSize(
+		24 * QFontMetrics(f).height());
 	m_tabs.setFont(f);
 	m_tabs.tabBar()->setFont(f);
 	m_hits.setFont(f);
