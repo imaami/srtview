@@ -1225,10 +1225,10 @@ void MainWin::refreshKnowledge()
 			words << info.kind;
 		if (m_generated.contains(t.name))
 			words << QStringLiteral("generated");
-		words << (cached ? QStringLiteral("essay cached")
-		                 : QStringLiteral("essay pending"));
+		words << (cached ? QStringLiteral("summary cached")
+		                 : QStringLiteral("summary pending"));
 		if (scanned < vids)
-			words << QStringLiteral("scan %1/%2")
+			words << QStringLiteral("searched %1/%2 videos")
 			         .arg(scanned).arg(vids);
 		QString gloss = info.gloss;
 		// Sidecar entries key on the display title -- the human-
@@ -1334,7 +1334,7 @@ void MainWin::refreshKnowledge()
 		words << (cached ? QStringLiteral("summary cached")
 		                 : QStringLiteral("summary pending"));
 		if (ttotal)
-			words << QStringLiteral("terms %1/%2")
+			words << QStringLiteral("glossary %1/%2")
 			         .arg(tdone).arg(ttotal);
 		rows.push_back({QStringLiteral("Videos"), title, {},
 		                cached ? path : QString(),
