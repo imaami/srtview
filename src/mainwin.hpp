@@ -239,6 +239,8 @@ private:
 	std::vector<DiveScan>           m_diveScans; // staged scans
 	std::size_t                     m_diveAt = 0;// scan cursor
 	std::vector<FinishedDive>       m_dives;     // for pairing
+	std::set<std::string>           m_diveRetired; // superseded
+	                                             // mid-session
 	std::vector<PendingFocus>       m_focusWork; // probe chains
 	std::vector<agenda::id>         m_focusPending; // pair-owned
 	                                             // files to harvest

@@ -739,13 +739,16 @@ void MainWin::queueDives(bool fresh)
 	}
 	for (topics::export_item const &e :
 	     topics::export_plan(m_corpus)) {
-		// Term topics are index entries: occurrences scan live
-		// in the pane, and a dive per term would flood the
-		// queue with prose nobody asked for.
-		if (m_termTopics.contains(e.name))
-			continue;
+		// Term topics dive too: their essays are what feed the
+		// pairing layer, and pairs are where single spellings
+		// crystallize into grouped regexes -- on a corpus with
+		// no hand topics they are the only road there.  The
+		// generated flag means "born from a focus" (those must
+		// not re-pair into probe-of-probe loops); terms are
+		// first-generation and pair like hand topics.
 		bool const gen = m_generated.contains(e.name);
-		stageDive(e.pattern, !gen, gen);
+		stageDive(e.pattern, !gen,
+		          gen && !m_termTopics.contains(e.name));
 	}
 	// The supportive layer: referenced topics dive too, a band
 	// lower and unexported -- the nested regexes reveal semantic
@@ -849,6 +852,14 @@ void MainWin::scanDiveVideo(DiveScan &s, PlayItem const &it)
 // a dive: it routes to finishProbe() instead.
 void MainWin::finishDive(DiveScan &s)
 {
+	// A topic extended mid-scan supersedes this dive: asking or
+	// pairing the pre-extension pattern would burn budget a warm
+	// replay (which only ever sees the final pattern) never burns.
+	if (m_diveRetired.contains(s.id.hex())) {
+		s.parts.clear();
+		s.parts.shrink_to_fit();
+		return;
+	}
 	std::size_t const at = focusWorkOf(s.id);
 	if (at < m_focusWork.size()) {
 		if (!finishProbe(s, m_focusWork[at]))
@@ -1456,6 +1467,18 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		       && cue < int(tx.lines.size())
 		       ? &tx.lines[cue] : nullptr;
 	};
+	// Mid-session adoptions dive immediately: queueDives runs only
+	// at load, and an unstaged term topic would idle a session.
+	auto const expand_of = [this](std::string const &nm) {
+		for (topics::topic const &tp : m_corpus.topics)
+			if (tp.name == nm)
+				return topics::expand(m_corpus, tp);
+		return std::string();
+	};
+	auto const stage = [this, &expand_of](std::string const &nm) {
+		if (std::string const pat = expand_of(nm); !pat.empty())
+			stageDive(pat, false, false);
+	};
 	for (QString const &block :
 	     text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
 		QString term, kind, gloss, means;
@@ -1528,6 +1551,8 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		// kind, casing and gloss keep the first non-empty word.
 		if (QString const own = m_termIndex.value(folded);
 		    !own.isEmpty()) {
+			std::string const before =
+				expand_of(own.toStdString());
 			std::string const grown = topics::extend(
 				m_corpus, own.toStdString(), tidied);
 			TermInfo &info = m_termInfo[own];
@@ -1535,11 +1560,19 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 				info.kind = kind;
 			if (info.gloss.isEmpty())
 				info.gloss = shown;
-			if (!grown.empty())
+			if (!grown.empty()) {
 				dbgHop(QStringLiteral(
 					"terms: extended %1 [%2]")
 				       .arg(own,
 				            QString::fromStdString(grown)));
+				agenda::id const old = diveId(before);
+				m_diveRetired.insert(old.hex());
+				std::erase_if(m_dives,
+					[&old](FinishedDive const &d) {
+						return d.id == old;
+					});
+				stage(own.toStdString());
+			}
 			continue;
 		}
 		std::string const adopted = topics::adopt_novel(
@@ -1569,6 +1602,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		m_termIndex.insert(folded, name);
 		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
 		       .arg(name, QString::fromStdString(adopted)));
+		stage(m_corpus.topics.back().name);
 	}
 	return true;
 }
