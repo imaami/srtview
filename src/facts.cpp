@@ -171,8 +171,15 @@ constexpr char kMergePrompt[] =
 	"Every name must be copied exactly from the list. Merge only "
 	"spellings and mishearings of the SAME word or name; related "
 	"but different things (a tool and its file format, two "
-	"different tools) stay separate. If the list has no such "
-	"groups, reply with the single word NONE. No other text.";
+	"different tools) stay separate. Also judge worth: a listed "
+	"term that is everyday vocabulary of the field (function, "
+	"binary, loops, stack, project) rather than a specific tool, "
+	"product, protocol, format, person or project name earns one "
+	"line:\n"
+	"DROP: the term\n"
+	"Never drop a specific name, however misspelled. If there is "
+	"nothing to merge and nothing to drop, reply with the single "
+	"word NONE. No other text.";
 
 // System prompt per task kind (leaf, node, dive, focus, probe,
 // terms, merge).  The views wrap NUL-terminated literals, so

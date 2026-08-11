@@ -1709,11 +1709,22 @@ void MainWin::harvestMerge()
 		foldLine(l);
 }
 
-// One MERGE line: the first listed name is the corrected spelling
-// and takes the title; any member already in the index anchors the
-// group it folds into.
+// One judgment line.  MERGE: the first listed name is the
+// corrected spelling and takes the title; any member already in
+// the index anchors the group it folds into.  DROP: the named
+// everyday-vocabulary term leaves the directory wholesale.
 void MainWin::foldLine(QString const &line)
 {
+	if (line.startsWith(QStringLiteral("DROP:"))) {
+		QString const t = line.mid(5).trimmed();
+		QString const name = m_termIndex.value(t.toCaseFolded());
+		if (name.isEmpty())
+			return;
+		dropTopic(name);
+		dbgHop(QStringLiteral("terms: dropped %1 [%2]")
+		       .arg(name, t));
+		return;
+	}
 	if (!line.startsWith(QStringLiteral("MERGE:")))
 		return;
 	QStringList parts;
@@ -1733,6 +1744,29 @@ void MainWin::foldLine(QString const &line)
 	for (QString const &p : parts)
 		mergeSpelling(owner, p);
 	m_termInfo[owner].term = parts.front();
+}
+
+// Remove one machine topic wholesale: corpus entry, directory
+// entry, every index spelling, its dive.  Cached extraction
+// replies re-mint it next session and the cached judgment drops it
+// again -- deterministic and invisible.
+void MainWin::dropTopic(QString const &name)
+{
+	std::string const victim = name.toStdString();
+	std::string const pat = expandOf(victim);
+	if (pat.empty())
+		return;
+	std::erase_if(m_corpus.topics,
+		[&victim](topics::topic const &tp) {
+			return tp.name == victim;
+		});
+	m_termTopics.erase(victim);
+	m_generated.erase(victim);
+	m_termInfo.remove(name);
+	m_termIndex.removeIf([&name](auto it) {
+		return it.value() == name;
+	});
+	retireDive(diveId(pat));
 }
 
 // Fold the topic owning one spelling into the group owner: its
