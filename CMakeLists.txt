@@ -28,7 +28,7 @@ endif()
 # prevent the executable from being output to build/src/
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.1 REQUIRED COMPONENTS Widgets Network)
 # 7.85 is the floor CURLOPT_PROTOCOLS_STR needs.
 find_package(CURL 7.85 REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
