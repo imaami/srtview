@@ -420,16 +420,16 @@ constexpr char ascii_lower(unsigned char c)
 // material and shed the backslash too.
 constexpr auto kPlainEscape = [] {
 	std::array<bool, 256> t{};
-	for (int c = 0x20; c < 0x7f; ++c)
-		t[std::size_t(c)] = true;
-	for (int c = 0x80; c < 0x100; ++c)
-		t[std::size_t(c)] = true;
-	for (int c = '0'; c <= '9'; ++c)
-		t[std::size_t(c)] = false;
-	for (int c = 'A'; c <= 'Z'; ++c)
-		t[std::size_t(c)] = false;
-	for (int c = 'a'; c <= 'z'; ++c)
-		t[std::size_t(c)] = false;
+	for (std::size_t c = 0x20; c < 0x7f; ++c)
+		t[c] = true;
+	for (std::size_t c = 0x80; c < 0x100; ++c)
+		t[c] = true;
+	for (std::size_t c = '0'; c <= '9'; ++c)
+		t[c] = false;
+	for (std::size_t c = 'A'; c <= 'Z'; ++c)
+		t[c] = false;
+	for (std::size_t c = 'a'; c <= 'z'; ++c)
+		t[c] = false;
 	for (char const c : std::string_view("^$.[]()*+?{}|\\"))
 		t[std::size_t((unsigned char)c)] = false;
 	return t;
