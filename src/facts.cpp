@@ -135,8 +135,9 @@ constexpr char kTermsPrompt[] =
 	"transcribed subtitles of one video: lines of the form "
 	"#N [H:MM:SS] text. Identify the terms worth an index entry: "
 	"systems, components, protocols, tools, acronyms, project and "
-	"product names. Skip ordinary words. For each, most important "
-	"first, at most twelve, emit one block of lines:\n"
+	"product names. Skip ordinary words, bare numbers and single "
+	"letters. For each, most important first, at most twelve, emit "
+	"one block of lines:\n"
 	"TERM: the likely correct spelling\n"
 	"KIND: one of term, acronym, system, component, person, other\n"
 	"MEANS: the expansion, only for an acronym the excerpt itself "
@@ -148,12 +149,15 @@ constexpr char kTermsPrompt[] =
 	"CUES: the #numbers of the lines it appears on, space "
 	"separated\n"
 	"Blocks are separated by one blank line. The subtitles are "
-	"machine transcriptions of speech: one spoken term may appear "
-	"under several mangled spellings -- list every observed form "
-	"in SEEN and put the intended form in TERM. Only terms the "
-	"excerpt actually contains; only cue numbers that appear "
-	"above. If nothing qualifies, reply with the single word "
-	"NONE. No other text.";
+	"machine transcriptions of speech, so ONE spoken term often "
+	"appears under several mangled spellings. Group them into one "
+	"block: if the excerpt has gidra, gidger and guitro for the "
+	"tool Ghidra, that is TERM: Ghidra with SEEN: gidra | gidger "
+	"| guitro. A mangled spelling never gets its own block, and "
+	"TERM is the correct spelling even when the excerpt only "
+	"misspells it. Only terms the excerpt actually contains; only "
+	"cue numbers that appear above. If nothing qualifies, reply "
+	"with the single word NONE. No other text.";
 
 // System prompt per task kind (leaf, node, dive, focus, probe,
 // terms).  The views wrap NUL-terminated literals, so .data()
