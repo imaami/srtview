@@ -1205,6 +1205,13 @@ void MainWin::refreshKnowledge()
 		// subject.
 		if (comp.contains(t.name))
 			continue;
+		// Adopted focus topics are machinery too: they exist so
+		// subtraction and pairing see them, but their face is the
+		// Focuses group -- a raw "focusN" label in Topics is
+		// noise twice over.
+		if (m_generated.contains(t.name)
+		    && topics::stem_name(t.name, "focus"))
+			continue;
 		std::string const pat = topics::expand(m_corpus, t);
 		agenda::id const did = diveId(pat);
 		QString const path = QString::fromStdString(
