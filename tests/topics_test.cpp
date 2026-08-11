@@ -289,6 +289,10 @@ void testNormalKey()
 	      && normal_key("\\d+") != normal_key("d+")
 	      && normal_key("a\\|b") != normal_key("a|b"),
 	      "meaningful escapes kept: metachar, class, alternation");
+	check(normal_key("\\Q\\-\\E") != normal_key("\\Q-\\E")
+	      && normal_key("(?x:a\\ b)") != normal_key("(?x:a b)")
+	      && normal_key("(?-x)a\\ b") != normal_key("(?-x)a b"),
+	      "quoting and x-flag doubt: input is its own key");
 	check(normal_key("(?i:b|a|a)") == normal_key("(?i:a|b)"),
 	      "branch order and repeats collapse");
 	check(normal_key("(?i)(a|b)") == normal_key("(?i:a|b)") &&

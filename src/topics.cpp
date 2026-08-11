@@ -630,8 +630,36 @@ bool case_idiom(std::string_view cls, char &low)
 // makes its branch case-insensitive, so [Qq]uorum and (?i:quorum)
 // meet in the middle; folded keys carry an "i:" tag so a case-
 // sensitive branch can never collide with them.
+// Constructs the key machinery does not model: \Q...\E quoting and
+// inline (?x)-style flags make a stripped escape significant again.
+// Structural doubt keeps the input as its own key, per the house
+// convention.
+bool key_doubt(std::string_view b)
+{
+	for (std::size_t i = 0; i < b.size(); ++i) {
+		if (b[i] == '\\') {
+			if (i + 1 < b.size() && b[i + 1] == 'Q')
+				return true;
+			++i;
+			continue;
+		}
+		if (b[i] != '(' || i + 2 >= b.size() || b[i + 1] != '?')
+			continue;
+		for (std::size_t j = i + 2; j < b.size(); ++j) {
+			char const c = b[j];
+			if (c == 'x')
+				return true;
+			if (c != 'i' && c != 'm' && c != 's' && c != '-')
+				break;
+		}
+	}
+	return false;
+}
+
 std::string branch_key(std::string_view b, bool ci)
 {
+	if (key_doubt(b))
+		return std::string(b);
 	for (std::size_t i = 0; !ci && i < b.size();) {
 		if (b[i] == '\\') {
 			i += 2;
