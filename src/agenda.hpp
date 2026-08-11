@@ -52,7 +52,7 @@ namespace agenda {
 // the window and adopts.  The probe-search-write chain and the
 // terms harvest are the executor's caller's to run.
 enum class kind : std::uint8_t {
-	leaf, node, dive, focus, probe, terms
+	leaf, node, dive, focus, probe, terms, merge
 };
 
 // Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,

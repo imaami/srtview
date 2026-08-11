@@ -15,16 +15,24 @@ namespace fs = std::filesystem;
 
 // Kind names salt the suffix; subdirs mirror the facts layout.
 constexpr std::string_view kKind[]{
-	"leaf", "node", "dive", "focus", "probe", "terms"
+	"leaf", "node", "dive", "focus", "probe", "terms", "merge"
 };
 constexpr std::string_view kSub[]{
-	"", "", "dives/", "focus/", "probe/", "terms/"
+	"", "", "dives/", "focus/", "probe/", "terms/", "merge/"
 };
 
 static_assert(std::size(kKind) == std::size(kSub)
               && std::size(kKind)
-                 == std::size_t(agenda::kind::terms) + 1,
+                 == std::size_t(agenda::kind::merge) + 1,
               "the tables mirror agenda::kind");
+
+// Content-keyed kinds: the plan id is already a hash of the exact
+// input, so the name stays single-part and resolution is bare
+// existence.
+constexpr bool flat_kind(agenda::kind k)
+{
+	return k == agenda::kind::terms || k == agenda::kind::merge;
+}
 
 std::string_view sub(agenda::kind k)
 {
@@ -238,7 +246,7 @@ std::string store::resolve_at(std::size_t at)
 	if (!m_entries[at].path.empty())
 		return m_entries[at].path;
 	std::error_code ec;
-	if (m_entries[at].t.what == agenda::kind::terms) {
+	if (flat_kind(m_entries[at].t.what)) {
 		std::string p = flat(at);
 		if (!fs::exists(p, ec))
 			return {};
@@ -299,7 +307,7 @@ std::string store::target(agenda::id id)
 	std::size_t const at = index_of(id);
 	if (at == npos)
 		return {};
-	if (m_entries[at].t.what == agenda::kind::terms)
+	if (flat_kind(m_entries[at].t.what))
 		return flat(at);
 	return chain(at) ? two_part(at) : std::string();
 }

@@ -179,6 +179,15 @@ private:
 	void queueTerms();
 	void harvestTerms();
 	bool harvestTermsOne(TermsWork const &w);
+	std::string expandOf(std::string const &name) const;
+	void retireDive(agenda::id id);
+	void stageTopic(std::string const &name);
+	void indexSpellings(QStringList const &seen,
+	                    QString const &owner);
+	void stageMerge();
+	void harvestMerge();
+	void foldLine(QString const &line);
+	void mergeSpelling(QString const &owner, QString const &spell);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	QString glossPath() const;
@@ -249,6 +258,8 @@ private:
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
+	agenda::id                      m_mergeId;   // directory fold ask
+	std::set<std::string>           m_mergeSeen; // folded reply ids
 	std::set<std::string>           m_termTopics;// index-only names
 	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
 	QHash<QString, QString>         m_termIndex; // folded term -> name

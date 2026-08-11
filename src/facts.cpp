@@ -159,12 +159,27 @@ constexpr char kTermsPrompt[] =
 	"cue numbers that appear above. If nothing qualifies, reply "
 	"with the single word NONE. No other text.";
 
+constexpr char kMergePrompt[] =
+	"The user message lists index terms collected from machine-"
+	"transcribed subtitles of one lecture corpus, one term per "
+	"line. Because the transcription is automatic, one spoken "
+	"term often appears as several separately listed spellings "
+	"(Ghidra may also be listed as gidra, gidger, guitro). Find "
+	"such groups. Emit one line per group:\n"
+	"MERGE: the correct spelling | wrong spelling | wrong "
+	"spelling\n"
+	"Every name must be copied exactly from the list. Merge only "
+	"spellings and mishearings of the SAME word or name; related "
+	"but different things (a tool and its file format, two "
+	"different tools) stay separate. If the list has no such "
+	"groups, reply with the single word NONE. No other text.";
+
 // System prompt per task kind (leaf, node, dive, focus, probe,
-// terms).  The views wrap NUL-terminated literals, so .data()
-// satisfies the C API below.
+// terms, merge).  The views wrap NUL-terminated literals, so
+// .data() satisfies the C API below.
 constexpr std::string_view kPromptOf[] = {
 	kLeafPrompt, kNodePrompt, kDivePrompt, kFocusPrompt,
-	kProbePrompt, kTermsPrompt,
+	kProbePrompt, kTermsPrompt, kMergePrompt,
 };
 
 // Connect refusals in a row before the pipeline parks itself for
@@ -172,7 +187,8 @@ constexpr std::string_view kPromptOf[] = {
 constexpr int kRefusalCap = 3;
 
 constexpr char const *kKindName[] = {"leaf", "node", "dive",
-                                     "focus", "probe", "terms"};
+                                     "focus", "probe", "terms",
+                                     "merge"};
 
 // A reply's context travels as the task's user data, heap-owned:
 // exactly one callback per accepted task makes adoption in
@@ -196,8 +212,13 @@ struct reply_ctx {
 // prose and the pattern both, and human readers get the same favor.
 // Kinds with an empty prefix carry no head.
 constexpr std::string_view kHeadPfx[] = {
-	"", "", "PATTERN ", "REGEX: ", "", "",
+	"", "", "PATTERN ", "REGEX: ", "", "", "",
 };
+static_assert(std::size(kHeadPfx) == std::size(kPromptOf)
+              && std::size(kHeadPfx) == std::size(kKindName)
+              && std::size(kHeadPfx)
+                 == std::size_t(agenda::kind::merge) + 1,
+              "per-kind tables mirror agenda::kind");
 
 std::string head_of(agenda::task const &t)
 {
@@ -372,6 +393,8 @@ Facts::Facts(vault::hash8_fn h)
 		std::filesystem::create_directories(m_dir + "/probe", ec);
 	if (!ec)
 		std::filesystem::create_directories(m_dir + "/terms", ec);
+	if (!ec)
+		std::filesystem::create_directories(m_dir + "/merge", ec);
 	if (!ec) {
 		endpoint const ep = serverEnv();
 		m_llm = llm_create(ep.host.empty() ? nullptr
@@ -693,8 +716,9 @@ std::string Facts::assemble(agenda::task const &t)
 		return assemble_probe(t);
 
 	case agenda::kind::terms:
-		// A numbered window snapshot, leaf-like: the caller
-		// built the excerpt, nothing to layer.
+	case agenda::kind::merge:
+		// A caller-built snapshot -- the numbered window or the
+		// term directory listing -- nothing to layer.
 		return spend_body(t.id);
 	}
 

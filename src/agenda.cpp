@@ -16,7 +16,11 @@ namespace {
 // but never starves the pyramid), tiers order within a kind, the
 // export edge floats a topic over its supportive components, and
 // heat (unbounded) moves everything across those bands.
-constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5};
+// merge sits at the bottom: the fold judgment over the term
+// directory is most useful once the queue has otherwise drained
+// and the directory has stopped moving.
+constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
+                                 0.4};
 constexpr double kTierStep    = 1.0 / 32.0;
 constexpr double kExportEdge  = 1.0 / 4.0;
 

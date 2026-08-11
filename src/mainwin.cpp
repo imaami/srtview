@@ -420,6 +420,8 @@ MainWin::MainWin()
 	connect(&m_focusTick, &QTimer::timeout, this, [this] {
 		pumpProbes();
 		harvestTerms();
+		stageMerge();
+		harvestMerge();
 		harvestFocus();
 		refreshKnowledge();
 	});
@@ -634,6 +636,8 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_harvested.clear();
 		m_termsWork.clear();
 		m_termsSeen.clear();
+		m_mergeId = {};
+		m_mergeSeen.clear();
 		m_termTopics.clear();
 		m_termInfo.clear();
 		m_termIndex.clear();
@@ -674,6 +678,8 @@ void MainWin::rebuildCorpus(bool fresh)
 	// the rest answers.
 	queueTerms();
 	harvestTerms();
+	stageMerge();
+	harvestMerge();
 	harvestFocus();
 	queueDives(fresh);
 	updateInfo();
@@ -1467,29 +1473,6 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		       && cue < int(tx.lines.size())
 		       ? &tx.lines[cue] : nullptr;
 	};
-	// Mid-session adoptions dive immediately: queueDives runs only
-	// at load, and an unstaged term topic would idle a session.
-	auto const expand_of = [this](std::string const &nm) {
-		for (topics::topic const &tp : m_corpus.topics)
-			if (tp.name == nm)
-				return topics::expand(m_corpus, tp);
-		return std::string();
-	};
-	auto const stage = [this, &expand_of](std::string const &nm) {
-		if (std::string const pat = expand_of(nm); !pat.empty())
-			stageDive(pat, false, false);
-	};
-	// Every validated spelling joins the index, first owner wins:
-	// a later window proposing a known VARIANT as its term ("TERM:
-	// gidger" after gidger was seen under ghidra) must grow the
-	// owner, not mint a titled twin.
-	auto const index = [this](QStringList const &seen,
-	                          QString const &owner) {
-		for (QString const &v : seen)
-			if (QString const k = v.toCaseFolded();
-			    !m_termIndex.contains(k))
-				m_termIndex.insert(k, owner);
-	};
 	for (QString const &block :
 	     text.split(QStringLiteral("\n\n"), Qt::SkipEmptyParts)) {
 		QString term, kind, gloss, means;
@@ -1575,7 +1558,7 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		if (!own.isEmpty()) {
 			bool const fresh = !m_termInfo.contains(own);
 			std::string const before =
-				expand_of(own.toStdString());
+				expandOf(own.toStdString());
 			std::string const grown = topics::extend(
 				m_corpus, own.toStdString(), tidied);
 			TermInfo &info = m_termInfo[own];
@@ -1587,19 +1570,14 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 				info.gloss = shown;
 			if (!m_termIndex.contains(folded))
 				m_termIndex.insert(folded, own);
-			index(kept, own);
+			indexSpellings(kept, own);
 			if (!grown.empty()) {
 				dbgHop(QStringLiteral(
 					"terms: extended %1 [%2]")
 				       .arg(own,
 				            QString::fromStdString(grown)));
-				agenda::id const old = diveId(before);
-				m_diveRetired.insert(old.hex());
-				std::erase_if(m_dives,
-					[&old](FinishedDive const &d) {
-						return d.id == old;
-					});
-				stage(own.toStdString());
+				retireDive(diveId(before));
+				stageTopic(own.toStdString());
 			} else if (fresh) {
 				dbgHop(QStringLiteral(
 					"terms: attached %1 [%2]")
@@ -1617,12 +1595,184 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		m_termTopics.insert(name.toStdString());
 		m_termInfo.insert(name, {term, kind, shown});
 		m_termIndex.insert(folded, name);
-		index(kept, name);
+		indexSpellings(kept, name);
 		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
 		       .arg(name, QString::fromStdString(adopted)));
-		stage(m_corpus.topics.back().name);
+		stageTopic(m_corpus.topics.back().name);
 	}
 	return true;
+}
+
+// The expanded pattern of a named topic; empty when the name is
+// not currently a topic.
+std::string MainWin::expandOf(std::string const &name) const
+{
+	for (topics::topic const &tp : m_corpus.topics)
+		if (tp.name == name)
+			return topics::expand(m_corpus, tp);
+	return {};
+}
+
+// A superseded dive neither records nor pairs nor asks: budget a
+// warm replay never burns.
+void MainWin::retireDive(agenda::id id)
+{
+	m_diveRetired.insert(id.hex());
+	std::erase_if(m_dives, [&id](FinishedDive const &d) {
+		return d.id == id;
+	});
+}
+
+// Mid-session adoptions dive immediately: queueDives runs only at
+// load, and an unstaged topic would idle a session.
+void MainWin::stageTopic(std::string const &name)
+{
+	if (std::string const pat = expandOf(name); !pat.empty())
+		stageDive(pat, false, false);
+}
+
+// Every validated spelling joins the index, first owner wins: a
+// later window proposing a known VARIANT as its term ("TERM:
+// gidger" after gidger was seen under ghidra) must grow the owner,
+// not mint a titled twin.
+void MainWin::indexSpellings(QStringList const &seen,
+                             QString const &owner)
+{
+	for (QString const &v : seen)
+		if (QString const k = v.toCaseFolded();
+		    !m_termIndex.contains(k))
+			m_termIndex.insert(k, owner);
+}
+
+// The directory fold ask: the id keys on the folded, sorted term
+// list, so a changed directory stages a fresh judgment and a
+// stable one re-resolves its cached reply.
+void MainWin::stageMerge()
+{
+	QStringList terms;
+	for (TermInfo const &i : m_termInfo)
+		if (!i.term.isEmpty())
+			terms << i.term;
+	if (terms.size() < 2)
+		return;
+	std::ranges::sort(terms,
+		[](QString const &a, QString const &b) {
+			return a.toCaseFolded() < b.toCaseFolded();
+		});
+	QByteArray text;
+	for (QString const &t : terms) {
+		text += t.toUtf8();
+		text += '\n';
+	}
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView("merge\n"));
+	h.addData(text);
+	agenda::id const id = takeId(h);
+	if (id == m_mergeId)
+		return;
+	m_mergeId = id;
+	agenda::task t;
+	t.id = id;
+	t.note = std::to_string(terms.size()) + " terms";
+	t.what = agenda::kind::merge;
+	t.exported = false;
+	m_facts.offer(std::move(t), text.toStdString());
+}
+
+// Fold judgments arrive as MERGE lines over the current directory.
+// Folding shrinks the directory, which re-keys the next stageMerge
+// -- the cascade converges on a NONE and stops.  Replays are
+// idempotent: a folded twin no longer resolves.
+void MainWin::harvestMerge()
+{
+	if (!m_mergeId || m_mergeSeen.contains(m_mergeId.hex()))
+		return;
+	std::string const path = m_facts.locate(m_mergeId,
+	                                        agenda::kind::merge);
+	if (path.empty())
+		return;
+	QFile f(QString::fromStdString(path));
+	if (!f.open(QIODevice::ReadOnly))
+		return;
+	m_mergeSeen.insert(m_mergeId.hex());
+	QString const text = QString::fromUtf8(f.readAll());
+	if (text.startsWith(QStringLiteral("NONE")))
+		return;
+	for (QString const &l : text.split(QLatin1Char('\n')))
+		foldLine(l);
+}
+
+// One MERGE line: the first listed name is the corrected spelling
+// and takes the title; any member already in the index anchors the
+// group it folds into.
+void MainWin::foldLine(QString const &line)
+{
+	if (!line.startsWith(QStringLiteral("MERGE:")))
+		return;
+	QStringList parts;
+	for (QString const &p : line.mid(6).split(QLatin1Char('|')))
+		if (QString const t = p.trimmed(); !t.isEmpty())
+			parts << t;
+	if (parts.size() < 2)
+		return;
+	QString owner;
+	for (QString const &p : parts) {
+		owner = m_termIndex.value(p.toCaseFolded());
+		if (!owner.isEmpty())
+			break;
+	}
+	if (owner.isEmpty())
+		return;
+	for (QString const &p : parts)
+		mergeSpelling(owner, p);
+	m_termInfo[owner].term = parts.front();
+}
+
+// Fold the topic owning one spelling into the group owner: its
+// branches join the owner's alternation, the twin topic leaves the
+// corpus, and every index entry follows.
+void MainWin::mergeSpelling(QString const &owner,
+                            QString const &spell)
+{
+	QString const k = spell.toCaseFolded();
+	QString const name = m_termIndex.value(k);
+	if (name.isEmpty()) {
+		m_termIndex.insert(k, owner);
+		return;
+	}
+	if (name == owner)
+		return;
+	std::string const victim = name.toStdString();
+	std::string const vpat = expandOf(victim);
+	std::string const opat = expandOf(owner.toStdString());
+	if (vpat.empty() || opat.empty())
+		return;
+	// The victim leaves the corpus BEFORE the extend subtracts,
+	// or it would cover its own branches and refuse the fold.
+	std::erase_if(m_corpus.topics,
+		[&victim](topics::topic const &tp) {
+			return tp.name == victim;
+		});
+	std::string const grown = topics::extend(
+		m_corpus, owner.toStdString(), vpat);
+	m_termTopics.erase(victim);
+	m_generated.erase(victim);
+	TermInfo const gone = m_termInfo.take(name);
+	TermInfo &info = m_termInfo[owner];
+	if (info.kind.isEmpty())
+		info.kind = gone.kind;
+	if (info.gloss.isEmpty())
+		info.gloss = gone.gloss;
+	for (QString &v : m_termIndex)
+		if (v == name)
+			v = owner;
+	retireDive(diveId(vpat));
+	if (!grown.empty()) {
+		retireDive(diveId(opat));
+		stageTopic(owner.toStdString());
+	}
+	dbgHop(QStringLiteral("terms: merged %1 <- %2 [%3]")
+	       .arg(owner, name, spell));
 }
 
 // The gloss sidecar sits beside the corpus file; an implicit corpus
