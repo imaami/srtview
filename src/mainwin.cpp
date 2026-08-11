@@ -637,6 +637,7 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_termsWork.clear();
 		m_termsSeen.clear();
 		m_mergeId = {};
+		m_mergeSet.clear();
 		m_mergeSeen.clear();
 		m_termTopics.clear();
 		m_termInfo.clear();
@@ -1678,6 +1679,9 @@ void MainWin::stageMerge()
 	if (id == m_mergeId)
 		return;
 	m_mergeId = id;
+	m_mergeSet.clear();
+	for (QString const &t : terms)
+		m_mergeSet.insert(t.toCaseFolded());
 	agenda::task t;
 	t.id = id;
 	t.note = std::to_string(terms.size()) + " terms";
@@ -1715,8 +1719,20 @@ void MainWin::harvestMerge()
 // everyday-vocabulary term leaves the directory wholesale.
 void MainWin::foldLine(QString const &line)
 {
+	// The prompt demands names copied exactly from the staged
+	// list, so enforcement is exact membership: a hallucinated
+	// name -- which m_termIndex might still resolve through a
+	// SEEN alias -- rejects the whole line.
+	auto const staged = [this](QString const &t) {
+		return m_mergeSet.contains(t.toCaseFolded());
+	};
 	if (line.startsWith(QStringLiteral("DROP:"))) {
 		QString const t = line.mid(5).trimmed();
+		if (!staged(t)) {
+			dbgHop(QStringLiteral(
+				"terms: judgment rejected [%1]").arg(t));
+			return;
+		}
 		QString const name = m_termIndex.value(t.toCaseFolded());
 		if (name.isEmpty())
 			return;
@@ -1733,6 +1749,12 @@ void MainWin::foldLine(QString const &line)
 			parts << t;
 	if (parts.size() < 2)
 		return;
+	for (QString const &p : parts)
+		if (!staged(p)) {
+			dbgHop(QStringLiteral(
+				"terms: judgment rejected [%1]").arg(p));
+			return;
+		}
 	QString owner;
 	for (QString const &p : parts) {
 		owner = m_termIndex.value(p.toCaseFolded());
@@ -1756,6 +1778,11 @@ void MainWin::dropTopic(QString const &name)
 	std::string const pat = expandOf(victim);
 	if (pat.empty())
 		return;
+	// A topic other topics reference is load-bearing structure:
+	// erasing it would dangle their fragments.  Never a victim.
+	for (topics::topic const *r : topics::components(m_corpus))
+		if (r->name == victim)
+			return;
 	std::erase_if(m_corpus.topics,
 		[&victim](topics::topic const &tp) {
 			return tp.name == victim;
@@ -1788,6 +1815,11 @@ void MainWin::mergeSpelling(QString const &owner,
 	std::string const opat = expandOf(owner.toStdString());
 	if (vpat.empty() || opat.empty())
 		return;
+	// Referenced topics are structure, not spellings: folding one
+	// away would dangle the fragments that name it.
+	for (topics::topic const *r : topics::components(m_corpus))
+		if (r->name == victim)
+			return;
 	// The victim leaves the corpus BEFORE the extend subtracts,
 	// or it would cover its own branches and refuse the fold.
 	std::erase_if(m_corpus.topics,
