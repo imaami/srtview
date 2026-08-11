@@ -636,6 +636,7 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_harvested.clear();
 		m_termsWork.clear();
 		m_termsSeen.clear();
+		m_diveRetired.clear();
 		m_mergeId = {};
 		m_mergeSet.clear();
 		m_mergeSeen.clear();
@@ -1621,13 +1622,17 @@ std::string MainWin::expandOf(std::string const &name) const
 	return {};
 }
 
-// A superseded dive neither records nor pairs nor asks: budget a
-// warm replay never burns.
+// A superseded dive neither records nor pairs nor asks -- and any
+// probe chain already staged on it stops before concluding a focus
+// from the stale pattern: budget a warm replay never burns.
 void MainWin::retireDive(agenda::id id)
 {
 	m_diveRetired.insert(id.hex());
 	std::erase_if(m_dives, [&id](FinishedDive const &d) {
 		return d.id == id;
+	});
+	std::erase_if(m_focusWork, [&id](PendingFocus const &w) {
+		return std::ranges::find(w.deps, id) != w.deps.end();
 	});
 }
 
