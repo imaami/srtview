@@ -1554,7 +1554,10 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 			topics::tidy(pat.toStdString());
 		// The row's title already IS the term: the gloss text
 		// never repeats it, an acronym's expansion just leads.
+		// Small models parrot MEANS: <term> verbatim -- an
+		// expansion that only restates the term is no expansion.
 		QString const shown = means.isEmpty()
+		    || !QString::compare(means, term, Qt::CaseInsensitive)
 			? gloss
 			: means + QStringLiteral(". ") + gloss;
 		QString const folded = term.toCaseFolded();
