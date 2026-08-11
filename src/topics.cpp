@@ -630,15 +630,17 @@ bool case_idiom(std::string_view cls, char &low)
 // makes its branch case-insensitive, so [Qq]uorum and (?i:quorum)
 // meet in the middle; folded keys carry an "i:" tag so a case-
 // sensitive branch can never collide with them.
-// Constructs the key machinery does not model: \Q...\E quoting and
-// inline (?x)-style flags make a stripped escape significant again.
+// Constructs the key machinery does not model: \Q...\E quoting,
+// \c (whose operand is the NEXT character), and inline (?x)-style
+// flags all make a stripped escape or a split significant again.
 // Structural doubt keeps the input as its own key, per the house
 // convention.
 bool key_doubt(std::string_view b)
 {
 	for (std::size_t i = 0; i < b.size(); ++i) {
 		if (b[i] == '\\') {
-			if (i + 1 < b.size() && b[i + 1] == 'Q')
+			if (i + 1 < b.size()
+			    && (b[i + 1] == 'Q' || b[i + 1] == 'c'))
 				return true;
 			++i;
 			continue;
@@ -791,6 +793,12 @@ bool flatten_pattern(std::string_view pattern, bool &ci,
 {
 	ci = false;
 	if (references_groups(pattern))
+		return false;
+	// Doubt bails BEFORE the branch split: \Q can quote a '|', so
+	// splitting first would compare fragments of a literal, and a
+	// peeled wrapper's case flag would be lost from the opaque
+	// key.  The whole original pattern is its own key.
+	if (key_doubt(pattern))
 		return false;
 	// Sequenced apart deliberately: peel() writes ci, and argument
 	// evaluation order would be free to read it first.

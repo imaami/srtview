@@ -293,6 +293,11 @@ void testNormalKey()
 	      && normal_key("(?x:a\\ b)") != normal_key("(?x:a b)")
 	      && normal_key("(?-x)a\\ b") != normal_key("(?-x)a b"),
 	      "quoting and x-flag doubt: input is its own key");
+	check(normal_key("\\Qx|a\\E|b") != normal_key("\\Qx|b|a\\E")
+	      && normal_key("(?i:\\QFoo\\E)") != normal_key("\\QFoo\\E")
+	      && normal_key("\\c\\ ") != normal_key("\\c "),
+	      "doubt precedes the split: quoted bars, case context, "
+	      "\\c operands stay distinct");
 	check(normal_key("(?i:b|a|a)") == normal_key("(?i:a|b)"),
 	      "branch order and repeats collapse");
 	check(normal_key("(?i)(a|b)") == normal_key("(?i:a|b)") &&
