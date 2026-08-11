@@ -2,6 +2,7 @@
 #include "topics.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <utility>
@@ -410,6 +411,30 @@ constexpr char ascii_lower(unsigned char c)
 	return char(c >= 'A' && c <= 'Z' ? c + 32 : c);
 }
 
+// Escapes that add nothing outside a class: the bare character is
+// already literal, so the key strips the backslash -- mechanical
+// escaping ("ascii\ string") and hand spelling ("ascii string")
+// must collide.  Metacharacters keep theirs, and a backslash before
+// an ASCII alphanumeric is an escape sequence (\d, \1), never
+// touched.  Bytes past ASCII are literal UTF-8 continuation
+// material and shed the backslash too.
+constexpr auto kPlainEscape = [] {
+	std::array<bool, 256> t{};
+	for (int c = 0x20; c < 0x7f; ++c)
+		t[std::size_t(c)] = true;
+	for (int c = 0x80; c < 0x100; ++c)
+		t[std::size_t(c)] = true;
+	for (int c = '0'; c <= '9'; ++c)
+		t[std::size_t(c)] = false;
+	for (int c = 'A'; c <= 'Z'; ++c)
+		t[std::size_t(c)] = false;
+	for (int c = 'a'; c <= 'z'; ++c)
+		t[std::size_t(c)] = false;
+	for (char const c : std::string_view("^$.[]()*+?{}|\\"))
+		t[std::size_t((unsigned char)c)] = false;
+	return t;
+}();
+
 // Flattening depth past anything the pipeline writes: deeper
 // nesting reads as structure we should not pretend to understand.
 constexpr int kFlattenDepth = 8;
@@ -631,6 +656,14 @@ std::string branch_key(std::string_view b, bool ci)
 	for (std::size_t i = 0; i < b.size();) {
 		char const c = b[i];
 		if (c == '\\') {
+			if (i + 1 < b.size()
+			    && kPlainEscape[(unsigned char)b[i + 1]]) {
+				out += ci ? ascii_lower(
+					(unsigned char)b[i + 1])
+				          : b[i + 1];
+				i += 2;
+				continue;
+			}
 			out.append(b.substr(i, 2));
 			i += 2;
 			continue;

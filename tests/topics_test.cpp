@@ -280,6 +280,15 @@ void testAdopt()
 void testNormalKey()
 {
 	using topics::normal_key;
+	check(normal_key("(?i:ascii\\ string)")
+	      == normal_key("(?i:ascii string)")
+	      && normal_key("c\\-code") == normal_key("c-code")
+	      && normal_key("a\\/b") == normal_key("a/b"),
+	      "needless escapes shed: space, dash, slash");
+	check(normal_key("a\\.b") != normal_key("a.b")
+	      && normal_key("\\d+") != normal_key("d+")
+	      && normal_key("a\\|b") != normal_key("a|b"),
+	      "meaningful escapes kept: metachar, class, alternation");
 	check(normal_key("(?i:b|a|a)") == normal_key("(?i:a|b)"),
 	      "branch order and repeats collapse");
 	check(normal_key("(?i)(a|b)") == normal_key("(?i:a|b)") &&
