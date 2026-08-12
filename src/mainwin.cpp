@@ -964,9 +964,11 @@ void MainWin::stageProbe(FinishedDive const &a, DiveScan const &b)
 	    || !m_facts.locate(fid, agenda::kind::focus).empty()) {
 		// An extension restage can revisit the pair: one pending
 		// entry per file is plenty.
-		if (std::ranges::find(m_focusPending, fid)
-		    == m_focusPending.end())
-			m_focusPending.push_back(fid);
+		if (!std::ranges::any_of(m_focusPending,
+			[&fid](PendingFile const &p) {
+				return p.id == fid;
+			}))
+			m_focusPending.push_back({fid, {a.id, b.id}});
 		return;
 	}
 	PendingFocus w;
@@ -1107,7 +1109,7 @@ bool MainWin::finishProbe(DiveScan const &s, PendingFocus &w)
 	m_facts.offer(std::move(t), s.parts);
 	// The write lands asynchronously; the pending list lets the
 	// harvest tick pick it up once the file exists.
-	m_focusPending.push_back(w.focus);
+	m_focusPending.push_back({w.focus, w.deps});
 	return false;
 }
 
@@ -1135,7 +1137,7 @@ void MainWin::harvestFocus()
 	// only a partial band lets a focus adopt against not-yet-
 	// complete term subtractions, which beats adopting nothing.
 	for (std::size_t i = 0; i < m_focusPending.size();) {
-		agenda::id const id = m_focusPending[i];
+		agenda::id const id = m_focusPending[i].id;
 		// resolve-by-id: adopts a stale name the moment the
 		// pair's prose makes the chain computable, so the
 		// journaled adoption lands in the session that owns it.
@@ -1640,6 +1642,12 @@ void MainWin::retireDive(agenda::id id)
 	});
 	std::erase_if(m_focusWork, [&id](PendingFocus const &w) {
 		return std::ranges::find(w.deps, id) != w.deps.end();
+	});
+	// A concluded-but-unharvested chain of the retired dive would
+	// adopt from the stale pattern -- a fold a warm replay never
+	// stages.  The file stays as cache; the adoption does not run.
+	std::erase_if(m_focusPending, [&id](PendingFile const &p) {
+		return std::ranges::find(p.deps, id) != p.deps.end();
 	});
 }
 

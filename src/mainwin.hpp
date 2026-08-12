@@ -251,9 +251,15 @@ private:
 	std::vector<FinishedDive>       m_dives;     // for pairing
 	std::set<std::string>           m_diveRetired; // superseded
 	                                             // mid-session
+	// A written focus file awaiting harvest, still owned by its
+	// pair: the dive ids ride along so retiring a dive can pull
+	// the chain's conclusion too.
+	struct PendingFile {
+		agenda::id              id;
+		std::vector<agenda::id> deps;
+	};
 	std::vector<PendingFocus>       m_focusWork; // probe chains
-	std::vector<agenda::id>         m_focusPending; // pair-owned
-	                                             // files to harvest
+	std::vector<PendingFile>        m_focusPending; // to harvest
 	std::set<std::string>           m_generated; // machine topic names
 	std::set<std::string>           m_harvested; // focus ids seen
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
