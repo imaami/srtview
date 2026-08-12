@@ -52,8 +52,14 @@ namespace agenda {
 // the window and adopts.  The probe-search-write chain and the
 // terms harvest are the executor's caller's to run.
 enum class kind : std::uint8_t {
-	leaf, node, dive, focus, probe, terms, merge
+	leaf, node, dive, focus, probe, terms, merge, spell
 };
+
+// The one number every per-kind table must match: size arrays with
+// it and static_assert against it, so a new kind fails to compile
+// instead of corrupting whatever sat past the end.
+inline constexpr std::size_t kind_count =
+	std::size_t(kind::spell) + 1;
 
 // Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,
 // kept binary in memory -- hex materializes only at the filesystem

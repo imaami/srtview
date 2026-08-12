@@ -420,6 +420,8 @@ MainWin::MainWin()
 	connect(&m_focusTick, &QTimer::timeout, this, [this] {
 		pumpProbes();
 		harvestTerms();
+		stageSpell();
+		harvestSpell();
 		stageMerge();
 		harvestMerge();
 		harvestFocus();
@@ -637,6 +639,9 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_termsWork.clear();
 		m_termsSeen.clear();
 		m_diveRetired.clear();
+		m_spellWork.clear();
+		m_spellSeen.clear();
+		m_spellDirKey.clear();
 		m_mergeId = {};
 		m_mergeSet.clear();
 		m_mergeSeen.clear();
@@ -680,6 +685,8 @@ void MainWin::rebuildCorpus(bool fresh)
 	// the rest answers.
 	queueTerms();
 	harvestTerms();
+	stageSpell();
+	harvestSpell();
 	stageMerge();
 	harvestMerge();
 	harvestFocus();
@@ -1705,6 +1712,173 @@ void MainWin::indexSpellings(QStringList const &seen,
 		if (QString const k = v.toCaseFolded();
 		    !m_termIndex.contains(k))
 			m_termIndex.insert(k, owner);
+}
+
+// Up to cap transcript lines containing the term, in corpus order:
+// the verdict's evidence.  Deterministic for a fixed corpus, so the
+// ask ids built over it replay from cache.
+QStringList MainWin::termLines(QString const &term, int cap)
+{
+	QStringList out;
+	QRegularExpression const re(QRegularExpression::escape(term),
+		QRegularExpression::CaseInsensitiveOption);
+	for (PlayItem const &it : m_playlist) {
+		QString const srt = srtOf(it);
+		if (srt.isEmpty())
+			continue;
+		for (QString const &line :
+		     exporter::load(m_transcripts, srt).lines) {
+			if (!re.match(line).hasMatch())
+				continue;
+			out << line;
+			if (out.size() >= cap)
+				return out;
+		}
+	}
+	return out;
+}
+
+// Pair the directory phonetically: every two terms the sound gate
+// admits, not yet settled and not already one topic, get three
+// salted verdict asks over transcript evidence with the
+// substitution pre-done.  The model only ever answers whether the
+// substituted lines read naturally -- which pairs are worth asking
+// at all is mechanics, not judgment.
+void MainWin::stageSpell()
+{
+	struct Cand {
+		QString term;
+		QString owner;
+		int     hits;
+	};
+	std::vector<Cand> dir;
+	QStringList key;
+	for (auto it = m_termInfo.cbegin(); it != m_termInfo.cend();
+	     ++it) {
+		if (it->term.isEmpty()
+		    || !m_termTopics.contains(it.key().toStdString()))
+			continue;
+		dir.push_back({it->term, it.key(), 0});
+		key << it->term.toCaseFolded();
+	}
+	if (dir.size() < 2)
+		return;
+	// The scan is priced per directory change, not per tick.
+	std::ranges::sort(key);
+	QString const dirKey = key.join(QLatin1Char('\n'));
+	if (dirKey == m_spellDirKey)
+		return;
+	m_spellDirKey = dirKey;
+	for (Cand &c : dir)
+		c.hits = corpusHits(QRegularExpression(
+			QRegularExpression::escape(c.term),
+			QRegularExpression::CaseInsensitiveOption), 50);
+	for (std::size_t i = 0; i < dir.size(); ++i)
+		for (std::size_t j = i + 1; j < dir.size(); ++j)
+			stageSpellPair(dir[i].hits >= dir[j].hits
+			               ? dir[i].term : dir[j].term,
+			               dir[i].hits >= dir[j].hits
+			               ? dir[j].term : dir[i].term);
+}
+
+// One candidate pair, anchor first: gate, dedupe, then three vote
+// asks whose ids key on the exact evidence text.
+void MainWin::stageSpellPair(QString const &a, QString const &b)
+{
+	QString const fa = a.toCaseFolded();
+	QString const fb = b.toCaseFolded();
+	QString const pairKey = fa + QLatin1Char('\n') + fb;
+	if (m_spellSeen.contains(pairKey)
+	    || m_termIndex.value(fa) == m_termIndex.value(fb)
+	    || !topics::sound_alike(fa.toStdString(),
+	                            fb.toStdString()))
+		return;
+	for (SpellWork const &w : m_spellWork)
+		if (w.a == a && w.b == b)
+			return;
+	QString const la = termLines(a, 4).join(QLatin1Char('\n'));
+	QStringList raw = termLines(b, 4);
+	QString const lb = raw.join(QLatin1Char('\n'));
+	QRegularExpression const rb(QRegularExpression::escape(b),
+		QRegularExpression::CaseInsensitiveOption);
+	for (QString &l : raw)
+		l.replace(rb, a);
+	QString const ls = raw.join(QLatin1Char('\n'));
+	SpellWork w{a, b, {}};
+	for (int v = 0; v < 3; ++v) {
+		QString const body = QStringLiteral(
+			"TERM A (established): %1\n%2\n\n"
+			"TERM B (rare, suspect): %3\n%4\n\n"
+			"B's lines with A substituted in B's place:\n%5\n\n"
+			"Do the substituted lines read as natural speech "
+			"about A? Is B the speaker saying A? (pass %6)")
+			.arg(a, la, b, lb, ls).arg(v);
+		QCryptographicHash h(QCryptographicHash::Blake2b_256);
+		h.addData(QByteArrayView("spell\n"));
+		h.addData(body.toUtf8());
+		w.vote[v] = takeId(h);
+		agenda::task t;
+		t.id = w.vote[v];
+		t.note = (a + QStringLiteral(" ~ ") + b
+		          + QStringLiteral(" #") + QString::number(v))
+		         .toStdString();
+		t.what = agenda::kind::spell;
+		t.exported = false;
+		m_facts.offer(std::move(t), body.toStdString());
+	}
+	m_spellWork.push_back(std::move(w));
+}
+
+// Tally the votes: two SAME fold the suspect into the anchor's
+// owner, two DIFFERENT settle the pair apart, and either outcome
+// retires it.  Folding shrinks the directory, which re-cuts the
+// candidate set and re-keys the judgment ask downstream.
+void MainWin::harvestSpell()
+{
+	for (std::size_t i = 0; i < m_spellWork.size();) {
+		SpellWork const &w = m_spellWork[i];
+		int same = 0, diff = 0;
+		for (agenda::id const v : w.vote)
+			tallySpellVote(v, same, diff);
+		if (same < 2 && diff < 2) {
+			++i;
+			continue;
+		}
+		if (same >= 2) {
+			QString const owner =
+				m_termIndex.value(w.a.toCaseFolded());
+			if (!owner.isEmpty()
+			    && mergeSpelling(owner, w.b))
+				dbgHop(QStringLiteral(
+					"terms: sounded %1 <- %2")
+				       .arg(w.a, w.b));
+		}
+		m_spellSeen.insert(w.a.toCaseFolded() + QLatin1Char('\n')
+		                   + w.b.toCaseFolded());
+		m_spellWork.erase(m_spellWork.begin()
+		                  + std::ptrdiff_t(i));
+	}
+}
+
+// One vote file: the last SAME/DIFFERENT word decides it; an
+// unanswered or wordless reply counts for neither side.
+void MainWin::tallySpellVote(agenda::id vote, int &same, int &diff)
+{
+	std::string const p = m_facts.locate(vote,
+	                                     agenda::kind::spell);
+	if (p.empty())
+		return;
+	QFile f(QString::fromStdString(p));
+	if (!f.open(QIODevice::ReadOnly))
+		return;
+	QString const text = QString::fromUtf8(f.readAll());
+	static QRegularExpression const word(
+		QStringLiteral("\\b(SAME|DIFFERENT)\\b"));
+	QString last;
+	for (auto it = word.globalMatch(text); it.hasNext();)
+		last = it.next().captured(1);
+	same += last == QStringLiteral("SAME");
+	diff += last == QStringLiteral("DIFFERENT");
 }
 
 // The directory fold ask: the id keys on the folded, sorted term

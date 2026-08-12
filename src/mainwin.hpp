@@ -180,6 +180,11 @@ private:
 	void harvestTerms();
 	bool harvestTermsOne(TermsWork const &w);
 	int corpusHits(QRegularExpression const &re, int cap);
+	QStringList termLines(QString const &term, int cap);
+	void stageSpell();
+	void stageSpellPair(QString const &a, QString const &b);
+	void harvestSpell();
+	void tallySpellVote(agenda::id vote, int &same, int &diff);
 	std::string expandOf(std::string const &name) const;
 	void retireDive(agenda::id id);
 	void stageTopic(std::string const &name);
@@ -266,6 +271,18 @@ private:
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
+	// One phonetic-pair verdict in flight: three salted votes over
+	// the same pre-substituted evidence; two SAME fold the suspect
+	// into the anchor's owner, any settled majority retires the
+	// pair.
+	struct SpellWork {
+		QString    a, b;      // anchor and suspect display terms
+		agenda::id vote[3];
+	};
+	std::vector<SpellWork>          m_spellWork; // verdicts pending
+	std::set<QString>               m_spellSeen; // settled pairs
+	QString                         m_spellDirKey; // directory the
+	                                             // pairs were cut from
 	agenda::id                      m_mergeId;   // directory fold ask
 	QHash<QString, QString>         m_mergeSet;  // folded -> staged term
 	std::set<std::string>           m_mergeSeen; // folded reply ids

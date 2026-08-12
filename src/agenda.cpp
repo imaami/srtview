@@ -21,9 +21,8 @@ namespace {
 // directory is most useful once the queue has otherwise drained
 // and the directory has stopped moving.
 constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
-                                 0.4};
-static_assert(std::size(kKindBase)
-              == std::size_t(kind::merge) + 1,
+                                 0.4, 0.42};
+static_assert(std::size(kKindBase) == kind_count,
               "kKindBase mirrors agenda::kind");
 constexpr double kTierStep    = 1.0 / 32.0;
 constexpr double kExportEdge  = 1.0 / 4.0;

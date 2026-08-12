@@ -15,15 +15,16 @@ namespace fs = std::filesystem;
 
 // Kind names salt the suffix; subdirs mirror the facts layout.
 constexpr std::string_view kKind[]{
-	"leaf", "node", "dive", "focus", "probe", "terms", "merge"
+	"leaf", "node", "dive", "focus", "probe", "terms", "merge",
+	"spell"
 };
 constexpr std::string_view kSub[]{
-	"", "", "dives/", "focus/", "probe/", "terms/", "merge/"
+	"", "", "dives/", "focus/", "probe/", "terms/", "merge/",
+	"spell/"
 };
 
 static_assert(std::size(kKind) == std::size(kSub)
-              && std::size(kKind)
-                 == std::size_t(agenda::kind::merge) + 1,
+              && std::size(kKind) == agenda::kind_count,
               "the tables mirror agenda::kind");
 
 // Content-keyed kinds: the plan id is already a hash of the exact
@@ -31,7 +32,8 @@ static_assert(std::size(kKind) == std::size(kSub)
 // existence.
 constexpr bool flat_kind(agenda::kind k)
 {
-	return k == agenda::kind::terms || k == agenda::kind::merge;
+	return k == agenda::kind::terms || k == agenda::kind::merge
+	    || k == agenda::kind::spell;
 }
 
 std::string_view sub(agenda::kind k)

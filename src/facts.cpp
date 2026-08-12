@@ -181,12 +181,28 @@ constexpr char kMergePrompt[] =
 	"nothing to merge and nothing to drop, reply with the single "
 	"word NONE. No other text.";
 
+constexpr char kSpellPrompt[] =
+	"The lines are machine transcriptions of speech: the "
+	"transcriber writes what it HEARS, so a name it does not know "
+	"often comes out as a wrong word that sounds alike -- "
+	"kubernetes has been transcribed as cooper netties. TERM A is "
+	"well attested in these subtitles. TERM B is rare, and the "
+	"question is whether B is really the speaker saying A, heard "
+	"wrong. Do the substitution test: re-read each of B's lines "
+	"with A in B's place (they are shown substituted already). If "
+	"the sentences then read as natural speech about A -- same "
+	"kind of subject, same kind of actions -- and A and B could "
+	"sound alike when spoken quickly, then B is a mistranscription "
+	"of A. Spelling distance means nothing. Think it through, then "
+	"answer with exactly one word on its own final line: SAME or "
+	"DIFFERENT.";
+
 // System prompt per task kind (leaf, node, dive, focus, probe,
-// terms, merge).  The views wrap NUL-terminated literals, so
-// .data() satisfies the C API below.
+// terms, merge, spell).  The views wrap NUL-terminated literals,
+// so .data() satisfies the C API below.
 constexpr std::string_view kPromptOf[] = {
 	kLeafPrompt, kNodePrompt, kDivePrompt, kFocusPrompt,
-	kProbePrompt, kTermsPrompt, kMergePrompt,
+	kProbePrompt, kTermsPrompt, kMergePrompt, kSpellPrompt,
 };
 
 // Connect refusals in a row before the pipeline parks itself for
@@ -195,7 +211,7 @@ constexpr int kRefusalCap = 3;
 
 constexpr char const *kKindName[] = {"leaf", "node", "dive",
                                      "focus", "probe", "terms",
-                                     "merge"};
+                                     "merge", "spell"};
 
 // A reply's context travels as the task's user data, heap-owned:
 // exactly one callback per accepted task makes adoption in
@@ -219,12 +235,11 @@ struct reply_ctx {
 // prose and the pattern both, and human readers get the same favor.
 // Kinds with an empty prefix carry no head.
 constexpr std::string_view kHeadPfx[] = {
-	"", "", "PATTERN ", "REGEX: ", "", "", "",
+	"", "", "PATTERN ", "REGEX: ", "", "", "", "",
 };
 static_assert(std::size(kHeadPfx) == std::size(kPromptOf)
               && std::size(kHeadPfx) == std::size(kKindName)
-              && std::size(kHeadPfx)
-                 == std::size_t(agenda::kind::merge) + 1,
+              && std::size(kHeadPfx) == agenda::kind_count,
               "per-kind tables mirror agenda::kind");
 
 std::string head_of(agenda::task const &t)
@@ -402,6 +417,8 @@ Facts::Facts(vault::hash8_fn h)
 		std::filesystem::create_directories(m_dir + "/terms", ec);
 	if (!ec)
 		std::filesystem::create_directories(m_dir + "/merge", ec);
+	if (!ec)
+		std::filesystem::create_directories(m_dir + "/spell", ec);
 	if (!ec) {
 		endpoint const ep = serverEnv();
 		m_llm = llm_create(ep.host.empty() ? nullptr
@@ -757,6 +774,7 @@ std::string Facts::assemble(agenda::task const &t)
 
 	case agenda::kind::terms:
 	case agenda::kind::merge:
+	case agenda::kind::spell:
 		// A caller-built snapshot -- the numbered window or the
 		// term directory listing -- nothing to layer.
 		return spend_body(t.id);

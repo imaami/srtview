@@ -136,8 +136,7 @@ private:
 	// Session scale is dozens to a few hundred tasks: linear
 	// scans, no hashed containers (the agenda's own convention).
 	std::vector<entry>  m_entries;
-	mutable shelf       m_shelf[std::size_t(agenda::kind::merge)
-	                            + 1];
+	mutable shelf       m_shelf[agenda::kind_count];
 	std::string         m_dir;
 	hash8_fn            m_h;
 	mutable std::size_t m_scans = 0;
