@@ -252,30 +252,22 @@ void KnowledgePane::setMatches(QVector<KnowledgeHit> hits,
                                QHash<QString, int> const &counts)
 {
 	m_hits.clear();
-	QTreeWidgetItem *grp = nullptr;
-	QString video;
-	int listed = 0;
-	// A video row is its (long) name across the full width; only a
-	// capped listing earns a note, a complete one says nothing.
-	auto const capNote = [&counts, &video, &listed](
-		QTreeWidgetItem *g) {
-		if (g && counts.value(video) > listed)
-			g->setText(0, g->text(0)
-				+ QStringLiteral(" — first %1 of %2")
-				  .arg(listed).arg(counts.value(video)));
-	};
+	// Grouped by VIDEO, not by contiguous run: a playlist listing
+	// one path twice delivers its hits in separate runs, which
+	// must land in one group under one honest cap note.  A video
+	// row is its (long) name across the full width.
+	QHash<QString, QTreeWidgetItem *> groups;
+	QHash<QString, int> listed;
 	for (KnowledgeHit const &h : hits) {
-		if (!grp || h.video != video) {
-			capNote(grp);
-			video = h.video;
-			listed = 0;
+		QTreeWidgetItem *&grp = groups[h.video];
+		if (!grp) {
 			grp = new QTreeWidgetItem(&m_hits,
-				{QFileInfo(video).fileName()});
+				{QFileInfo(h.video).fileName()});
 			grp->setFlags(Qt::ItemIsEnabled);
 			grp->setFirstColumnSpanned(true);
 			grp->setExpanded(true);
 		}
-		++listed;
+		++listed[h.video];
 		qint64 const s = qint64(h.start);
 		auto *it = new QTreeWidgetItem(grp,
 			{QStringLiteral("%1:%2:%3")
@@ -288,7 +280,14 @@ void KnowledgePane::setMatches(QVector<KnowledgeHit> hits,
 		it->setData(0, kCue, h.cue);
 		it->setToolTip(1, h.line);
 	}
-	capNote(grp);
+	// Only a capped listing earns a note; a complete one says
+	// nothing.
+	for (auto it = groups.cbegin(); it != groups.cend(); ++it)
+		if (int const n = counts.value(it.key());
+		    n > listed.value(it.key()))
+			it.value()->setText(0, it.value()->text(0)
+				+ QStringLiteral(" — first %1 of %2")
+				  .arg(listed.value(it.key())).arg(n));
 	if (!hits.isEmpty())
 		m_tabs.setCurrentWidget(&m_hits);
 	else
