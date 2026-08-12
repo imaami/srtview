@@ -1,6 +1,7 @@
 // knowledge.cpp -- see knowledge.hpp.
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QPainter>
 #include <QRegularExpression>
