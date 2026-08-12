@@ -1686,7 +1686,7 @@ void MainWin::stageMerge()
 	m_mergeId = id;
 	m_mergeSet.clear();
 	for (QString const &t : terms)
-		m_mergeSet.insert(t.toCaseFolded());
+		m_mergeSet.insert(t.toCaseFolded(), t);
 	agenda::task t;
 	t.id = id;
 	t.note = std::to_string(terms.size()) + " terms";
@@ -1770,7 +1770,11 @@ void MainWin::foldLine(QString const &line)
 		return;
 	for (QString const &p : parts)
 		mergeSpelling(owner, p);
-	m_termInfo[owner].term = parts.front();
+	// The model picks WHICH staged term leads; the staged spelling
+	// itself titles the group -- a small model's lowercased echo
+	// must not degrade the extraction's casing.
+	m_termInfo[owner].term =
+		m_mergeSet.value(parts.front().toCaseFolded());
 }
 
 // Remove one machine topic wholesale: corpus entry, directory

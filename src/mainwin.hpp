@@ -260,7 +260,7 @@ private:
 	std::vector<TermsWork>          m_termsWork; // staged windows
 	std::set<std::string>           m_termsSeen; // harvested ids
 	agenda::id                      m_mergeId;   // directory fold ask
-	std::set<QString>               m_mergeSet;  // staged terms, folded
+	QHash<QString, QString>         m_mergeSet;  // folded -> staged term
 	std::set<std::string>           m_mergeSeen; // folded reply ids
 	std::set<std::string>           m_termTopics;// index-only names
 	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
