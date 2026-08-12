@@ -188,7 +188,7 @@ private:
 	void harvestMerge();
 	void foldLine(QString const &line);
 	void dropTopic(QString const &name);
-	void mergeSpelling(QString const &owner, QString const &spell);
+	bool mergeSpelling(QString const &owner, QString const &spell);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	QString glossPath() const;

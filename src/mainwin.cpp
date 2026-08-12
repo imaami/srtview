@@ -1775,13 +1775,16 @@ void MainWin::foldLine(QString const &line)
 	}
 	if (owner.isEmpty())
 		return;
+	bool any = false;
 	for (QString const &p : parts)
-		mergeSpelling(owner, p);
+		any |= mergeSpelling(owner, p);
 	// The model picks WHICH staged term leads; the staged spelling
 	// itself titles the group -- a small model's lowercased echo
-	// must not degrade the extraction's casing.
-	m_termInfo[owner].term =
-		m_mergeSet.value(parts.front().toCaseFolded());
+	// must not degrade the extraction's casing.  A line whose
+	// every member refused folds nothing and retitles nothing.
+	if (any)
+		m_termInfo[owner].term =
+			m_mergeSet.value(parts.front().toCaseFolded());
 }
 
 // Remove one machine topic wholesale: corpus entry, directory
@@ -1814,33 +1817,34 @@ void MainWin::dropTopic(QString const &name)
 
 // Fold the topic owning one spelling into the group owner: its
 // branches join the owner's alternation, the twin topic leaves the
-// corpus, and every index entry follows.
-void MainWin::mergeSpelling(QString const &owner,
+// corpus, and every index entry follows.  True when the spelling
+// ends up belonging to the owner; false when the fold refused.
+bool MainWin::mergeSpelling(QString const &owner,
                             QString const &spell)
 {
 	QString const k = spell.toCaseFolded();
 	QString const name = m_termIndex.value(k);
 	if (name.isEmpty()) {
 		m_termIndex.insert(k, owner);
-		return;
+		return true;
 	}
 	if (name == owner)
-		return;
+		return true;
 	std::string const victim = name.toStdString();
 	std::string const vpat = expandOf(victim);
 	std::string const opat = expandOf(owner.toStdString());
 	if (vpat.empty() || opat.empty())
-		return;
+		return false;
 	// Referenced topics are structure, not spellings: folding one
 	// away would dangle the fragments that name it.
 	for (topics::topic const *r : topics::components(m_corpus))
 		if (r->name == victim)
-			return;
+			return false;
 	// The victim is erased before the extend so it cannot cover
 	// its own branches -- which makes a refused extend a silent
 	// loss.  Ask first.
 	if (!topics::extendable(m_corpus, owner.toStdString(), vpat))
-		return;
+		return false;
 	// The victim leaves the corpus BEFORE the extend subtracts,
 	// or it would cover its own branches and refuse the fold.
 	std::erase_if(m_corpus.topics,
@@ -1867,6 +1871,7 @@ void MainWin::mergeSpelling(QString const &owner,
 	}
 	dbgHop(QStringLiteral("terms: merged %1 <- %2 [%3]")
 	       .arg(owner, name, spell));
+	return true;
 }
 
 // The gloss sidecar sits beside the corpus file; an implicit corpus
