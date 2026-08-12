@@ -1625,10 +1625,8 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 // not currently a topic.
 std::string MainWin::expandOf(std::string const &name) const
 {
-	for (topics::topic const &tp : m_corpus.topics)
-		if (tp.name == name)
-			return topics::expand(m_corpus, tp);
-	return {};
+	topics::topic const *const tp = topics::find(m_corpus, name);
+	return tp ? topics::expand(m_corpus, *tp) : std::string();
 }
 
 // A superseded dive neither records nor pairs nor asks -- and any

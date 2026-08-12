@@ -1001,12 +1001,7 @@ bool stem_name(std::string_view name, std::string_view stem)
 bool extendable(doc const &d, std::string_view name,
                 std::string const &pattern)
 {
-	topic const *target = nullptr;
-	for (topic const &t : d.topics)
-		if (t.name == name) {
-			target = &t;
-			break;
-		}
+	topic const *const target = find(d, name);
 	ref r;
 	if (!target || target->fragments.size() != 1
 	    || next_ref(target->fragments[0], 0, r))
