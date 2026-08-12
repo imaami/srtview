@@ -402,6 +402,28 @@ void testExtend()
 	auto multi = topics::parse("- m\n  - a\n  - |b\n");
 	check(topics::extend(multi.value, "m", "c").empty(),
 	      "multi-fragment targets refuse");
+	using topics::sound_alike;
+	check(sound_alike("ghidra", "gidra")
+	      && sound_alike("ghidra", "kitra")
+	      && sound_alike("ghidra", "deidre")
+	      && sound_alike("ghidra", "geat ria")
+	      && sound_alike("ghidra", "guitro")
+	      && sound_alike("ghidra", "Ghidorah")
+	      && sound_alike("libby.so", "libsy")
+	      && sound_alike("decompiler", "D compiler"),
+	      "mistranscription families sound alike");
+	check(!sound_alike("stack", "heap")
+	      && !sound_alike("assembly code", "assembly language")
+	      && !sound_alike("elf", "EDI")
+	      && !sound_alike("crack", "c-spec")
+	      && !sound_alike("", "x"),
+	      "distinct words sound apart");
+	check(sound_alike("6502", "6802"),
+	      "a one-digit slip stays a candidate: the verdict, not "
+	      "the gate, tells two real chips apart");
+	check(topics::phonekey("GCC") == topics::phonekey("gcc")
+	      && topics::phonekey("6502") == "6502",
+	      "case folds, digits stay verbatim");
 	check(topics::extendable(d, "term1", "(?i:cells)")
 	      && !topics::extendable(d, "term9", "(?i:x)")
 	      && !topics::extendable(d, "volt", "(?i:ampere)")
