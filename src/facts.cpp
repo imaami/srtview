@@ -569,12 +569,45 @@ std::string Facts::artifact(agenda::id id)
 
 // On the llm worker thread; the tmp write stays outside the lock,
 // and the artifact is named under it in completed().
+// A tiny model wedged in a generation loop pads its reply with one
+// line repeated hundreds of times; caching that would enshrine the
+// wedge as knowledge.  Eight identical consecutive non-empty lines
+// is far past anything a legitimate reply produces (structured
+// replies always interleave field lines), and such a reply is
+// treated as a failed ask: nothing stored, the task parks, and a
+// later session -- or a better model behind the same content id --
+// answers it properly.
+static bool degenerate(char const *text, std::size_t size)
+{
+	std::string_view rest(text, size);
+	std::string_view prev;
+	std::size_t run = 0;
+	while (!rest.empty()) {
+		std::size_t const nl = rest.find('\n');
+		std::string_view const line = rest.substr(0, nl);
+		rest = nl == std::string_view::npos
+		       ? std::string_view() : rest.substr(nl + 1);
+		if (line.empty())
+			continue;
+		run = line == prev ? run + 1 : 1;
+		if (run >= 8)
+			return true;
+		prev = line;
+	}
+	return false;
+}
+
 void Facts::deliver(void *ud, std::uint64_t, int status,
                     char const *text, std::size_t size)
 {
 	std::unique_ptr<reply_ctx> const ctx(
 		static_cast<reply_ctx *>(ud));
-	bool const wrote = status == LLM_OK && size
+	bool const looped = status == LLM_OK && size
+	                 && degenerate(text, size);
+	if (looped && debug())
+		std::fprintf(stderr, "srtview: facts: %s: degenerate "
+		             "reply refused\n", ctx->t.id.hex().c_str());
+	bool const wrote = status == LLM_OK && size && !looped
 	                && store(ctx->path, ctx->head, text, size);
 	if (!wrote && debug())
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
