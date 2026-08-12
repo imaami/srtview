@@ -179,6 +179,7 @@ private:
 	void queueTerms();
 	void harvestTerms();
 	bool harvestTermsOne(TermsWork const &w);
+	int corpusHits(QRegularExpression const &re, int cap);
 	std::string expandOf(std::string const &name) const;
 	void retireDive(agenda::id id);
 	void stageTopic(std::string const &name);

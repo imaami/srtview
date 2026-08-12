@@ -1564,6 +1564,20 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 			? gloss
 			: means + QStringLiteral(". ") + gloss;
 		QString const folded = term.toCaseFolded();
+		// The support floor: a novel term whose spellings match
+		// the corpus fewer than twice is a one-off -- usually a
+		// transcription accident the model dutifully indexed
+		// ("Aled ask you French") -- and founds nothing.  Known
+		// terms are exempt: a rare novel VARIANT of an
+		// established term still merges into its owner.
+		if (!m_termIndex.contains(folded)
+		    && corpusHits(QRegularExpression(
+		                  	QString::fromStdString(tidied)),
+		                  2) < 2) {
+			dbgHop(QStringLiteral("terms: floored [%1]")
+			       .arg(term));
+			continue;
+		}
 		// One term, one topic: an entry whose term is known, or
 		// whose branches overlap an existing term topic at all
 		// (cover_of), grows that owner instead of founding a
@@ -1621,6 +1635,27 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		stageTopic(m_corpus.topics.back().name);
 	}
 	return true;
+}
+
+// Corpus-wide match count for a pattern, stopping at cap: the
+// support floor needs "fewer than two", never the full tally.
+int MainWin::corpusHits(QRegularExpression const &re, int cap)
+{
+	if (!re.isValid())
+		return 0;
+	int n = 0;
+	for (PlayItem const &it : m_playlist) {
+		QString const srt = srtOf(it);
+		if (srt.isEmpty())
+			continue;
+		for (QString const &line :
+		     exporter::load(m_transcripts, srt).lines) {
+			n += re.match(line).hasMatch();
+			if (n >= cap)
+				return n;
+		}
+	}
+	return n;
 }
 
 // The expanded pattern of a named topic; empty when the name is
