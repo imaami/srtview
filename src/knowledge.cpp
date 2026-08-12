@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <QSplitter>
 #include <QStyledItemDelegate>
+#include <QTabBar>
 #include <QVBoxLayout>
 #include <QWidget>
 
