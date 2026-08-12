@@ -150,17 +150,6 @@ bool adopt(doc &d, std::string const &pattern,
 // doubtful input is its own key, collapsing to exact comparison.
 std::string normal_key(std::string_view pattern);
 
-// The phonetic skeleton of a display term: soundex classes over
-// ASCII letters (adjacent same-class letters collapse), digits
-// kept verbatim, vowels, h, w, spacing and punctuation dropped,
-// bytes past ASCII kept verbatim.  Two spellings of one spoken
-// word land within edit distance one of each other far more often
-// than two different words do; sound_alike() is that gate, the
-// mechanical half of mistranscription grouping -- it decides which
-// pairs are even worth a model verdict.
-std::string phonekey(std::string_view term);
-bool sound_alike(std::string_view a, std::string_view b);
-
 // Adopts only what the corpus does not already cover: branches of
 // the pattern whose normal_key() a topic's expansion already has
 // are dropped, and the remainder -- rebuilt from the surviving

@@ -1046,64 +1046,6 @@ std::string extend(doc &d, std::string_view name,
 	return target->fragments[0];
 }
 
-// Soundex class per byte: '1'..'6' for consonant classes, digits
-// verbatim, 0 for dropped (vowels, h, w, spacing, punctuation);
-// bytes past ASCII map to themselves.
-constexpr auto kPhone = [] {
-	std::array<unsigned char, 256> t{};
-	for (int c = 0x80; c < 0x100; ++c)
-		t[std::size_t(c)] = (unsigned char)c;
-	for (int c = '0'; c <= '9'; ++c)
-		t[std::size_t(c)] = (unsigned char)c;
-	constexpr std::string_view cls[]{
-		"bfpv", "cgjkqsxz", "dt", "l", "mn", "r"
-	};
-	for (std::size_t k = 0; k < std::size(cls); ++k)
-		for (char const c : cls[k]) {
-			t[std::size_t((unsigned char)c)] =
-				(unsigned char)('1' + k);
-			t[std::size_t((unsigned char)c - 0x20)] =
-				(unsigned char)('1' + k);
-		}
-	return t;
-}();
-
-std::string phonekey(std::string_view term)
-{
-	std::string out;
-	unsigned char prev = 0;
-	for (char const c : term) {
-		unsigned char const k = kPhone[(unsigned char)c];
-		if (k && k != prev)
-			out += char(k);
-		prev = k;
-	}
-	return out;
-}
-
-bool sound_alike(std::string_view a, std::string_view b)
-{
-	std::string const ka = phonekey(a);
-	std::string const kb = phonekey(b);
-	if (ka.empty() || kb.empty())
-		return false;
-	std::string_view s = ka, l = kb;
-	if (s.size() > l.size())
-		std::swap(s, l);
-	if (l.size() - s.size() > 1)
-		return false;
-	// One-edit check: advance to the first mismatch, skip one
-	// position on the long side (or both on equal length), and
-	// the tails must match exactly.
-	std::size_t i = 0;
-	while (i < s.size() && s[i] == l[i])
-		++i;
-	if (i == s.size())
-		return true;
-	std::size_t const off = s.size() == l.size();
-	return s.substr(i + off) == l.substr(i + 1);
-}
-
 std::string cover_of(doc const &d, std::string const &pattern,
                      char const *stem)
 {

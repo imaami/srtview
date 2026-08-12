@@ -420,7 +420,6 @@ MainWin::MainWin()
 	connect(&m_focusTick, &QTimer::timeout, this, [this] {
 		pumpProbes();
 		harvestTerms();
-		stageSpell();
 		harvestSpell();
 		stageMerge();
 		harvestMerge();
@@ -641,7 +640,6 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_diveRetired.clear();
 		m_spellWork.clear();
 		m_spellSeen.clear();
-		m_spellDirKey.clear();
 		m_mergeId = {};
 		m_mergeSet.clear();
 		m_mergeSeen.clear();
@@ -685,7 +683,6 @@ void MainWin::rebuildCorpus(bool fresh)
 	// the rest answers.
 	queueTerms();
 	harvestTerms();
-	stageSpell();
 	harvestSpell();
 	stageMerge();
 	harvestMerge();
@@ -1738,60 +1735,19 @@ QStringList MainWin::termLines(QString const &term, int cap)
 	return out;
 }
 
-// Pair the directory phonetically: every two terms the sound gate
-// admits, not yet settled and not already one topic, get three
-// salted verdict asks over transcript evidence with the
-// substitution pre-done.  The model only ever answers whether the
-// substituted lines read naturally -- which pairs are worth asking
-// at all is mechanics, not judgment.
-void MainWin::stageSpell()
-{
-	struct Cand {
-		QString term;
-		QString owner;
-		int     hits;
-	};
-	std::vector<Cand> dir;
-	QStringList key;
-	for (auto it = m_termInfo.cbegin(); it != m_termInfo.cend();
-	     ++it) {
-		if (it->term.isEmpty()
-		    || !m_termTopics.contains(it.key().toStdString()))
-			continue;
-		dir.push_back({it->term, it.key(), 0});
-		key << it->term.toCaseFolded();
-	}
-	if (dir.size() < 2)
-		return;
-	// The scan is priced per directory change, not per tick.
-	std::ranges::sort(key);
-	QString const dirKey = key.join(QLatin1Char('\n'));
-	if (dirKey == m_spellDirKey)
-		return;
-	m_spellDirKey = dirKey;
-	for (Cand &c : dir)
-		c.hits = corpusHits(QRegularExpression(
-			QRegularExpression::escape(c.term),
-			QRegularExpression::CaseInsensitiveOption), 50);
-	for (std::size_t i = 0; i < dir.size(); ++i)
-		for (std::size_t j = i + 1; j < dir.size(); ++j)
-			stageSpellPair(dir[i].hits >= dir[j].hits
-			               ? dir[i].term : dir[j].term,
-			               dir[i].hits >= dir[j].hits
-			               ? dir[j].term : dir[i].term);
-}
-
-// One candidate pair, anchor first: gate, dedupe, then three vote
-// asks whose ids key on the exact evidence text.
-void MainWin::stageSpellPair(QString const &a, QString const &b)
+// One nominated pair, anchor first: dedupe, then three vote asks
+// whose ids key on the exact evidence text.  Nominations come from
+// the model's own directory judgment -- the app never guesses
+// which spellings might belong together, it only verifies what the
+// model proposes, one binary question at a time.
+void MainWin::stageSpellPair(QString const &a, QString const &b,
+                             QString const &title)
 {
 	QString const fa = a.toCaseFolded();
 	QString const fb = b.toCaseFolded();
 	QString const pairKey = fa + QLatin1Char('\n') + fb;
 	if (m_spellSeen.contains(pairKey)
-	    || m_termIndex.value(fa) == m_termIndex.value(fb)
-	    || !topics::sound_alike(fa.toStdString(),
-	                            fb.toStdString()))
+	    || m_termIndex.value(fa) == m_termIndex.value(fb))
 		return;
 	for (SpellWork const &w : m_spellWork)
 		if (w.a == a && w.b == b)
@@ -1804,7 +1760,7 @@ void MainWin::stageSpellPair(QString const &a, QString const &b)
 	for (QString &l : raw)
 		l.replace(rb, a);
 	QString const ls = raw.join(QLatin1Char('\n'));
-	SpellWork w{a, b, {}};
+	SpellWork w{a, b, title, {}};
 	for (int v = 0; v < 3; ++v) {
 		QString const body = QStringLiteral(
 			"TERM A (established): %1\n%2\n\n"
@@ -1848,10 +1804,13 @@ void MainWin::harvestSpell()
 			QString const owner =
 				m_termIndex.value(w.a.toCaseFolded());
 			if (!owner.isEmpty()
-			    && mergeSpelling(owner, w.b))
+			    && mergeSpelling(owner, w.b)) {
 				dbgHop(QStringLiteral(
 					"terms: sounded %1 <- %2")
 				       .arg(w.a, w.b));
+				if (!w.title.isEmpty())
+					m_termInfo[owner].term = w.title;
+			}
 		}
 		m_spellSeen.insert(w.a.toCaseFolded() + QLatin1Char('\n')
 		                   + w.b.toCaseFolded());
@@ -1989,24 +1948,26 @@ void MainWin::foldLine(QString const &line)
 				"terms: judgment rejected [%1]").arg(p));
 			return;
 		}
-	QString owner;
+	// A MERGE line is a NOMINATION, not a fold: the open-list
+	// judgment is where a tiny model hallucinates, so each
+	// nominated member must survive its own three-vote spelling
+	// verdict before anything merges.  The anchor is the first
+	// member the index resolves; the nominated corrected spelling
+	// (staged casing) titles the group if a fold confirms.
+	QString anchor;
 	for (QString const &p : parts) {
-		owner = m_termIndex.value(p.toCaseFolded());
-		if (!owner.isEmpty())
+		if (!m_termIndex.value(p.toCaseFolded()).isEmpty()) {
+			anchor = p;
 			break;
+		}
 	}
-	if (owner.isEmpty())
+	if (anchor.isEmpty())
 		return;
-	bool any = false;
+	QString const title =
+		m_mergeSet.value(parts.front().toCaseFolded());
 	for (QString const &p : parts)
-		any |= mergeSpelling(owner, p);
-	// The model picks WHICH staged term leads; the staged spelling
-	// itself titles the group -- a small model's lowercased echo
-	// must not degrade the extraction's casing.  A line whose
-	// every member refused folds nothing and retitles nothing.
-	if (any)
-		m_termInfo[owner].term =
-			m_mergeSet.value(parts.front().toCaseFolded());
+		if (p.toCaseFolded() != anchor.toCaseFolded())
+			stageSpellPair(anchor, p, title);
 }
 
 // Remove one machine topic wholesale: corpus entry, directory
