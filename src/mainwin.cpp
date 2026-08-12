@@ -797,6 +797,15 @@ void MainWin::diveStep()
 		return;
 	}
 	DiveScan &s = m_diveScans[m_diveAt];
+	// A scan retired mid-flight is abandoned at the next tick:
+	// finishDive() would only discard its output anyway, and the
+	// remaining per-video regex passes are pure waste.
+	if (m_diveRetired.contains(s.id.hex())) {
+		s.parts.clear();
+		s.parts.shrink_to_fit();
+		++m_diveAt;
+		return;
+	}
 	if (s.video >= std::size_t(m_playlist.size())) {
 		finishDive(s);
 		++m_diveAt;
