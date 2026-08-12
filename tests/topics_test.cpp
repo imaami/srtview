@@ -402,6 +402,12 @@ void testExtend()
 	auto multi = topics::parse("- m\n  - a\n  - |b\n");
 	check(topics::extend(multi.value, "m", "c").empty(),
 	      "multi-fragment targets refuse");
+	check(topics::extendable(d, "term1", "(?i:cells)")
+	      && !topics::extendable(d, "term9", "(?i:x)")
+	      && !topics::extendable(d, "volt", "(?i:ampere)")
+	      && !topics::extendable(d, "term1", " x")
+	      && !topics::extendable(multi.value, "m", "c"),
+	      "extendable tells refusal from nothing-novel");
 
 	auto const back = topics::parse(topics::write(d));
 	check(back.error.empty() && back.value == d,

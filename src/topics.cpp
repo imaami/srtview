@@ -998,11 +998,11 @@ bool stem_name(std::string_view name, std::string_view stem)
 	return true;
 }
 
-std::string extend(doc &d, std::string_view name,
-                   std::string const &pattern)
+bool extendable(doc const &d, std::string_view name,
+                std::string const &pattern)
 {
-	topic *target = nullptr;
-	for (topic &t : d.topics)
+	topic const *target = nullptr;
+	for (topic const &t : d.topics)
 		if (t.name == name) {
 			target = &t;
 			break;
@@ -1010,20 +1010,35 @@ std::string extend(doc &d, std::string_view name,
 	ref r;
 	if (!target || target->fragments.size() != 1
 	    || next_ref(target->fragments[0], 0, r))
-		return {};
+		return false;
 	// adopt()'s hygiene guards: what cannot survive the
 	// write()/parse() round trip must not enter a fragment here
 	// either.
 	if (pattern.empty() || strip(pattern) != pattern
 	    || pattern.find_first_of("\r\n") != std::string::npos
 	    || next_ref(pattern, 0, r))
-		return {};
+		return false;
 	bool ci, tci;
 	std::vector<part> parts, tp;
-	if (!flatten_pattern(pattern, ci, parts)
-	    || !flatten_pattern(target->fragments[0], tci, tp)
-	    || ci != tci)
+	return flatten_pattern(pattern, ci, parts)
+	    && flatten_pattern(target->fragments[0], tci, tp)
+	    && ci == tci;
+}
+
+std::string extend(doc &d, std::string_view name,
+                   std::string const &pattern)
+{
+	if (!extendable(d, name, pattern))
 		return {};
+	topic *target = nullptr;
+	for (topic &t : d.topics)
+		if (t.name == name) {
+			target = &t;
+			break;
+		}
+	bool ci = false;
+	std::vector<part> parts;
+	flatten_pattern(pattern, ci, parts);
 	std::string const body = novel_body(parts, corpus_keys(d));
 	if (body.empty())
 		return {};

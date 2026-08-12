@@ -1829,6 +1829,11 @@ void MainWin::mergeSpelling(QString const &owner,
 	for (topics::topic const *r : topics::components(m_corpus))
 		if (r->name == victim)
 			return;
+	// The victim is erased before the extend so it cannot cover
+	// its own branches -- which makes a refused extend a silent
+	// loss.  Ask first.
+	if (!topics::extendable(m_corpus, owner.toStdString(), vpat))
+		return;
 	// The victim leaves the corpus BEFORE the extend subtracts,
 	// or it would cover its own branches and refuse the fold.
 	std::erase_if(m_corpus.topics,

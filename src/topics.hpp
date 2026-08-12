@@ -173,6 +173,11 @@ bool stem_name(std::string_view name, std::string_view stem);
 // differing from the pattern's, patterns adopt() would refuse, and
 // structural doubt on either side; empty also when nothing novel
 // remained.  Otherwise returns the fragment's new text.
+// extendable() exposes the refusal guards alone: a caller about to
+// make an irreversible move on the strength of an extension can
+// ask first, and distinguish refusal from nothing-novel.
+bool extendable(doc const &d, std::string_view name,
+                std::string const &pattern);
 std::string extend(doc &d, std::string_view name,
                    std::string const &pattern);
 
