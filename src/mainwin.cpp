@@ -1675,9 +1675,14 @@ void MainWin::stageMerge()
 			terms << i.term;
 	if (terms.size() < 2)
 		return;
+	// Total order: equal-folded terms tiebreak on the exact
+	// string, or the id would drift between sessions and the
+	// cached judgment would never re-resolve.
 	std::ranges::sort(terms,
 		[](QString const &a, QString const &b) {
-			return a.toCaseFolded() < b.toCaseFolded();
+			QString const fa = a.toCaseFolded();
+			QString const fb = b.toCaseFolded();
+			return fa != fb ? fa < fb : a < b;
 		});
 	QByteArray text;
 	for (QString const &t : terms) {
