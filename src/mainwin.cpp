@@ -1568,15 +1568,22 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 			? gloss
 			: means + QStringLiteral(". ") + gloss;
 		QString const folded = term.toCaseFolded();
-		// The support floor: a novel term whose spellings match
-		// the corpus fewer than twice is a one-off -- usually a
-		// transcription accident the model dutifully indexed
-		// ("Aled ask you French") -- and founds nothing.  Known
-		// terms are exempt: a rare novel VARIANT of an
-		// established term still merges into its owner.
+		// The support floor: a novel term whose spellings AND
+		// corrected form together match the corpus fewer than
+		// twice is a one-off -- usually a transcription accident
+		// the model dutifully indexed ("Aled ask you French") --
+		// and founds nothing.  The TERM literal counts too: a
+		// window may spell "p-code" where the corpus says "P
+		// code", and the floor must measure the spoken term, not
+		// one window's orthography.  Known terms are exempt: a
+		// rare novel VARIANT of an established term still merges
+		// into its owner.
+		QString const support = QString::fromStdString(tidied)
+			+ QLatin1Char('|')
+			+ QRegularExpression::escape(term);
 		if (!m_termIndex.contains(folded)
-		    && corpusHits(QRegularExpression(
-		                  	QString::fromStdString(tidied)),
+		    && corpusHits(QRegularExpression(support,
+		    	QRegularExpression::CaseInsensitiveOption),
 		                  2) < 2) {
 			dbgHop(QStringLiteral("terms: floored [%1]")
 			       .arg(term));
