@@ -1579,11 +1579,11 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		// rare novel VARIANT of an established term still merges
 		// into its owner.
 		QString const support = QString::fromStdString(tidied)
-			+ QLatin1Char('|')
-			+ QRegularExpression::escape(term);
+			+ QLatin1Char('|') + termMatcher(term).pattern();
 		if (!m_termIndex.contains(folded)
 		    && corpusHits(QRegularExpression(support,
-		    	QRegularExpression::CaseInsensitiveOption),
+		    	QRegularExpression::CaseInsensitiveOption
+		    	| QRegularExpression::UseUnicodePropertiesOption),
 		                  2) < 2) {
 			dbgHop(QStringLiteral("terms: floored [%1]")
 			       .arg(term));
@@ -1718,14 +1718,27 @@ void MainWin::indexSpellings(QStringList const &seen,
 			m_termIndex.insert(k, owner);
 }
 
+// A term occurrence never starts mid-word: "AI" must not count
+// inside "said", and substitution must not rewrite the middle of
+// "start".  The boundary is left-only -- suffix-inflected corpora
+// ("Jiran" for Jira) still match -- and \p{L} keeps it orthography-
+// neutral rather than ASCII-bound.
+QRegularExpression MainWin::termMatcher(QString const &term)
+{
+	return QRegularExpression(
+		QStringLiteral("(?<!\\p{L})")
+		+ QRegularExpression::escape(term),
+		QRegularExpression::CaseInsensitiveOption
+		| QRegularExpression::UseUnicodePropertiesOption);
+}
+
 // Up to cap transcript lines containing the term, in corpus order:
 // the verdict's evidence.  Deterministic for a fixed corpus, so the
 // ask ids built over it replay from cache.
 QStringList MainWin::termLines(QString const &term, int cap)
 {
 	QStringList out;
-	QRegularExpression const re(QRegularExpression::escape(term),
-		QRegularExpression::CaseInsensitiveOption);
+	QRegularExpression const re = termMatcher(term);
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		if (srt.isEmpty())
@@ -1762,8 +1775,7 @@ void MainWin::stageSpellPair(QString const &a, QString const &b,
 	QString const la = termLines(a, 4).join(QLatin1Char('\n'));
 	QStringList raw = termLines(b, 4);
 	QString const lb = raw.join(QLatin1Char('\n'));
-	QRegularExpression const rb(QRegularExpression::escape(b),
-		QRegularExpression::CaseInsensitiveOption);
+	QRegularExpression const rb = termMatcher(b);
 	for (QString &l : raw)
 		l.replace(rb, a);
 	QString const ls = raw.join(QLatin1Char('\n'));

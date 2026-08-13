@@ -179,6 +179,7 @@ private:
 	void queueTerms();
 	void harvestTerms();
 	bool harvestTermsOne(TermsWork const &w);
+	static QRegularExpression termMatcher(QString const &term);
 	int corpusHits(QRegularExpression const &re, int cap);
 	QStringList termLines(QString const &term, int cap);
 	void stageSpellPair(QString const &a, QString const &b,
