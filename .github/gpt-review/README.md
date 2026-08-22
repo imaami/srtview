@@ -66,6 +66,10 @@ OPENAI_REVIEW_MODEL=gpt-5.6-sol
 OPENAI_REVIEW_REASONING=xhigh
 ```
 
+The script also honours `OPENAI_BASE_URL` (default
+`https://api.openai.com`) and `GITHUB_API_URL`, which is how it is
+exercised against local stand-ins for both services.
+
 The workflow defaults to those values if the variables do not exist.
 
 Those are also the workflow defaults. The model and reasoning variables remain

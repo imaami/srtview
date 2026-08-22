@@ -2,6 +2,7 @@
 set -euo pipefail
 
 readonly api="${GITHUB_API_URL:-https://api.github.com}"
+readonly openai="${OPENAI_BASE_URL:-https://api.openai.com}"
 readonly repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is unset}"
 readonly repo_owner="${GITHUB_REPOSITORY_OWNER:-${repo%%/*}}"
 readonly event="${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH is unset}"
@@ -272,7 +273,7 @@ http=$(curl --silent --show-error \
 	-H "Authorization: Bearer $OPENAI_API_KEY" \
 	-H 'Content-Type: application/json' \
 	--data-binary "@$tmp/request.json" \
-	https://api.openai.com/v1/responses) || http="curl exit $?"
+	"$openai/v1/responses") || http="curl exit $?"
 
 if [[ ! $http =~ ^2 ]]; then
 	error=$(jq -r '.error.message // "unknown OpenAI API error"' \
