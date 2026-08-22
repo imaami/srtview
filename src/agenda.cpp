@@ -195,6 +195,32 @@ id plan::take ()
 	return next;
 }
 
+bool plan::renew (task t)
+{
+	std::size_t const at = index_of(t.id);
+	if (at == npos)
+		return false;
+	entry &e = m_entries[at];
+	if (e.s == state::parked) {
+		e = {std::move(t), state::pending};
+		return true;
+	}
+	if (e.s != state::pending && e.s != state::running)
+		return false;
+	bool const rekeyed = e.t.what != t.what || e.t.deps != t.deps;
+	e.t = std::move(t);
+	return rekeyed;
+}
+
+bool plan::requeue (id which)
+{
+	std::size_t const at = index_of(which);
+	if (at == npos || m_entries[at].s != state::running)
+		return false;
+	m_entries[at].s = state::pending;
+	return true;
+}
+
 bool plan::start (id which)
 {
 	std::size_t const at = index_of(which);

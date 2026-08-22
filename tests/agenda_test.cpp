@@ -324,6 +324,34 @@ static void test_parking()
 	check(p.status(tid("ghost")) == agenda::plan::state::parked
 	      && !p.take(),
 	      "a failure reported before add stays parked");
+
+	// The renewed offer carries the task's current shape: a dive
+	// whose scan grew a video retries over both, not the one that
+	// failed.
+	check(!p.renew({.id = b}) && p.status(b) == agenda::plan::state::done,
+	      "renewing a done task leaves it as it is");
+	check(p.renew({.id = a, .deps = {b}, .what = agenda::kind::dive})
+	      && p.status(a) == agenda::plan::state::pending
+	      && p.get(a)->deps == std::vector<agenda::id>{b}
+	      && p.get(a)->what == agenda::kind::dive,
+	      "a parked task retries in the shape offered");
+	check(!p.renew({.id = a, .deps = {b}, .what = agenda::kind::dive,
+	                .tier = 3})
+	      && p.get(a)->tier == 3,
+	      "a pending task as offered owes nothing, scheduling "
+	      "inputs following the offer");
+	check(p.renew({.id = a, .what = agenda::kind::dive})
+	      && p.get(a)->deps.empty(),
+	      "a pending task reshaped owes an ask in its new shape");
+	check(p.take() == a, "the renewed task is offered");
+	check(!p.requeue(b) && !p.requeue(tid("nobody")),
+	      "only a running task requeues");
+	check(p.renew({.id = a, .deps = {b}, .what = agenda::kind::dive})
+	      && p.status(a) == agenda::plan::state::running,
+	      "a running task reshaped keeps running in its new shape");
+	check(p.requeue(a) && p.status(a) == agenda::plan::state::pending
+	      && p.take() == a,
+	      "an obsolete completion requeues the task");
 }
 
 static void test_reset()

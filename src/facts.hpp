@@ -108,6 +108,18 @@ public:
 	std::string fetch(agenda::task const &t);
 	std::string locate(agenda::id plan, agenda::kind k) const;
 
+	// Artifacts that have become available since construction --
+	// landed from the model or found in the cache at offer time.
+	// A harvester that saw the count unchanged need not look again.
+	std::uint64_t landed() const;
+
+	// Whether nothing will land for a task: it failed this session
+	// -- refused, timed out, errored or cancelled -- and was parked
+	// without an artifact, or the pipeline as a whole is parked
+	// behind an unreachable server.  A renewed offer un-parks a
+	// task; an offered question un-parks the pipeline, once.
+	bool parked(agenda::id id) const;
+
 	// The registered task's artifact path by bare id, resolving --
 	// and adopting -- under the lock; empty while the file is
 	// missing or the chain is still incomputable.  The focus
@@ -136,6 +148,8 @@ private:
 	void completed(agenda::task const &t, std::string const &tmp,
 	               std::string const &want, std::string const &line,
 	               std::uint64_t epoch, int status, bool wrote);
+	bool settle(agenda::task const &t);
+	void stage(agenda::task t, std::string const &body);
 	void advance();
 	bool submit(agenda::task const &t, std::size_t lane);
 	std::string assemble(agenda::task const &t);
@@ -165,6 +179,7 @@ private:
 	};
 	lane               m_lane[2];   // [0] background, [1] urgent
 	std::uint64_t      m_epoch = 0; // reset generation
+	std::uint64_t      m_landed = 0; // artifacts made available
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;

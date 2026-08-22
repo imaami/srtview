@@ -538,21 +538,10 @@ void Facts::offer(agenda::id key, std::string const &utf8Text)
 	// covers the full text: clipping is presentation, and a
 	// clipped hash would tie identity to the clip limit.
 	m_vault.content(key, m_hash(utf8Text));
-	if (m_plan.status(key) != agenda::plan::state::unknown)
-		return;
 	agenda::task t;
 	t.id = key;
 	t.keys = {key};
-	if (!m_vault.resolve(t).empty()) {
-		// The bookkeeping half that must never be skipped: a
-		// dependent of this cache hit may just have gone ready.
-		m_plan.done(key);
-		advance();
-		return;
-	}
-	m_plan.add(std::move(t));
-	m_bodies.emplace_back(key, std::string(clip(utf8Text)));
-	advance();
+	stage(std::move(t), utf8Text);
 }
 
 void Facts::corpus(std::vector<agenda::task> nodes)
@@ -560,16 +549,9 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 	std::lock_guard const lock(m_mtx);
 	if (!m_llm)
 		return;
-	for (agenda::task &t : nodes) {
-		// Shape before status, as in offer().
-		bool const have = !m_vault.resolve(t).empty();
-		if (m_plan.status(t.id) != agenda::plan::state::unknown)
-			continue;
-		if (have)
-			m_plan.done(t.id);
-		else
+	for (agenda::task &t : nodes)
+		if (settle(t))
 			m_plan.add(std::move(t));
-	}
 	advance();
 }
 
@@ -581,17 +563,55 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 	std::lock_guard const lock(m_mtx);
 	if (!m_llm)
 		return;
-	// Shape before status, as in offer() above.
+	stage(std::move(t), snapshot);
+}
+
+// m_mtx held.  Shape before status: the vault registers the task's
+// current shape whatever the plan says of it, and a known task
+// takes that shape back into the plan with its renewed offer --
+// the plan's copy is what submission assembles over, so a dive
+// whose video set grew must not be written over the set it had,
+// whether that set failed, waits, or is on the wire.  A resolved
+// file is marked done rather than queued -- the bookkeeping half
+// that must never be skipped, since a dependent of the hit may
+// just have gone ready -- and counted as landed.  True when the
+// task owes an ask.
+bool Facts::settle(agenda::task const &t)
+{
 	bool const have = !m_vault.resolve(t).empty();
-	if (m_plan.status(t.id) != agenda::plan::state::unknown)
-		return;
-	if (have) {
-		m_plan.done(t.id);
-		advance();
-		return;
+	if (!m_plan.renew(t)
+	    && m_plan.status(t.id) != agenda::plan::state::unknown)
+		return false;
+	if (!have)
+		return true;
+	m_plan.done(t.id);
+	++m_landed;
+	return false;
+}
+
+// m_mtx held.  Only a miss spends a body; a task offered again --
+// un-parked, or reshaped while it waits or runs -- spends one too,
+// in place of any it still had.  A question is the
+// reader's own retry of a pipeline parked behind an unreachable
+// server: the latch opens for it, and for the background behind
+// it, which closes it again after the next run of refusals --
+// each question costs one connection attempt while the server is
+// down, which is what asking again means.
+void Facts::stage(agenda::task t, std::string const &body)
+{
+	if (m_offline && t.what == agenda::kind::answer) {
+		m_offline = false;
+		m_refused = 0;
+		std::fprintf(stderr, "srtview: facts: asked again, "
+		             "pipeline resumed\n");
 	}
-	m_bodies.emplace_back(t.id, std::string(clip(snapshot)));
-	m_plan.add(std::move(t));
+	if (settle(t)) {
+		std::erase_if(m_bodies, [&t](auto const &b) {
+			return b.first == t.id;
+		});
+		m_bodies.emplace_back(t.id, std::string(clip(body)));
+		m_plan.add(std::move(t));
+	}
 	advance();
 }
 
@@ -651,6 +671,18 @@ std::string Facts::fetch(agenda::task const &t)
 {
 	std::lock_guard const lock(m_mtx);
 	return slurp(m_vault.resolve(t));
+}
+
+std::uint64_t Facts::landed() const
+{
+	std::lock_guard const lock(m_mtx);
+	return m_landed;
+}
+
+bool Facts::parked(agenda::id id) const
+{
+	std::lock_guard const lock(m_mtx);
+	return m_offline || m_plan.status(id) == agenda::plan::state::parked;
 }
 
 std::string Facts::locate(agenda::id plan, agenda::kind k) const
@@ -736,26 +768,34 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 	// the submitted copy must never re-register, or a reload's
 	// re-shaped entry would be overwritten and the generation
 	// comparison would satisfy itself.  An obsolete completion
-	// touches nothing at all under the id: done() would credit the
-	// replacement generation with a stale artifact, fail() would
-	// park it for the session.  The epoch closes the reset window
-	// itself: between reset() and the re-offers the vault still
-	// describes the old corpus, and the target comparison alone
-	// would pass.  The tmp dies; absence retries.
-	bool const current = epoch == m_epoch && !want.empty()
-	                  && m_vault.target(t.id) == want;
+	// must not be credited: done() would hand the replacement
+	// generation a stale artifact, fail() would park it for the
+	// session.  One reshaped under way -- its target moved while
+	// it ran, in this epoch -- goes back to pending and is asked
+	// again over its current inputs; the epoch closes the reset
+	// window itself, where between reset() and the re-offers the
+	// vault still describes the old corpus and the plan knows no
+	// such task.  The tmp dies; absence retries.
+	bool const fresh = epoch == m_epoch && !want.empty();
+	bool const current = fresh && m_vault.target(t.id) == want;
 	std::string const target = wrote && current
 		? m_vault.place(t.id) : std::string();
 	if (!target.empty()
 	    && std::rename(tmp.c_str(), target.c_str()) == 0) {
 		journal(m_dir, line);
 		m_plan.done(t.id);
+		++m_landed;
 	} else {
 		if (wrote)
 			std::remove(tmp.c_str());
 		if (current)
 			m_plan.fail(t.id);
-		else if (debug())
+		else if (fresh && m_plan.requeue(t.id)) {
+			if (debug())
+				std::fprintf(stderr, "srtview: facts: %s: "
+				             "reshaped under way, asked again\n",
+				             t.id.hex().c_str());
+		} else if (debug())
 			std::fprintf(stderr, "srtview: facts: %s: obsolete "
 			             "completion dropped\n",
 			             t.id.hex().c_str());

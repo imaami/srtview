@@ -186,6 +186,21 @@ public:
 	id peek(fit_fn fit = nullptr) const;
 	bool start(id which);
 	id take();
+	// A known task offered again, in the shape now offered.  A
+	// parked one goes back to pending: an offer renewed after the
+	// failure that parked it -- a reader asking again once the
+	// server is back -- deserves the ask the first offer got.  A
+	// pending or running one takes the offered shape, so what is
+	// assembled and what is named agree -- a dive whose scan grew a
+	// video must cover both; a running one keeps running, its
+	// completion is obsolete, and requeue() asks it again.  True
+	// when the offer owes a fresh ask: the un-parking, or a new
+	// kind or dependency set, the inputs that re-key an artifact;
+	// false for a task done, unknown, or as offered already.
+	bool renew(task t);
+	// A running task back to pending: its generation turned out
+	// obsolete by the time it finished.  False unless running.
+	bool requeue(id which);
 
 	// Drops every task and all heat; completions of tasks taken
 	// before the reset may still be reported and are remembered.
