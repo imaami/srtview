@@ -64,6 +64,19 @@ target_compile_options(semantic_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME semantic_tests COMMAND semantic_tests)
 
+# The engine's orchestration -- reset, warm replay, pacing, the
+# answer re-ask chain, pending judgments -- against a fake backend
+# of canned replies.  Standard C++; no Qt, no model server, no Facts.
+add_executable(engine_tests
+	engine_test.cpp
+	${CMAKE_SOURCE_DIR}/src/semantic.cpp
+	${CMAKE_SOURCE_DIR}/src/agenda.cpp
+)
+target_include_directories(engine_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(engine_tests PRIVATE -Wall -Wextra)
+
+add_test(NAME engine_tests COMMAND engine_tests)
+
 # The epoll dispatcher is plain C + Linux; no C++, no libcurl.
 add_executable(loop_tests
 	loop_test.c
