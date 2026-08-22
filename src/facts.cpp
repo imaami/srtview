@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <memory>
 #include <new>
 #include <string_view>
@@ -14,6 +13,7 @@
 
 #include "facts.hpp"
 #include "llm.h"
+#include "slurp.hpp"
 
 namespace {
 
@@ -349,14 +349,6 @@ bool store(std::string const &path, std::string const &head,
 		}
 	}
 	return std::rename(tmp.c_str(), path.c_str()) == 0;
-}
-
-std::string slurp(std::string const &path)
-{
-	std::ifstream in(path, std::ios::binary);
-	if (!in)
-		return {};
-	return {std::istreambuf_iterator<char>(in), {}};
 }
 
 void add_section(std::string &to, std::string const &sec)

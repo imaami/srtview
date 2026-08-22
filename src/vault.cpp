@@ -4,8 +4,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <utility>
+
+#include "slurp.hpp"
 
 namespace vault {
 
@@ -39,16 +40,6 @@ constexpr bool flat_kind(agenda::kind k)
 std::string_view sub(agenda::kind k)
 {
 	return kSub[std::size_t(k)];
-}
-
-// Whole small file as bytes; missing tells apart from empty.
-bool slurp(std::string const &path, std::string &out)
-{
-	std::ifstream f(path, std::ios::binary);
-	if (!f)
-		return false;
-	out.assign(std::istreambuf_iterator<char>(f), {});
-	return true;
 }
 
 void append(std::string &s, agenda::id const &id)
