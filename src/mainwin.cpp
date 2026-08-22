@@ -1187,8 +1187,8 @@ void MainWin::harvestOne(QString const &file)
 		// The one-shot shape closed with the line instead.
 		pat = regexLine(text);
 	}
-	if (pat.empty() || !QRegularExpression(
-	                    	QString::fromStdString(pat)).isValid())
+	if (pat.empty()
+	    || !QRegularExpression(QString::fromStdString(pat)).isValid())
 		return;
 	// adopt_novel() is the gate: branches the corpus already covers
 	// (user-authored topics included) are subtracted, and a regex
@@ -1580,12 +1580,13 @@ bool MainWin::harvestTermsOne(TermsWork const &w)
 		// rare novel VARIANT of an established term still merges
 		// into its owner.
 		QString const support = QString::fromStdString(tidied)
-			+ QLatin1Char('|') + termMatcher(term).pattern();
-		if (!m_termIndex.contains(folded)
-		    && corpusHits(QRegularExpression(support,
-		    	QRegularExpression::CaseInsensitiveOption
-		    	| QRegularExpression::UseUnicodePropertiesOption),
-		                  2) < 2) {
+		                      + QLatin1Char('|')
+		                      + termMatcher(term).pattern();
+		if (!m_termIndex.contains(folded) &&
+		    corpusHits(QRegularExpression(support,
+		                                  QRegularExpression::CaseInsensitiveOption
+		                                  | QRegularExpression::UseUnicodePropertiesOption),
+		               2) < 2) {
 			dbgHop(QStringLiteral("terms: floored [%1]")
 			       .arg(term));
 			continue;
@@ -2158,8 +2159,7 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 					continue;
 				hits.push_back({it.video, srt,
 				                tx.lines[i],
-				                tx.cues[std::size_t(i)]
-				                	.start,
+				                tx.cues[std::size_t(i)].start,
 				                int(i)});
 				++kept;
 			}
@@ -2531,9 +2531,14 @@ void MainWin::feedHeat()
 	for (qsizetype i = 0; i < m_tally.size(); ++i) {
 		if (!m_tally[i])
 			continue;
-		m_facts.heat(agenda::id::from_hex(m_disc.id_for_video(
-		             	srtOf(m_playlist[i]).toStdString())),
-		             kSearchHeat * m_tally[i] / m_tallyTotal);
+		m_facts.heat(
+			agenda::id::from_hex(
+				m_disc.id_for_video(
+					srtOf(m_playlist[i]).toStdString()
+				)
+			),
+			kSearchHeat * m_tally[i] / m_tallyTotal
+		);
 	}
 }
 
