@@ -2,21 +2,26 @@
 // Standard C++, no Qt, no llm: the naming and adoption policy is a
 // pure filesystem concern, unit-tested without a model.
 //
-// A cache artifact's filename is <planid>.<suffix>.txt.  The plan
-// id is the scheduler's structural identity, unchanged and
-// computable before any artifact exists; the suffix chains content:
+// A cache artifact's filename is
+// <planid>.<recipe>.<suffix>.txt.  The plan id is the scheduler's
+// structural identity, unchanged and computable before any artifact
+// exists; recipe hashes the prompt/schema/generation contract (a
+// dependent kind's folds in the recipe of the kind it reads, so an
+// upstream prompt change misses downstream too), and the suffix
+// chains content:
 // a leaf's suffix hashes its rendered transcript, everything else
 // hashes its hard deps' suffixes and artifact bytes, so an external
 // edit to an .srt or to a cached file shifts every transitive
 // dependent's expected name.  Resolution recomputes the expected
 // name from current content and adopts by rename whatever sits
-// under the same plan id with a stale name -- legacy single-part
-// names included, which is the whole one-time migration -- so edits
-// cost renames, never regeneration, and a missing file is the only
-// cache miss.  Renames are atomic and idempotent, adoption is lazy
+// under the same plan and recipe with a stale content suffix, so
+// edits cost renames, never regeneration, while a changed recipe is
+// a real cache miss.  Old recipes and legacy names stay untouched:
+// switching back can reuse them, and no prompt change destroys user
+// cache data.  Renames are atomic and idempotent, adoption is lazy
 // and bottom-up (dep resolution recurses first), and every move or
-// drop appends a line to the human journal.  Terms artifacts keep
-// single-part names: their plan id is already content.  Directory
+// drop appends a line to the human journal.  Content-keyed artifacts
+// omit the suffix but still carry the recipe.  Directory
 // listings sit on a per-kind shelf the store keeps current itself
 // -- it is the process's only cache writer -- so steady-state
 // lookups read no directories at all.
@@ -33,9 +38,11 @@
 
 #include "agenda.hpp"
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace vault {
@@ -44,10 +51,11 @@ namespace vault {
 // like agenda::combine_fn so the module stays hash-library-free and
 // tests stay deterministic.
 using hash8_fn = agenda::id (*)(std::string_view);
+using recipes = std::array<agenda::id, agenda::kind_count>;
 
 class store {
 public:
-	store(std::string dir, hash8_fn h);
+	store(std::string dir, hash8_fn h, recipes recipe);
 
 	// The leaf's content witness: H8 of the rendered transcript
 	// text actually offered to the model.  A changed witness drops
@@ -93,6 +101,18 @@ public:
 	// artifact of the plan id, whatever its suffix, verified
 	// against nothing.
 	std::string locate(agenda::id plan, agenda::kind k) const;
+
+	// The first failure creating a kind directory: the store is the
+	// cache's only writer, so it lays the directories out itself,
+	// and a caller that cannot have them must not queue work.
+	std::error_code const &error() const { return m_error; }
+
+	// A kind's effective recipe, folds included: what names its
+	// artifacts, for a caller keying its own durable state by it.
+	agenda::id recipe(agenda::kind k) const
+	{
+		return m_recipe[std::size_t(k)];
+	}
 
 	// Readdir passes performed so far: the shelf keeps the steady
 	// state scan-free, and the tests hold it to that.
@@ -140,7 +160,9 @@ private:
 	agenda::index       m_index;
 	mutable shelf       m_shelf[agenda::kind_count];
 	std::string         m_dir;
+	std::error_code     m_error;
 	hash8_fn            m_h;
+	recipes             m_recipe;
 	mutable std::size_t m_scans = 0;
 };
 

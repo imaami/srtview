@@ -24,8 +24,9 @@
 //   $XDG_CACHE_HOME/srtview/facts/focus/<name>.txt  focuses
 //   $XDG_CACHE_HOME/srtview/facts/probe/<name>.txt  probes
 //   $XDG_CACHE_HOME/srtview/facts/terms/<name>.txt  terms
-// where <name> is the vault's two-part <planid>.<suffix> (terms
-// single-part): the suffix chains content, so an external edit to
+// where <name> includes the vault's plan id, semantic recipe and,
+// for dependency-shaped work, content suffix.  The suffix chains
+// content, so an external edit to
 // an .srt or a cached file renames the dependents instead of
 // regenerating them -- see vault.hpp.  File existence is the
 // manifest: done work is marked done instead of queued, a failed or
@@ -49,6 +50,8 @@
 // run with a quiet gap in between (SRTVIEW_LLM_PACE=<seconds>,
 // default 30, 0 disables): sustained generation is a full-power
 // burn, and the accelerator needs breathing room by default.
+// SRTVIEW_LLM_MODEL_ID supplies a stable model/quant fingerprint for
+// recipe-aware caching when the model behind one endpoint may change.
 //
 // Standard C++23 over the plain C llm client, no Qt.
 #ifndef SRTVIEW_SRC_FACTS_HPP_
@@ -89,6 +92,10 @@ public:
 
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
+	// The recipe a kind's artifacts are named under; immutable for
+	// the life of the pipeline, so a caller may key durable state
+	// derived from those artifacts by it.
+	agenda::id recipe(agenda::kind k) const { return m_vault.recipe(k); }
 
 	// Locked front doors for the UI layer's out-of-band reads:
 	// whether a task's artifact exists (resolving adopts stale

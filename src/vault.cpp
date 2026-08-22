@@ -46,9 +46,35 @@ void append(std::string &s, agenda::id const &id)
 
 } // namespace
 
-store::store(std::string dir, hash8_fn h)
-	: m_dir(std::move(dir)), m_h(h)
+// A kind's effective recipe folds in the recipe of what it reads:
+// nodes and dives are written over leaf summaries, probes over
+// dives, focuses over dives and over the probe whose regex chose
+// their evidence -- a reading that reaches the focus through the
+// caller's search rather than a dependency.  Without the fold a
+// leaf prompt change would regenerate the leaves and adoption
+// would then hand every node written over the old ones its new
+// content name, unread; a probe prompt change would leave the old
+// focus standing in front of the new probe.  Static per kind,
+// since names must stay computable from the kind alone; a dive's
+// overview root is a soft ref, not identity.
+store::store(std::string dir, hash8_fn h, recipes recipe)
+	: m_dir(std::move(dir)), m_h(h), m_recipe(std::move(recipe))
 {
+	for (std::string_view const sub : kSub)
+		if (!m_error)
+			fs::create_directories(m_dir + '/' + std::string(sub),
+			                       m_error);
+	auto const fold = [this](agenda::kind k, agenda::kind read) {
+		std::string acc{"chain"};
+		append(acc, m_recipe[std::size_t(k)]);
+		append(acc, m_recipe[std::size_t(read)]);
+		m_recipe[std::size_t(k)] = m_h(acc);
+	};
+	fold(agenda::kind::node, agenda::kind::leaf);
+	fold(agenda::kind::dive, agenda::kind::leaf);
+	fold(agenda::kind::probe, agenda::kind::dive);
+	fold(agenda::kind::focus, agenda::kind::dive);
+	fold(agenda::kind::focus, agenda::kind::probe);
 }
 
 std::size_t store::index_of(agenda::id id) const
@@ -112,27 +138,31 @@ std::string store::flat(std::size_t at) const
 {
 	entry const &e = m_entries[at];
 	return m_dir + '/' + std::string(sub(e.t.what))
-	     + e.t.id.hex() + ".txt";
+	     + e.t.id.hex() + '.'
+	     + m_recipe[std::size_t(e.t.what)].hex() + ".txt";
 }
 
 std::string store::two_part(std::size_t at) const
 {
 	entry const &e = m_entries[at];
 	return m_dir + '/' + std::string(sub(e.t.what))
-	     + e.t.id.hex() + '.' + e.suffix.hex() + ".txt";
+	     + e.t.id.hex() + '.'
+	     + m_recipe[std::size_t(e.t.what)].hex() + '.'
+	     + e.suffix.hex() + ".txt";
 }
 
 std::string store::tmp(agenda::task const &t) const
 {
 	return m_dir + '/' + std::string(sub(t.what))
-	     + t.id.hex() + ".tmp";
+	     + t.id.hex() + '.'
+	     + m_recipe[std::size_t(t.what)].hex() + ".tmp";
 }
 
-// Every artifact-shaped name of the plan id in its kind's dir --
-// "<hex>.txt" and "<hex>.<suffix>.txt", never the tmp -- in sorted
-// order, so adoption picks deterministically.  Served off the
-// shelf: one readdir fills it, and every lookup in between is a
-// binary search.
+// Every artifact-shaped name of this plan AND recipe in its kind's
+// dir, never another recipe or the tmp, in sorted order.  Thus a
+// source-content change may adopt an answer, while a semantic recipe
+// change must miss.  Served off the shelf: one readdir fills it, and
+// every lookup in between is a binary search.
 std::vector<std::string> store::siblings(agenda::id plan,
                                          agenda::kind k) const
 {
@@ -152,10 +182,14 @@ std::vector<std::string> store::siblings(agenda::id plan,
 		s.fresh = true;
 		++m_scans;
 	}
-	std::string const hex = plan.hex();
+	std::string const hex = plan.hex() + '.'
+	                      + m_recipe[std::size_t(k)].hex();
 	std::vector<std::string> out;
 	for (auto it = std::ranges::lower_bound(s.names, hex);
 	     it != s.names.end() && it->starts_with(hex); ++it)
+		// The separator before a content suffix or the flat
+		// ".txt"; anything else is a longer plan id sharing the
+		// prefix.
 		if (it->size() > hex.size() && (*it)[hex.size()] == '.')
 			out.push_back(*it);
 	return out;
@@ -198,6 +232,7 @@ agenda::id store::chain_of(std::size_t at)
 		// identity, so the suffix sorts like the plan id does.
 		std::ranges::sort(deps);
 	std::string acc{agenda::name(what)};
+	append(acc, m_recipe[std::size_t(what)]);
 	append(acc, m_entries[at].t.id);
 	for (agenda::id const d : deps) {
 		std::size_t const i = index_of(d);
@@ -257,7 +292,7 @@ std::string store::resolve_at(std::size_t at)
 		if (ec)
 			return {};
 		// The shelf follows the rename in place: adoption bursts
-		// (a whole legacy cache, an edited chain) stay at one
+		// (an edited content chain) stay at one
 		// readdir per directory.
 		std::string const moved =
 			fs::path(target).filename().string();
@@ -265,11 +300,9 @@ std::string store::resolve_at(std::size_t at)
 		std::erase(sh.names, cand.front());
 		sh.names.insert(std::ranges::lower_bound(sh.names,
 		                                         moved), moved);
-		bool const legacy = cand.front().size()
-			== m_entries[at].t.id.hex().size() + 4;
 		journal("moved " + std::string(sub(m_entries[at].t.what))
 		        + cand.front() + " -> " + moved
-		        + (legacy ? ": adopt" : ": content"));
+		        + ": content");
 	}
 	m_entries[at].path = target;
 	return m_entries[at].path;

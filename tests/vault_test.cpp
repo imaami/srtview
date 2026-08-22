@@ -46,6 +46,14 @@ agenda::id gid(unsigned char x)
 	return i;
 }
 
+vault::recipes recipes(unsigned char seed)
+{
+	vault::recipes r;
+	for (std::size_t i = 0; i < r.size(); ++i)
+		r[i] = gid(static_cast<unsigned char>(seed + i));
+	return r;
+}
+
 agenda::task task(agenda::id id, agenda::kind k,
                   std::vector<agenda::id> deps = {})
 {
@@ -66,8 +74,7 @@ std::string dir()
 void reset_rig()
 {
 	fs::remove_all(g_rig);
-	for (char const *s : {"", "dives", "focus", "probe", "terms"})
-		fs::create_directories(g_rig / s);
+	fs::create_directories(g_rig);
 }
 
 void put(std::string const &path, std::string_view text)
@@ -107,35 +114,39 @@ int main()
 	auto const tda = task(da, agenda::kind::dive, {l1});
 	auto const tdb = task(db, agenda::kind::dive, {l2});
 
-	// --- legacy adoption -----------------------------------------
+	// --- recipes are a hard cache boundary -----------------------
 	reset_rig();
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("transcript one"));
 		std::string const old = dir() + '/' + l1.hex() + ".txt";
 		put(old, "leaf summary");
-		std::string const p = s.resolve(tl1);
-		check(!p.empty() && p != old && fs::exists(p)
-		      && !fs::exists(old) && get(p) == "leaf summary",
-		      "a legacy name adopts by rename, content kept");
-		check(s.resolve(tl1) == p, "adoption is idempotent");
-		std::string const j = get(dir() + "/journal.txt");
-		check(j.find("moved ") != std::string::npos
-		      && j.find(": adopt") != std::string::npos,
-		      "the journal notes the adoption");
-		vault::store s2(dir(), mix);
+		check(s.resolve(tl1).empty() && fs::exists(old),
+		      "a legacy answer never crosses into a recipe");
+		std::string const p = s.place(tl1);
+		put(p, "leaf summary");
+		check(s.resolve(tl1) == p, "the current recipe resolves");
+		vault::store s2(dir(), mix, recipes(20));
 		s2.content(l1, mix("transcript one"));
 		check(s2.resolve(tl1) == p,
 		      "a fresh store resolves the identical name");
 		check(s2.resolve(l1) == p,
 		      "resolution by bare id follows the registry");
+		vault::store s3(dir(), mix, recipes(40));
+		s3.content(l1, mix("transcript one"));
+		check(s3.resolve(tl1).empty() && fs::exists(p),
+		      "same source under a changed recipe is a miss");
+		vault::store s4(dir(), mix, recipes(20));
+		s4.content(l1, mix("transcript one"));
+		check(s4.resolve(tl1) == p,
+		      "switching back reuses the preserved recipe");
 	}
 
 	// --- external srt edit renames the chain ---------------------
 	reset_rig();
 	std::string p_l1, p_l2, p_n, p_da, p_db;
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one"));
 		s.content(l2, mix("two"));
 		put(p_l1 = s.place(tl1), "sum one");
@@ -144,12 +155,12 @@ int main()
 		put(p_da = s.place(tda), "dive a");
 		put(p_db = s.place(tdb), "dive b");
 		check(!p_n.empty()
-		      && fs::path(p_n).filename().string().size() == 37,
-		      "placed names are two-part");
+		      && fs::path(p_n).filename().string().size() == 54,
+		      "placed names carry plan, recipe and content");
 	}
 	std::string q_l1, q_n, q_da;
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		q_n = s.resolve(tn);
@@ -173,7 +184,7 @@ int main()
 		      "three content moves journaled, no more");
 	}
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		std::size_t const before =
@@ -191,7 +202,7 @@ int main()
 	std::string r_n, r_db;
 	{
 		put(p_l2, "sum two REVISED");
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		check(s.resolve(tl2) == p_l2,
@@ -210,7 +221,7 @@ int main()
 	// --- probe/focus pair order ----------------------------------
 	std::string p_f;
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		s.resolve(tda);
@@ -225,11 +236,15 @@ int main()
 
 	// --- place sweeps the plan id --------------------------------
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
-		std::string const junk1 = dir() + '/' + n.hex() + ".txt";
-		std::string const junk2 = dir() + '/' + n.hex()
+		// <plan>.<recipe>, as the store names it: the content
+		// part is the trailing ".<16 hex>.txt".
+		std::string const prefix = s.target(tn).substr(
+			0, s.target(tn).size() - 21);
+		std::string const junk1 = prefix + ".txt";
+		std::string const junk2 = prefix
 		                        + ".feedfacefeedface.txt";
 		put(junk1, "junk");
 		put(junk2, "junk");
@@ -250,17 +265,64 @@ int main()
 		      "the executor's tmp rename lands on the target");
 	}
 
-	// --- terms stay single-part ----------------------------------
+	// --- a recipe folds in what its kind reads -------------------
 	{
-		vault::store s(dir(), mix);
+		vault::recipes r = recipes(20);
+		r[std::size_t(agenda::kind::leaf)] = gid(99);
+		vault::store s(dir(), mix, r);
+		s.content(l1, mix("one EDITED"));
+		s.content(l2, mix("two"));
+		check(s.resolve(tl1).empty(),
+		      "a leaf recipe change misses the leaf");
+		put(s.place(tl1), "sum one REWRITTEN");
+		put(s.place(tl2), "sum two REWRITTEN");
+		check(!s.resolve(tl1).empty() && s.resolve(tn).empty()
+		      && s.resolve(tda).empty() && fs::exists(r_n)
+		      && fs::exists(q_da),
+		      "nodes and dives over regenerated leaves miss "
+		      "instead of adopting the old artifacts");
+		r = recipes(20);
+		r[std::size_t(agenda::kind::node)] = gid(98);
+		vault::store s2(dir(), mix, r);
+		s2.content(l1, mix("one EDITED"));
+		s2.content(l2, mix("two"));
+		check(s2.resolve(tl1) == q_l1 && s2.resolve(tn).empty()
+		      && s2.resolve(tda) == q_da,
+		      "a node recipe change leaves leaves and dives be");
+		r = recipes(20);
+		r[std::size_t(agenda::kind::probe)] = gid(97);
+		vault::store s3(dir(), mix, r);
+		s3.content(l1, mix("one EDITED"));
+		s3.content(l2, mix("two"));
+		check(s3.resolve(tda) == q_da
+		      && s3.resolve(task(f, agenda::kind::focus,
+		                         {da, db})).empty(),
+		      "a probe recipe change misses the focus written over "
+		      "its regex, the dives stand");
+	}
+
+	// --- the effective recipe is what names the artifacts --------
+	{
+		vault::store s(dir(), mix, recipes(20));
+		check(s.recipe(agenda::kind::leaf)
+		        == recipes(20)[std::size_t(agenda::kind::leaf)]
+		      && s.recipe(agenda::kind::terms)
+		        == recipes(20)[std::size_t(agenda::kind::terms)]
+		      && s.recipe(agenda::kind::node)
+		        != recipes(20)[std::size_t(agenda::kind::node)],
+		      "recipe() reports the supplied recipe, folds applied");
+	}
+
+	// --- content-keyed kinds omit only the content suffix --------
+	{
+		vault::store s(dir(), mix, recipes(20));
 		agenda::id const tm = gid(7);
 		auto const tt = task(tm, agenda::kind::terms);
 		check(s.resolve(tt).empty(), "a missing terms reply misses");
-		std::string const flat = dir() + "/terms/" + tm.hex()
-		                       + ".txt";
+		std::string const flat = s.target(tt);
 		put(flat, "TERM: x");
 		check(s.resolve(tt) == flat && s.place(tt) == flat,
-		      "terms resolve and place by plan id alone");
+		      "terms resolve by plan and recipe");
 	}
 
 	// --- locate ---------------------------------------------------
@@ -271,18 +333,19 @@ int main()
 		std::string const legacy = dir() + "/dives/" + lg.hex()
 		                         + ".txt";
 		put(legacy, "old dive");
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		check(s.locate(da, agenda::kind::dive) == q_da,
-		      "locate finds a two-part name by prefix");
+		      "locate finds the current recipe by prefix");
 		check(s.locate(gid(99), agenda::kind::dive).empty(),
 		      "locate misses politely");
-		check(s.locate(lg, agenda::kind::dive) == legacy,
-		      "locate sees legacy names too");
+		check(s.locate(lg, agenda::kind::dive).empty()
+		      && fs::exists(legacy),
+		      "locate never mistakes legacy data for this recipe");
 	}
 
 	// --- the shelf: lookups stop re-reading directories ----------
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		std::size_t const s0 = s.scans();
@@ -304,7 +367,7 @@ int main()
 
 	// --- a placement without its rename stays a miss -------------
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		auto const td9 = task(gid(11), agenda::kind::dive, {l2});
@@ -314,7 +377,7 @@ int main()
 
 	// --- completion reads current state, never re-registers ------
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		s.content(l1, mix("one EDITED"));
 		s.content(l2, mix("two"));
 		auto const old = task(gid(12), agenda::kind::dive, {l1});
@@ -329,7 +392,7 @@ int main()
 
 	// --- incomputable chains miss --------------------------------
 	{
-		vault::store s(dir(), mix);
+		vault::store s(dir(), mix, recipes(20));
 		check(s.resolve(task(gid(9),
 		                     agenda::kind::leaf)).empty(),
 		      "a leaf without a witness cannot resolve");

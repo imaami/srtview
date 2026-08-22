@@ -292,6 +292,39 @@ endpoint serverEnv()
 	return ep;
 }
 
+// A recipe is the semantic contract of one cached answer.  It is a
+// filename dimension in vault, deliberately separate from content:
+// content edits retain the vault's adoption policy, while changing a
+// prompt, schema or generation setting must miss.  The endpoint and
+// optional operator-supplied model identity keep two servers/models
+// from sharing answers accidentally.  llama-server does not expose a
+// stable model digest through the chat request itself, hence the
+// explicit SRTVIEW_LLM_MODEL_ID escape hatch for a server whose model
+// changes in place.
+vault::recipes recipe_ids(vault::hash8_fn h)
+{
+	endpoint const ep = serverEnv();
+	char const *const model = std::getenv("SRTVIEW_LLM_MODEL_ID");
+	vault::recipes out;
+	for (std::size_t i = 0; i < out.size(); ++i) {
+		std::string text{"srtview-facts-recipe-v1\nkind="};
+		text += agenda::name(agenda::kind(i));
+		text += "\nschema=text/plain;utf-8";
+		text += "\nmax_tokens=";
+		text += std::to_string(kMaxTokens);
+		text += "\ntemperature=0\nendpoint=";
+		text += ep.host.empty() ? "127.0.0.1" : ep.host;
+		text += ':';
+		text += std::to_string(ep.port ? ep.port : 8080);
+		text += "\nmodel=";
+		text += model && *model ? model : "unspecified";
+		text += "\nprompt=";
+		text += kPromptOf[i];
+		out[i] = h(text);
+	}
+	return out;
+}
+
 // Generation is a sustained full-power burn on the accelerator, and
 // a corpus queues many in a row: the default gap gives the silicon
 // breathing room.  SRTVIEW_LLM_PACE=<seconds> widens it, 0 disables.
@@ -393,20 +426,9 @@ std::string journal_line(agenda::task const &t)
 } // namespace
 
 Facts::Facts(vault::hash8_fn h)
-	: m_dir(cacheDir()), m_vault(m_dir, h), m_hash(h)
+	: m_dir(cacheDir()), m_vault(m_dir, h, recipe_ids(h)), m_hash(h)
 {
-	std::error_code ec;
-	std::filesystem::create_directories(m_dir + "/dives", ec);
-	if (!ec)
-		std::filesystem::create_directories(m_dir + "/focus", ec);
-	if (!ec)
-		std::filesystem::create_directories(m_dir + "/probe", ec);
-	if (!ec)
-		std::filesystem::create_directories(m_dir + "/terms", ec);
-	if (!ec)
-		std::filesystem::create_directories(m_dir + "/merge", ec);
-	if (!ec)
-		std::filesystem::create_directories(m_dir + "/spell", ec);
+	std::error_code const &ec = m_vault.error();
 	if (!ec) {
 		endpoint const ep = serverEnv();
 		m_llm = llm_create(ep.host.empty() ? nullptr

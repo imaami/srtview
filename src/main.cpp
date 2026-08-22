@@ -36,6 +36,9 @@
 //      SRTVIEW_LLM      -- llama-server endpoint for the background
 //                          facts pipeline as [host][:port]; default
 //                          127.0.0.1:8080
+//      SRTVIEW_LLM_MODEL_ID -- stable model/quant fingerprint mixed
+//                          into cache recipes; set this when the
+//                          model behind one endpoint can change
 //      SRTVIEW_LLM_PACE -- quiet seconds between summarization
 //                          tasks (default 30, 0 disables): thermal
 //                          breathing room for the GPU
