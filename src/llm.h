@@ -96,6 +96,13 @@ struct llm_task {
 	                              //!< generation and waiting on a
 	                              //!< dead server are the same
 	                              //!< silence; this bounds both.
+	LLM_STD(int32_t) urgent;      //!< 1 queues ahead of every task
+	                              //!< not yet on the wire and waits
+	                              //!< no pace gap, ending one that
+	                              //!< is running; 0 queues behind
+	                              //!< and breathes.  A generation
+	                              //!< under way is never
+	                              //!< interrupted.
 };
 
 /** @brief Creates a client and starts its worker thread.
@@ -162,7 +169,9 @@ llm_cancel (struct llm       *c,
  * before starting the next -- breathing room for a thermally
  * fragile accelerator behind the server.  The gap sits between
  * tasks only, never delays the first, and llm_destroy() cuts it
- * short.  Cancellation does not: a retired task changes nothing
+ * short, as does setting the pace to zero while a gap runs or
+ * queueing an urgent task into one -- the next task starts at
+ * once.  Cancellation does not: a retired task changes nothing
  * about the accelerator's need to breathe.
  *
  * @param c  The client.

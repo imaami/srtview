@@ -185,6 +185,10 @@ static void test_order_bands()
 	p.add({.id = tid("n2"), .what = agenda::kind::node, .tier = 1});
 	p.add({.id = tid("l1"), .what = agenda::kind::leaf});
 	p.add({.id = tid("l2"), .what = agenda::kind::leaf});
+	check(p.peek([](agenda::task const &t) {
+		      return t.what != agenda::kind::answer;
+	      }) == tid("l1") && p.peek() == tid("a1"),
+	      "a fit narrows the peek to one lane's candidates");
 	check(p.take() == tid("a1"),
 	      "an interactive grounded answer jumps the queue");
 	check(p.take() == tid("l1") && p.take() == tid("l2"),

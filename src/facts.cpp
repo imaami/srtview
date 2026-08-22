@@ -618,11 +618,12 @@ void Facts::decay(double keep)
 
 void Facts::reset()
 {
-	std::uint64_t cancel = 0;
+	std::uint64_t cancel[2] = {};
 	{
 		std::lock_guard const lock(m_mtx);
 		++m_epoch;
-		cancel = m_llmTask;
+		for (std::size_t i = 0; i < 2; ++i)
+			cancel[i] = m_lane[i].ask;
 		m_plan.reset();
 		m_bodies.clear();
 	}
@@ -635,8 +636,9 @@ void Facts::reset()
 	// cancel at-most-once and immune to the unlock races -- ids
 	// are never reused, a retired id no-ops, and a fresh ask
 	// submitted meanwhile carries an id this value cannot touch.
-	if (cancel)
-		llm_cancel(m_llm, cancel);
+	for (std::uint64_t const id : cancel)
+		if (id)
+			llm_cancel(m_llm, id);
 }
 
 bool Facts::cached(agenda::task const &t)
@@ -725,10 +727,9 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
                       std::uint64_t epoch, int status, bool wrote)
 {
 	std::lock_guard const lock(m_mtx);
-	if (m_inflight == t.id) {
-		m_inflight = {};
-		m_llmTask = 0;
-	}
+	for (lane &l : m_lane)
+		if (l.task == t.id)
+			l = {};
 	// Naming is the locked half of the write: place() computes the
 	// content-chained target, sweeps the plan id down to one file,
 	// and the rename publishes (R2).  Both vault reads go by id --
@@ -774,33 +775,52 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 	advance();
 }
 
-// m_mtx held.  Keeps taking until something is in flight or nothing
-// is ready; a task whose submission fails parks and the loop moves
-// on.
+// What each lane takes: answers are urgent, everything else is
+// background.  Heat is unbounded, so a hot background task can
+// outrank an answer; each free lane therefore peeks among its own
+// candidates, and a busy lane's favourite never hides the other
+// lane's.
+static bool background(agenda::task const &t)
+{
+	return t.what != agenda::kind::answer;
+}
+
+static bool urgent(agenda::task const &t)
+{
+	return t.what == agenda::kind::answer;
+}
+
+// m_mtx held.  Fills every free lane until nothing is ready for it;
+// a task whose submission fails parks and the loop moves on.
 void Facts::advance()
 {
-	while (!m_down && !m_offline && m_llm && !m_inflight) {
-		agenda::id const next = m_plan.take();
-		if (!next)
-			return;
-		agenda::task const *t = m_plan.get(next);
-		if (!t || !submit(*t)) {
-			// A submission that dies here parks silently for
-			// the session; that must at least be on the
-			// record when anyone is watching.
-			if (debug())
-				std::fprintf(stderr, "srtview: facts: "
-				             "park %s at submit\n",
-				             next.hex().c_str());
-			m_plan.fail(next);
-			continue;
+	static constexpr agenda::plan::fit_fn kFit[2] = {background, urgent};
+	for (std::size_t i = 0; i < 2; ++i) {
+		lane &l = m_lane[i];
+		while (!m_down && !m_offline && m_llm && !l.task) {
+			agenda::id const next = m_plan.peek(kFit[i]);
+			if (!next)
+				break;
+			m_plan.start(next);
+			agenda::task const *t = m_plan.get(next);
+			if (!t || !submit(*t, i)) {
+				// A submission that dies here parks silently
+				// for the session; that must at least be on
+				// the record when anyone is watching.
+				if (debug())
+					std::fprintf(stderr, "srtview: facts: "
+					             "park %s at submit\n",
+					             next.hex().c_str());
+				m_plan.fail(next);
+				continue;
+			}
+			l.task = next;
 		}
-		m_inflight = next;
 	}
 }
 
 // m_mtx held.
-bool Facts::submit(agenda::task const &t)
+bool Facts::submit(agenda::task const &t, std::size_t lane)
 {
 	// The context first: a leaf's snapshot is spent by assemble(),
 	// so nothing fallible may sit between spending it and the ask.
@@ -823,13 +843,17 @@ bool Facts::submit(agenda::task const &t)
 		.temperature = 0.0,
 		.max_tokens  = kMaxTokens,
 		.timeout_s   = kTimeoutS,
+		.urgent      = lane == 1,
 	};
+	// The pace is a thermal policy for autonomous background work,
+	// not UI latency: an answer goes urgent, which the llm puts
+	// ahead of any task not yet on the wire and in front of no gap.
 	std::uint64_t const id = llm_ask(m_llm, &ask, deliver, ctx);
 	if (!id) {
 		delete ctx;
 		return false;
 	}
-	m_llmTask = id;
+	m_lane[lane].ask = id;
 	if (debug())
 		std::fprintf(stderr, "srtview: facts: ask %s %s\n",
 		             agenda::name(t.what).data(),

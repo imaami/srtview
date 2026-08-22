@@ -176,8 +176,15 @@ public:
 	void heat(id key, double add);
 	void decay(double keep);
 
-	// Highest-scoring ready task, marked running; the empty id
-	// when no pending task has all dependencies done.
+	// Highest-scoring ready task among those fit admits (null
+	// admits all): peek() names it, start() marks a named pending
+	// task running, take() does both.  A caller with more than one
+	// lane peeks once per free lane with that lane's fit, so a
+	// task the busy lane would take never hides one the free lane
+	// could.
+	using fit_fn = bool (*)(task const &);
+	id peek(fit_fn fit = nullptr) const;
+	bool start(id which);
 	id take();
 
 	// Drops every task and all heat; completions of tasks taken

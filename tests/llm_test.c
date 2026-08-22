@@ -573,6 +573,83 @@ test_pace_destroy (void)
 	llm_buf_free(&f.reqs);
 }
 
+static void
+test_pace_cut (void)
+{
+	char resp[1024];
+	struct fake f;
+	struct slot s1, s2;
+	struct llm *c;
+	long t0;
+	snprintf(resp, sizeof resp,
+	         "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
+	         strlen(REPLY_JSON), REPLY_JSON);
+	check(fake_start(&f, resp, 2), "two-shot fake up");
+	slot_init(&s1);
+	slot_init(&s2);
+	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
+	llm_pace(c, 5000);
+	check(llm_ask(c, &(struct llm_task){ .prompt = "a" },
+	              on_done, &s1) != 0, "first task queued");
+	check(slot_wait(&s1, 5000) && s1.status == LLM_OK,
+	      "first task completes");
+	t0 = now_ms();
+	llm_pace(c, 0);
+	check(llm_ask(c, &(struct llm_task){ .prompt = "b" },
+	              on_done, &s2) != 0, "second task queued into gap");
+	check(slot_wait(&s2, 5000) && s2.status == LLM_OK
+	      && s2.done_ms - t0 < 2000,
+	      "a zero pace ends the running gap");
+	llm_destroy(&c);
+	fake_finish(&f);
+	llm_buf_free(&f.reqs);
+}
+
+static void
+test_urgent (void)
+{
+	char resp[1024];
+	struct fake f;
+	struct slot s1, s2, s3;
+	struct llm *c;
+	char const *reqs;
+	long t0;
+	snprintf(resp, sizeof resp,
+	         "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
+	         strlen(REPLY_JSON), REPLY_JSON);
+	check(fake_start(&f, resp, 3), "three-shot fake up");
+	slot_init(&s1);
+	slot_init(&s2);
+	slot_init(&s3);
+	c = llm_create(nullptr, f.port);
+	check(c != nullptr, "client up");
+	llm_pace(c, 5000);
+	check(llm_ask(c, &(struct llm_task){ .prompt = "first" },
+	              on_done, &s1) != 0, "first task queued");
+	check(slot_wait(&s1, 5000) && s1.status == LLM_OK,
+	      "first task completes, gap armed");
+	check(llm_ask(c, &(struct llm_task){ .prompt = "background" },
+	              on_done, &s2) != 0, "background task queued into gap");
+	t0 = now_ms();
+	check(llm_ask(c, &(struct llm_task){ .prompt = "urgent",
+	                                     .urgent = 1 },
+	              on_done, &s3) != 0, "urgent task queued behind it");
+	check(slot_wait(&s3, 5000) && s3.status == LLM_OK
+	      && s3.done_ms - t0 < 2000,
+	      "the urgent task overtakes the queued one and waits no gap");
+	check(slot_wait(&s2, 8000) && s2.status == LLM_OK
+	      && s3.done_ms <= s2.done_ms,
+	      "the queued task follows it");
+	llm_destroy(&c);
+	reqs = fake_finish(&f);
+	char const *const u = strstr(reqs, "urgent");
+	char const *const bg = strstr(reqs, "background");
+	check(u && bg && u < bg,
+	      "the urgent request reached the wire first");
+	llm_buf_free(&f.reqs);
+}
+
 /* One real round-trip when a llama-server is up and opted into. */
 static void
 test_live (void)
@@ -621,6 +698,8 @@ main (void)
 	test_fifo();
 	test_pace();
 	test_pace_destroy();
+	test_pace_cut();
+	test_urgent();
 	test_live();
 	printf("%s\n", g_fail ? "FAILURES" : "all passed");
 	return g_fail ? 1 : 0;

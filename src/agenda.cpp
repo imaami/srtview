@@ -190,6 +190,22 @@ void plan::decay (double keep)
 
 id plan::take ()
 {
+	id const next = peek();
+	start(next);
+	return next;
+}
+
+bool plan::start (id which)
+{
+	std::size_t const at = index_of(which);
+	if (at == npos || m_entries[at].s != state::pending)
+		return false;
+	m_entries[at].s = state::running;
+	return true;
+}
+
+id plan::peek (fit_fn fit) const
+{
 	std::vector<double> own(m_entries.size());
 	for (std::size_t i = 0; i < m_entries.size(); ++i)
 		own[i] = m_entries[i].s == state::pending
@@ -206,17 +222,14 @@ id plan::take ()
 	// insertion, erasing exactly the distinctions the heat painted.
 	std::size_t best = npos;
 	for (std::size_t i = 0; i < m_entries.size(); ++i) {
-		if (m_entries[i].s != state::pending || !ready(m_entries[i]))
+		if (m_entries[i].s != state::pending || !ready(m_entries[i])
+		    || (fit && !fit(m_entries[i].t)))
 			continue;
 		if (best == npos || eff[i] > eff[best] ||
 		    (eff[i] == eff[best] && own[i] > own[best]))
 			best = i;
 	}
-	if (best == npos)
-		return {};
-
-	m_entries[best].s = state::running;
-	return m_entries[best].t.id;
+	return best == npos ? id{} : m_entries[best].t.id;
 }
 
 void plan::reset ()

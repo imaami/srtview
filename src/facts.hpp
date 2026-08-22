@@ -137,7 +137,7 @@ private:
 	               std::string const &want, std::string const &line,
 	               std::uint64_t epoch, int status, bool wrote);
 	void advance();
-	bool submit(agenda::task const &t);
+	bool submit(agenda::task const &t, std::size_t lane);
 	std::string assemble(agenda::task const &t);
 	std::string assemble_node(agenda::task const &t);
 	std::string assemble_dive(agenda::task const &t);
@@ -153,8 +153,17 @@ private:
 	std::string        m_dir;       // .../srtview/facts
 	vault::store       m_vault;     // guarded by m_mtx
 	vault::hash8_fn    m_hash;      // H8, injected
-	agenda::id         m_inflight;  // id at the llm, or none
-	std::uint64_t      m_llmTask = 0; // llm_ask() id in flight
+	// Two lanes at the llm: background work, one task at a time
+	// behind the pace, and urgent work -- a grounded answer -- that
+	// queues ahead of a background task not yet on the wire and
+	// cuts the gap.  One lane each, so an answer never waits for a
+	// generation that was only queued; a generation under way is
+	// never interrupted.
+	struct lane {
+		agenda::id    task;    // id at the llm, or none
+		std::uint64_t ask = 0; // llm_ask() id, for cancel
+	};
+	lane               m_lane[2];   // [0] background, [1] urgent
 	std::uint64_t      m_epoch = 0; // reset generation
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails

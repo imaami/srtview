@@ -427,6 +427,7 @@ struct llm_job {
 	struct llm_buf  in;       /* reply bytes as curl delivers them */
 	int32_t         timeout_s;
 	bool            overflow; /* reply cap tripped in write_cb() */
+	bool            urgent;   /* heads the queue, waits no gap */
 };
 
 struct llm {
@@ -658,10 +659,20 @@ sock_cb (CURL *easy, curl_socket_t fd, int what, void *ud, void *sp)
 
 static void start_next (struct llm *c);
 
+/* Whether the queue's head is an urgent task.  Caller holds mtx. */
+static bool
+urgent_head (struct llm *c)
+{
+	struct list *n = list_head(&c->queue);
+	return n && container_of(n, struct llm_job, link)->urgent;
+}
+
 /* The gap or the next task, after a job left the wire (finished,
  * failed or cancelled -- a retired task changes nothing about the
- * accelerator's need to breathe).  On quit the pending wakeup exits
- * the loop instead.
+ * accelerator's need to breathe).  An urgent task at the head
+ * waits no gap: the breathing room is for autonomous work, and a
+ * reader waiting on an answer is not that.  On quit the pending
+ * wakeup exits the loop instead.
  */
 static void
 after_job (struct llm *c)
@@ -669,7 +680,7 @@ after_job (struct llm *c)
 	int32_t gap;
 	bool quit;
 	pthread_mutex_lock(&c->mtx);
-	gap = c->pace_ms;
+	gap = urgent_head(c) ? 0 : c->pace_ms;
 	quit = c->quit;
 	pthread_mutex_unlock(&c->mtx);
 	if (quit)
@@ -820,17 +831,27 @@ on_wake (struct loop *loop, struct loop_ref *ref, uint32_t events)
 {
 	struct llm *c = container_of(ref, struct llm, wake);
 	bool quit, cancel;
+	int32_t gap;
 	(void)loop;
 	(void)events;
 	drain(ref->fd);
 	pthread_mutex_lock(&c->mtx);
 	quit = c->quit;
 	cancel = c->cancel;
+	gap = urgent_head(c) ? 0 : c->pace_ms;
 	pthread_mutex_unlock(&c->mtx);
 	bool retired = cancel && abort_active(c, LLM_ERR_CANCEL);
 	if (quit) {
 		loop_exit(&c->loop);
 		return;
+	}
+	/* A pace set to zero mid-gap, or an urgent task queued into
+	 * one, ends the gap: something must not wait out the
+	 * accelerator's rest.
+	 */
+	if (c->pacing && gap <= 0) {
+		arm(c->ptfd, -1);
+		c->pacing = false;
 	}
 	if (retired)
 		after_job(c);
@@ -1093,7 +1114,11 @@ llm_ask (struct llm            *c,
 	}
 	pthread_mutex_lock(&c->mtx);
 	id = job->id = ++c->last_id;
-	list_append(&c->queue, &job->link);
+	job->urgent = task->urgent != 0;
+	if (job->urgent)
+		list_prepend(&c->queue, &job->link);
+	else
+		list_append(&c->queue, &job->link);
 	pthread_mutex_unlock(&c->mtx);
 	post(c->wakefd);
 	return id;
@@ -1140,6 +1165,9 @@ llm_pace (struct llm *c,
 	pthread_mutex_lock(&c->mtx);
 	c->pace_ms = ms > 0 ? (int)ms : 0;
 	pthread_mutex_unlock(&c->mtx);
+	/* No gap wanted: a gap already running ends on the wakeup. */
+	if (ms <= 0)
+		post(c->wakefd);
 }
 
 char const *
