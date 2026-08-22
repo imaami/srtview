@@ -62,17 +62,23 @@ react_eyes()
 		>/dev/null 2>&1 || :
 }
 
+# Cuts at a line boundary and then drains the rest: exiting early
+# would close the pipe under the producer, and with pipefail a curl
+# or jq killed by EPIPE fails the pipeline -- the whole review died
+# on exactly the PRs large enough to need the cut.
 truncate_lines()
 {
 	local limit=$1
 
 	LC_ALL=C awk -v limit="$limit" '
+		cut { next }
 		{
 			n += length($0) + 1
 			if (n > limit) {
 				print ""
 				print "[... truncated by gpt-review ...]"
-				exit
+				cut = 1
+				next
 			}
 			print
 		}
