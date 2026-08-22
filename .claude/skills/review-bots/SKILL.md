@@ -1,15 +1,16 @@
 ---
 name: review-bots
 description: Fetch, triage, and act on AI-reviewer PR feedback
-  (CodeRabbit, Copilot) — reply, resolve, commit, push
+  (CodeRabbit, Copilot, Codex) — reply, resolve, commit, push
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
 ---
 Plumbing: bash .claude/skills/review-bots/rabbit.sh   — CodeRabbit
           bash .claude/skills/review-bots/pilot.sh    — Copilot
+          bash .claude/skills/review-bots/codex.sh    — Codex
 (fetch | reply <tid> <body> | resolve <tid> | unresolve <tid> | comment <body>)
-Both entry points speak the same verbs and emit the same shapes; only
-the reviewer they filter differs. Invoked bare, cover both bots; an
+All entry points speak the same verbs and emit the same shapes; only
+the reviewer they filter differs. Invoked bare, cover every bot; an
 argument naming one narrows to it.
 
 ## Phase 1 — fetch & triage. No code edits, no API writes.
@@ -30,8 +31,9 @@ proposed action. Then STOP and wait for explicit approval.
   reply with what changed + the commit SHA, then resolve.
 - WRONG: reply with the concrete refutation. Mention @coderabbitai
   only if we want its counter-response (it answers asynchronously,
-  ~a minute); Copilot never answers replies — a reply there is audit
-  trail, not conversation. Resolve only if dismissal was approved.
+  ~a minute); Copilot never answers replies, and Codex only answers
+  an explicit @codex mention — a plain reply there is audit trail,
+  not conversation. Resolve only if dismissal was approved.
 - STYLE-ONLY: as decided at the gate; if dismissed, one-line reply,
   then resolve.
 - NEEDS-VERIFICATION: reply stating what's missing. Never resolve.
