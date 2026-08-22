@@ -51,11 +51,18 @@ The `issue_comment` workflow must exist on the default branch before
 
 ## Configure
 
-Create a repository Actions secret named:
+Create a repository environment named `gpt-review` (Settings →
+Environments), restrict its deployment branches to the default branch,
+and add an environment secret to it named:
 
 ```text
 OPENAI_API_KEY
 ```
+
+The job declares `environment: gpt-review`, so the secret is readable
+only by a job running from the default branch -- this workflow and no
+other. Do not add required reviewers to the environment: every
+`/gpt review` would then wait for a manual approval.
 
 The API is billed separately from a ChatGPT Plus subscription.
 
