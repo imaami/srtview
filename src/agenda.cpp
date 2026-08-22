@@ -18,11 +18,13 @@ namespace {
 // but never starves the pyramid), tiers order within a kind, the
 // export edge floats a topic over its supportive components, and
 // heat (unbounded) moves everything across those bands.
-// merge sits at the bottom: the fold judgment over the term
+// Evidence extraction sits between nodes and the lexical terms pass;
+// pair judgments wait below dives, while an interactive answer jumps
+// the queue.  merge sits at the bottom: the fold judgment over the term
 // directory is most useful once the queue has otherwise drained
 // and the directory has stopped moving.
 constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
-                                 0.4, 0.42};
+                                 0.4, 0.42, 1.75, 0.8, 4.0};
 static_assert(std::size(kKindBase) == kind_count,
               "kKindBase mirrors agenda::kind");
 constexpr double kTierStep    = 1.0 / 32.0;

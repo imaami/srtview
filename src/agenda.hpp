@@ -7,7 +7,9 @@
 // summarizes one subtitle file, a *node* summarizes the summaries
 // of its children (the abstraction pyramid: pairs joined level by
 // level, generalizing toward the root), a *dive* explains one
-// topic's hit collection in depth.  Dependencies gate readiness --
+// topic's hit collection in depth; later kinds extract and reconcile
+// evidence-backed records and answer retrieved questions.
+// Dependencies gate readiness --
 // a task is ready when every dependency is done, where "done" means
 // its cache file exists (the caller marks cache hits done without
 // adding a task; unknown-but-done ids are remembered).
@@ -51,22 +53,27 @@ namespace agenda {
 // cue window of raw transcript and proposes index entries -- term,
 // observed spellings, gloss -- which the caller validates against
 // the window and adopts.  The probe-search-write chain and the
-// terms harvest are the executor's caller's to run.
+// terms harvest are the executor's caller's to run.  An *extract*
+// task emits atomic evidence-cited semantic records from one cue
+// window; a *judge* compares one new record with one mechanically
+// selected candidate; an *answer* writes a cited response from a
+// bounded retrieval bundle.
 enum class kind : std::uint8_t {
-	leaf, node, dive, focus, probe, terms, merge, spell
+	leaf, node, dive, focus, probe, terms, merge, spell,
+	extract, judge, answer
 };
 
 // The one number every per-kind table must match: size arrays with
 // it and static_assert against it, so a new kind fails to compile
 // instead of corrupting whatever sat past the end.
 inline constexpr std::size_t kind_count =
-	std::size_t(kind::spell) + 1;
+	std::size_t(kind::answer) + 1;
 
 // The kind's name, as journals, debug lines and cache recipes spell
 // it: one table beside the enum instead of one per module.
 inline constexpr std::string_view kind_names[] = {
 	"leaf", "node", "dive", "focus", "probe", "terms", "merge",
-	"spell"
+	"spell", "extract", "judge", "answer"
 };
 static_assert(std::size(kind_names) == kind_count,
               "kind_names mirrors agenda::kind");

@@ -16,7 +16,9 @@
 // writes the pair's common thread
 // from the excerpts that search actually found (the snapshot),
 // stored under a machine-written REGEX head the UI layer harvests
-// back into the corpus.  The probe-search-write chain is the UI
+// back into the corpus.  Evidence *extract* tasks, pairwise *judge*
+// tasks and cited *answer* tasks are schema-constrained snapshots
+// owned by SemanticEngine.  The probe-search-write chain is the UI
 // layer's to run: a probe's reply names a search, not a file the
 // plan could gate on.  Cache layout, sibling to the frame cache:
 //   $XDG_CACHE_HOME/srtview/facts/<name>.txt        leaves, nodes
@@ -24,6 +26,7 @@
 //   $XDG_CACHE_HOME/srtview/facts/focus/<name>.txt  focuses
 //   $XDG_CACHE_HOME/srtview/facts/probe/<name>.txt  probes
 //   $XDG_CACHE_HOME/srtview/facts/terms/<name>.txt  terms
+//   $XDG_CACHE_HOME/srtview/facts/semantic/{extract,judge,answer}/
 // where <name> includes the vault's plan id, semantic recipe and,
 // for dependency-shaped work, content suffix.  The suffix chains
 // content, so an external edit to

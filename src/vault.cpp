@@ -18,7 +18,8 @@ namespace fs = std::filesystem;
 // which salts the suffix, is agenda's.
 constexpr std::string_view kSub[]{
 	"", "", "dives/", "focus/", "probe/", "terms/", "merge/",
-	"spell/"
+	"spell/", "semantic/extract/", "semantic/judge/",
+	"semantic/answer/"
 };
 
 static_assert(std::size(kSub) == agenda::kind_count,
@@ -30,7 +31,8 @@ static_assert(std::size(kSub) == agenda::kind_count,
 constexpr bool flat_kind(agenda::kind k)
 {
 	return k == agenda::kind::terms || k == agenda::kind::merge
-	    || k == agenda::kind::spell;
+	    || k == agenda::kind::spell || k == agenda::kind::extract
+	    || k == agenda::kind::judge || k == agenda::kind::answer;
 }
 
 std::string_view sub(agenda::kind k)

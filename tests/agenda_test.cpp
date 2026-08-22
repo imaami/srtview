@@ -174,21 +174,30 @@ static void test_states()
 static void test_order_bands()
 {
 	agenda::plan p;
+	p.add({.id = tid("a1"), .what = agenda::kind::answer});
 	p.add({.id = tid("p1"), .what = agenda::kind::probe});
 	p.add({.id = tid("f1"), .what = agenda::kind::focus});
 	p.add({.id = tid("d1"), .what = agenda::kind::dive});
+	p.add({.id = tid("j1"), .what = agenda::kind::judge});
 	p.add({.id = tid("t1"), .what = agenda::kind::terms});
+	p.add({.id = tid("e1"), .what = agenda::kind::extract});
 	p.add({.id = tid("n1"), .what = agenda::kind::node, .tier = 2});
 	p.add({.id = tid("n2"), .what = agenda::kind::node, .tier = 1});
 	p.add({.id = tid("l1"), .what = agenda::kind::leaf});
 	p.add({.id = tid("l2"), .what = agenda::kind::leaf});
+	check(p.take() == tid("a1"),
+	      "an interactive grounded answer jumps the queue");
 	check(p.take() == tid("l1") && p.take() == tid("l2"),
 	      "leaves before nodes, stable by insertion");
 	check(p.take() == tid("n2") && p.take() == tid("n1"),
 	      "lower tier first within a kind");
+	check(p.take() == tid("e1"),
+	      "semantic extraction follows the summary backbone");
 	check(p.take() == tid("t1"),
 	      "terms between summaries and dives: the index backbone");
 	check(p.take() == tid("d1"), "dives after nodes");
+	check(p.take() == tid("j1"),
+	      "bounded consolidation follows evidence gathering");
 	check(p.take() == tid("f1"), "focuses after dives");
 	check(p.take() == tid("p1"),
 	      "probes last: gathered evidence writes before new "

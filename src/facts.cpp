@@ -13,6 +13,7 @@
 
 #include "facts.hpp"
 #include "llm.h"
+#include "semantic.hpp"
 #include "slurp.hpp"
 
 namespace {
@@ -197,18 +198,83 @@ constexpr char kSpellPrompt[] =
 	"answer with exactly one word on its own final line: SAME or "
 	"DIFFERENT.";
 
-// System prompt per task kind (leaf, node, dive, focus, probe,
-// terms, merge, spell).  The views wrap NUL-terminated literals,
-// so .data() satisfies the C API below.
+constexpr char kExtractPrompt[] =
+	"The user message is one numbered window from one transcript. "
+	"Extract only atomic knowledge directly supported by its cue "
+	"lines. A record is one factual claim, relationship, procedure "
+	"step, operational rule, or definition; split compound claims. "
+	"Each record is a triple and its sentence. SUBJECT is the thing "
+	"the record is about, named bare, the way the material names it: "
+	"put the aspect into the relation and the object, never into the "
+	"subject (subject 'p-code', relation 'is used across', object "
+	"'every processor Ghidra supports' -- not subject 'p-code "
+	"portability'). RELATION is the verb phrase that links them. "
+	"OBJECT is the complement, itself a bare name when it names a "
+	"thing. Use one spelling for one thing across records. STATEMENT "
+	"is the whole sentence, standing alone without referring to the "
+	"transcript. CUES must contain the exact #numbers that support "
+	"the statement. Never cite a number not present in the message "
+	"and never infer a missing step. Return the constrained JSON "
+	"object only.";
+
+constexpr char kJudgePrompt[] =
+	"The user message holds two items with exact transcript evidence: "
+	"either NEW and CANDIDATE, two atomic records, or ENTITY A and "
+	"ENTITY B, two names with assertions made about each. Judge their "
+	"relationship. For records: same means they assert the same "
+	"durable fact even if worded differently; related means a useful "
+	"connection without identity; contradicts means their supported "
+	"assertions conflict; novel means no material relationship. For "
+	"names: same means both name one thing -- a transcription may "
+	"mangle a name, so weigh what is said about each against the "
+	"speaker's own words; related means distinct but connected things; "
+	"novel means unrelated; contradicts does not apply. Evidence "
+	"outranks labels. Return the constrained JSON object only.";
+
+constexpr char kAnswerPrompt[] =
+	"Answer the QUESTION using only the evidence spans in the user "
+	"message. Each span carries a CITE line holding the exact JSON "
+	"object that cites it; every citation must be a copy of one CITE "
+	"object, nothing else -- a RECORD id is never a citation. The "
+	"citations array is the only place a citation goes: the answer "
+	"text is prose for a reader and carries no CITE objects, ids or "
+	"cue numbers. A span under a CONTRADICTS heading belongs to a "
+	"record judged to contradict the record it names: where the "
+	"sources disagree, say so and cite both sides. Synthesize "
+	"procedure steps "
+	"in source order when the evidence supports a procedure. If the "
+	"bundle cannot support the answer, set insufficient true, explain "
+	"briefly what is missing, and cite nothing. Return the constrained "
+	"JSON object only.";
+
+// System prompt per task kind, in agenda::kind order.  The views
+// wrap NUL-terminated literals, so .data() satisfies the C API
+// below.
 constexpr std::string_view kPromptOf[] = {
 	kLeafPrompt, kNodePrompt, kDivePrompt, kFocusPrompt,
 	kProbePrompt, kTermsPrompt, kMergePrompt, kSpellPrompt,
+	kExtractPrompt, kJudgePrompt, kAnswerPrompt,
 };
 
 // Connect refusals in a row before the pipeline parks itself for
 // the session; anything else the server says resets the count.
 constexpr int kRefusalCap = 3;
 
+
+// The response schema a kind is asked under; null for prose.
+char const *schema_of(agenda::kind what)
+{
+	switch (what) {
+	case agenda::kind::extract:
+		return semantic::records_schema().data();
+	case agenda::kind::judge:
+		return semantic::verdict_schema().data();
+	case agenda::kind::answer:
+		return semantic::answer_schema().data();
+	default:
+		return nullptr;
+	}
+}
 
 // A reply's context travels as the task's user data, heap-owned:
 // exactly one callback per accepted task makes adoption in
@@ -233,6 +299,7 @@ struct reply_ctx {
 // Kinds with an empty prefix carry no head.
 constexpr std::string_view kHeadPfx[] = {
 	"", "", "PATTERN ", "REGEX: ", "", "", "", "",
+	"", "", "",
 };
 static_assert(std::size(kHeadPfx) == std::size(kPromptOf)
               && std::size(kHeadPfx) == agenda::kind_count,
@@ -309,7 +376,9 @@ vault::recipes recipe_ids(vault::hash8_fn h)
 	for (std::size_t i = 0; i < out.size(); ++i) {
 		std::string text{"srtview-facts-recipe-v1\nkind="};
 		text += agenda::name(agenda::kind(i));
-		text += "\nschema=text/plain;utf-8";
+		char const *const schema = schema_of(agenda::kind(i));
+		text += "\nschema=";
+		text += schema ? schema : "text/plain;utf-8";
 		text += "\nmax_tokens=";
 		text += std::to_string(kMaxTokens);
 		text += "\ntemperature=0\nendpoint=";
@@ -631,12 +700,19 @@ void Facts::deliver(void *ud, std::uint64_t, int status,
 		static_cast<reply_ctx *>(ud));
 	bool const looped = status == LLM_OK && size
 	                 && degenerate(text, size);
-	if (looped && debug())
-		std::fprintf(stderr, "srtview: facts: %s: degenerate "
-		             "reply refused\n", ctx->t.id.hex().c_str());
-	bool const wrote = status == LLM_OK && size && !looped
+	// A schema-constrained reply the token cap cut short is not a
+	// document at all; like a loop it is a failed ask, never an
+	// artifact.
+	bool const cut = status == LLM_OK && size && !looped
+	              && schema_of(ctx->t.what)
+	              && !semantic::well_formed({text, size});
+	if ((looped || cut) && debug())
+		std::fprintf(stderr, "srtview: facts: %s: %s reply "
+		             "refused\n", ctx->t.id.hex().c_str(),
+		             looped ? "degenerate" : "truncated");
+	bool const wrote = status == LLM_OK && size && !looped && !cut
 	                && store(ctx->path, ctx->head, text, size);
-	if (!wrote && debug())
+	if (!wrote && !looped && !cut && debug())
 		std::fprintf(stderr, "srtview: facts: %s: %s\n",
 		             ctx->t.id.hex().c_str(),
 		             llm_strerror(status));
@@ -743,7 +819,7 @@ bool Facts::submit(agenda::task const &t)
 	llm_task const ask = {
 		.system      = kPromptOf[std::size_t(t.what)].data(),
 		.prompt      = body.c_str(),
-		.json_schema = nullptr,
+		.json_schema = schema_of(t.what),
 		.temperature = 0.0,
 		.max_tokens  = kMaxTokens,
 		.timeout_s   = kTimeoutS,
@@ -786,6 +862,9 @@ std::string Facts::assemble(agenda::task const &t)
 	case agenda::kind::terms:
 	case agenda::kind::merge:
 	case agenda::kind::spell:
+	case agenda::kind::extract:
+	case agenda::kind::judge:
+	case agenda::kind::answer:
 		// A caller-built snapshot -- the numbered window or the
 		// term directory listing -- nothing to layer.
 		return spend_body(t.id);
