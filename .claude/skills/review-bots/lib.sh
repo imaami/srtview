@@ -1,7 +1,9 @@
 # lib.sh -- shared PR plumbing for the review-bot entry points.
 # For sourcing only: no shebang, no top-level statements, functions
 # only.  The sourcing entry point sets BOT to the reviewer's login
-# prefix, lowercase, then calls main.  Logins vary by surface --
+# prefix, lowercase, then calls main; one with verbs or surfaces
+# of its own defines those functions after sourcing and lists its
+# verbs in VERBS.  Logins vary by surface --
 # GraphQL says "coderabbitai" / "copilot-pull-request-reviewer",
 # REST reviews append "[bot]", REST inline comments say "Copilot" --
 # so every filter case-folds and prefix-matches.  gh api --jq is
@@ -105,8 +107,9 @@ comment()
 
 main()
 {
-	case "$1" in
-	comment|fetch|reply|resolve|unresolve) "$@" ;;
-	*) fail "usage: fetch | reply <tid> <body> | resolve <tid> | unresolve <tid> | comment <body>" ;;
-	esac
+	local verb
+	for verb in ${VERBS:-comment fetch reply resolve unresolve}; do
+		[[ ${1:-} == "$verb" ]] && { "$@"; return; }
+	done
+	fail "usage: ${USAGE:-fetch | reply <tid> <body> | resolve <tid> | unresolve <tid> | comment <body>}"
 }
