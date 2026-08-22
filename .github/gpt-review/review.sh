@@ -275,7 +275,9 @@ http=$(curl --silent --show-error \
 	--data-binary "@$tmp/request.json" \
 	"$openai/v1/responses") || http="curl exit $?"
 
-if [[ ! $http =~ ^2 ]]; then
+if [[ ! $http =~ ^[0-9]+$ ]]; then
+	fail "OpenAI API unreachable ($http)."
+elif [[ ! $http =~ ^2 ]]; then
 	error=$(jq -r '.error.message // "unknown OpenAI API error"' \
 		"$tmp/response.json" 2>/dev/null || printf 'unparseable OpenAI API error')
 	fail "$(printf 'OpenAI API HTTP %s: %s' "$http" "$error")"
