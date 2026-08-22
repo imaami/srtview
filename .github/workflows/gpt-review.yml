@@ -1,0 +1,37 @@
+name: GPT PR review
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  review:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/gpt review') &&
+      github.event.comment.user.login == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REVIEW_MODEL || 'gpt-5.6-sol' }}
+      OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REVIEW_REASONING || 'xhigh' }}
+
+    steps:
+      # issue_comment runs at the default branch. Keep it that way: the
+      # workflow has a secret and must never execute code from the PR.
+      - name: Check out trusted reviewer
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Review PR
+        run: bash .github/gpt-review/review.sh
