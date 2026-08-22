@@ -20,8 +20,8 @@ The workflow:
 
 1. runs the trusted reviewer code from the repository's default branch;
 2. reads PR metadata and the unified diff through the GitHub API;
-3. reads existing CodeRabbit/Copilot review text as deduplication and
-   disagreement context;
+3. reads existing CodeRabbit/Copilot/Codex review text as deduplication
+   and disagreement context;
 4. adds the repository's existing `CLAUDE.md`, `.coderabbit.yaml`, and
    `AGENTS.md` as house-policy context;
 5. makes one OpenAI Responses API request;

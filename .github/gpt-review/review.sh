@@ -161,8 +161,9 @@ curl --silent --show-error --fail-with-body \
 	fail "could not fetch the diff; GitHub serves none for a PR past 300 files or 20000 diff lines."
 
 # Existing AI-review feedback is useful mainly as a deduplication/adversarial
-# signal. Restrict it to CodeRabbit/Copilot and cap both per-comment and total
-# size so a noisy review cannot consume the model context.  The
+# signal. Restrict it to the reviewers on this repository -- CodeRabbit,
+# Copilot, Codex -- and cap both per-comment and total size so a noisy
+# review cannot consume the model context.  The
 # feedback is context, not the subject: a page that will not come
 # leaves the review to go without it.
 for f in "issues.json:issues/$pr/comments" \
@@ -175,19 +176,19 @@ done
 {
 	jq -r '
 		.[]
-		| select((.user.login // "") | test("coderabbit|copilot"; "i"))
+		| select((.user.login // "") | test("coderabbit|copilot|codex"; "i"))
 		| "TOP-LEVEL [\(.user.login)]:\n\((.body // "")[0:5000])\n"
 	' "$tmp/issues.json"
 
 	jq -r '
 		.[]
-		| select((.user.login // "") | test("coderabbit|copilot"; "i"))
+		| select((.user.login // "") | test("coderabbit|copilot|codex"; "i"))
 		| "INLINE [\(.user.login)] \(.path // "?"):\(.line // .original_line // "?"):\n\((.body // "")[0:5000])\n"
 	' "$tmp/review-comments.json"
 
 	jq -r '
 		.[]
-		| select((.user.login // "") | test("coderabbit|copilot"; "i"))
+		| select((.user.login // "") | test("coderabbit|copilot|codex"; "i"))
 		| select((.body // "") != "")
 		| "REVIEW [\(.user.login)] state=\(.state // "?"):\n\((.body // "")[0:5000])\n"
 	' "$tmp/reviews.json"
