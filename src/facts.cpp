@@ -743,9 +743,10 @@ bool Facts::submit(agenda::task const &t)
 	llm_task const ask = {
 		.system      = kPromptOf[std::size_t(t.what)].data(),
 		.prompt      = body.c_str(),
+		.json_schema = nullptr,
+		.temperature = 0.0,
 		.max_tokens  = kMaxTokens,
 		.timeout_s   = kTimeoutS,
-		.temperature = 0.0,
 	};
 	std::uint64_t const id = llm_ask(m_llm, &ask, deliver, ctx);
 	if (!id) {

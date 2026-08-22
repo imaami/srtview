@@ -924,6 +924,20 @@ build_body (struct llm_task const *task, struct llm_buf *body)
 		                 sizeof ",\"temperature\":" - 1)
 		  && llm_buf_put(body, num, (size_t)len);
 	}
+	/* The OpenAI shape, which is the one llama-server reads for
+	 * type json_schema: the schema sits inside a json_schema
+	 * wrapper.  A bare "schema" member is silently ignored there
+	 * and the reply comes back unconstrained.  The name is
+	 * OpenAI's requirement, not llama-server's -- its grammar
+	 * never reads it -- but a stricter compatible server may
+	 * refuse the body without one.
+	 */
+	if (ok && task->json_schema && *task->json_schema)
+		ok = llm_buf_str(body,
+			",\"response_format\":{\"type\":\"json_schema\","
+			"\"json_schema\":{\"name\":\"srtview\",\"schema\":")
+		  && llm_buf_str(body, task->json_schema)
+		  && llm_buf_put(body, "}}", 2);
 	return ok && llm_buf_put(body, "}", 1);
 }
 

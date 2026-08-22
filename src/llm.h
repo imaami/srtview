@@ -81,6 +81,12 @@ typedef void (*llm_done_fn) (void             *ud,
 struct llm_task {
 	char const      *system;      //!< Optional context; may be null.
 	char const      *prompt;      //!< The task body; required.
+	char const      *json_schema; //!< Optional JSON Schema object;
+	                              //!< requests schema-constrained
+	                              //!< JSON through response_format.
+	double           temperature; //!< Sampling temperature as-is;
+	                              //!< negative for the server's
+	                              //!< default.
 	LLM_STD(int32_t) max_tokens;  //!< > 0 caps the reply length.
 	LLM_STD(int32_t) timeout_s;   //!< Hard cap on the whole round
 	                              //!< trip; <= 0 means 300, above
@@ -90,9 +96,6 @@ struct llm_task {
 	                              //!< generation and waiting on a
 	                              //!< dead server are the same
 	                              //!< silence; this bounds both.
-	double           temperature; //!< Sampling temperature as-is;
-	                              //!< negative for the server's
-	                              //!< default.
 };
 
 /** @brief Creates a client and starts its worker thread.

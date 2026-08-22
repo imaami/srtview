@@ -299,9 +299,10 @@ static void
 test_round_trip (void)
 {
 	struct llm_task const ask = {
-		.system     = "be \"brief\"",
-		.prompt     = "say hi\n",
-		.max_tokens = 32,
+		.system      = "be \"brief\"",
+		.prompt      = "say hi\n",
+		.json_schema = "{\"type\":\"object\",\"required\":[\"answer\"]}",
+		.max_tokens  = 32,
 	};
 	char resp[1024];
 	struct fake f;
@@ -330,6 +331,13 @@ test_round_trip (void)
 	      strstr(reqs, "\"max_tokens\":32") &&
 	      strstr(reqs, "\"temperature\":0"),
 	      "options serialized; zero-init means greedy");
+	check(strstr(reqs, "\"response_format\":{"
+	                   "\"type\":\"json_schema\","
+	                   "\"json_schema\":{\"name\":\"srtview\","
+	                   "\"schema\":"
+	                   "{\"type\":\"object\","
+	                   "\"required\":[\"answer\"]}}}"),
+	      "JSON schema serialized as response format");
 	check(strstr(reqs, "{\"role\":\"system\","
 	                   "\"content\":\"be \\\"brief\\\"\"},"
 	                   "{\"role\":\"user\","
