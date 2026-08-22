@@ -10,11 +10,14 @@ On a pull request, a trusted maintainer can write:
 /gpt review
 ```
 
-or add a focus:
+or add a focus, on the same line:
 
 ```text
 /gpt review concurrency, ownership, UB, and error paths
 ```
+
+The lines below the command are the commenter's own and are not sent
+to the model.
 
 The workflow:
 

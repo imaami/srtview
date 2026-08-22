@@ -127,8 +127,11 @@ if [[ ! $comment_body =~ ^/gpt[[:space:]]+review([[:space:]]|$) ]]; then
 	exit 0
 fi
 
+# The focus is the rest of the command's line.  The lines below it
+# are the commenter's own -- a note to the thread, a signature --
+# and were being sent to the model as review focus.
 focus=$(printf '%s\n' "$comment_body" |
-	sed -E '1s@^/gpt[[:space:]]+review[[:space:]]*@@')
+	sed -n -E '1s@^/gpt[[:space:]]+review[[:space:]]*@@p' | tr -d '\r')
 
 react_eyes
 
