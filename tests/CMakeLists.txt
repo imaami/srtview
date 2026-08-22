@@ -52,6 +52,18 @@ target_compile_options(vault_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME vault_tests COMMAND vault_tests)
 
+# Evidence records, strict JSON and the semantic catalog are standard
+# C++ over std::filesystem; no Qt or model server.
+add_executable(semantic_tests
+	semantic_test.cpp
+	${CMAKE_SOURCE_DIR}/src/semantic.cpp
+	${CMAKE_SOURCE_DIR}/src/agenda.cpp
+)
+target_include_directories(semantic_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(semantic_tests PRIVATE -Wall -Wextra)
+
+add_test(NAME semantic_tests COMMAND semantic_tests)
+
 # The epoll dispatcher is plain C + Linux; no C++, no libcurl.
 add_executable(loop_tests
 	loop_test.c

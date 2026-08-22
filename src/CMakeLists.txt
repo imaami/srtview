@@ -17,6 +17,7 @@ add_executable(srtview
 	agenda.cpp
 	facts.cpp
 	search.cpp
+	semantic.cpp
 	mpvclient.cpp
 	mpvlink.cpp
 	srt.cpp
