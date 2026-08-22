@@ -104,6 +104,33 @@ struct task {
 	}
 };
 
+// Position by id for owners that only ever append.  Ids are hashes
+// already, so the table probes on their low bits and needs no hash
+// function of its own: linear probing, growth at half load, the
+// zero id -- which no live task carries -- marking an empty slot.
+// Every id-keyed vector in this program used to be searched end to
+// end per lookup; this is their one index.
+class index {
+public:
+	static constexpr std::size_t npos = std::size_t(-1);
+
+	std::size_t find(id key) const;
+	// Records key at value, replacing a previous value.
+	void add(id key, std::size_t value);
+	void clear();
+
+private:
+	struct slot {
+		id          key;
+		std::size_t value;
+	};
+
+	std::size_t home(id key) const;
+
+	std::vector<slot> m_slots;
+	std::size_t       m_used = 0;
+};
+
 class plan {
 public:
 	enum class state : std::uint8_t {
@@ -153,9 +180,11 @@ private:
 	bool lift(std::vector<double> &eff) const;
 	bool raise_deps(std::size_t at, std::vector<double> &eff) const;
 
-	// Session scale is dozens to a few hundred tasks: linear scans,
-	// no hashed containers.
+	// Tasks number in the thousands once every window, pair and
+	// question is one: entries append only and the index finds
+	// them; heat keys are a few dozen subtitles, scanned.
 	std::vector<entry>                 m_entries;
+	index                              m_index;
 	std::vector<std::pair<id, double>> m_heat;
 };
 

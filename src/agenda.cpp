@@ -1,6 +1,7 @@
 // agenda.cpp -- see agenda.hpp.  Scoring constants, the priority-
 // inheritance relaxation, and the pyramid builder live here.
 #include <algorithm>
+#include <cstring>
 #include <iterator>
 
 #include "agenda.hpp"
@@ -79,11 +80,64 @@ id id::from_hex (std::string_view s)
 	return out;
 }
 
+std::size_t index::home (id key) const
+{
+	std::uint64_t h;
+	std::memcpy(&h, key.b.data(), sizeof h);
+	return h & (m_slots.size() - 1);
+}
+
+std::size_t index::find (id key) const
+{
+	if (!key || m_slots.empty())
+		return npos;
+	for (std::size_t at = home(key);;
+	     at = (at + 1) & (m_slots.size() - 1)) {
+		if (m_slots[at].key == key)
+			return m_slots[at].value;
+		if (!m_slots[at].key)
+			return npos;
+	}
+}
+
+void index::add (id key, std::size_t value)
+{
+	if (!key)
+		return;
+	if ((m_used + 1) * 2 > m_slots.size()) {
+		std::vector<slot> const old = std::move(m_slots);
+		m_slots.assign(old.empty() ? 16 : old.size() * 2, {});
+		m_used = 0;
+		for (slot const &s : old)
+			if (s.key)
+				add(s.key, s.value);
+	}
+	for (std::size_t at = home(key);;
+	     at = (at + 1) & (m_slots.size() - 1)) {
+		if (m_slots[at].key == key) {
+			m_slots[at].value = value;
+			return;
+		}
+		if (!m_slots[at].key) {
+			m_slots[at] = {key, value};
+			++m_used;
+			return;
+		}
+	}
+}
+
+void index::clear ()
+{
+	m_slots.clear();
+	m_used = 0;
+}
+
 void plan::add (task t)
 {
 	if (index_of(t.id) != npos)
 		return;
 
+	m_index.add(t.id, m_entries.size());
 	m_entries.push_back({std::move(t), state::pending});
 }
 
@@ -91,6 +145,7 @@ void plan::done (id which)
 {
 	std::size_t const at = index_of(which);
 	if (at == npos) {
+		m_index.add(which, m_entries.size());
 		m_entries.push_back({task{.id = which}, state::done});
 		return;
 	}
@@ -102,6 +157,7 @@ void plan::fail (id which)
 {
 	std::size_t const at = index_of(which);
 	if (at == npos) {
+		m_index.add(which, m_entries.size());
 		m_entries.push_back({task{.id = which}, state::parked});
 		return;
 	}
@@ -168,6 +224,7 @@ void plan::reset ()
 	// tombstone would let a stale completion satisfy a generation
 	// it never saw, then keep the changed input from re-offering.
 	m_entries.clear();
+	m_index.clear();
 	m_heat.clear();
 }
 
@@ -194,11 +251,7 @@ std::size_t plan::backlog () const
 
 std::size_t plan::index_of (id which) const
 {
-	for (std::size_t i = 0; i < m_entries.size(); ++i)
-		if (m_entries[i].t.id == which)
-			return i;
-
-	return npos;
+	return m_index.find(which);
 }
 
 bool plan::ready (entry const &e) const

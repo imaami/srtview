@@ -66,6 +66,33 @@ static void test_id()
 	check(!agenda::id{}, "the zero id is falsy");
 }
 
+static void test_index()
+{
+	agenda::index ix;
+	check(ix.find(tid("a")) == agenda::index::npos,
+	      "an empty index finds nothing");
+	// Past several doublings, every key still lands: growth
+	// rehashes, probing skips over neighbours, and tags that
+	// share low bits collide on purpose.
+	for (unsigned i = 1; i <= 300; ++i)
+		ix.add(agenda::id{{std::uint8_t(i), std::uint8_t(i >> 8),
+		                   1, 0, 0, 0, 0, 0}}, i);
+	bool all = true;
+	for (unsigned i = 1; i <= 300; ++i)
+		all &= ix.find(agenda::id{{std::uint8_t(i),
+		                           std::uint8_t(i >> 8), 1, 0, 0,
+		                           0, 0, 0}}) == i;
+	check(all, "every key survives growth and probing");
+	ix.add(tid("a"), 7);
+	ix.add(tid("a"), 9);
+	check(ix.find(tid("a")) == 9, "adding a known key replaces its value");
+	ix.add(agenda::id{}, 3);
+	check(ix.find(agenda::id{}) == agenda::index::npos,
+	      "the zero id is no key");
+	ix.clear();
+	check(ix.find(tid("a")) == agenda::index::npos, "clear forgets");
+}
+
 static void test_pyramid_shapes()
 {
 	agenda::id const a = tid("a"), b = tid("b"), c = tid("c"),
@@ -308,6 +335,7 @@ static void test_reset()
 int main()
 {
 	test_id();
+	test_index();
 	test_pyramid_shapes();
 	test_gating();
 	test_states();

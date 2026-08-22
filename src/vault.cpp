@@ -57,10 +57,14 @@ store::store(std::string dir, hash8_fn h)
 
 std::size_t store::index_of(agenda::id id) const
 {
-	for (std::size_t i = 0; i < m_entries.size(); ++i)
-		if (m_entries[i].t.id == id)
-			return i;
-	return npos;
+	return m_index.find(id);
+}
+
+std::size_t store::enroll(entry e)
+{
+	m_index.add(e.t.id, m_entries.size());
+	m_entries.push_back(std::move(e));
+	return m_entries.size() - 1;
 }
 
 // Drops every memo: a changed witness or a reshaped task re-keys
@@ -81,8 +85,7 @@ void store::content(agenda::id leaf, agenda::id input)
 	if (at == npos) {
 		agenda::task t;
 		t.id = leaf;
-		m_entries.push_back({std::move(t), input,
-		                     {}, {}, {}, false});
+		enroll({std::move(t), input, {}, {}, {}, false});
 		return;
 	}
 	if (m_entries[at].input == input)
@@ -96,10 +99,8 @@ void store::content(agenda::id leaf, agenda::id input)
 std::size_t store::registered(agenda::task const &t)
 {
 	std::size_t const at = index_of(t.id);
-	if (at == npos) {
-		m_entries.push_back({t, {}, {}, {}, {}, false});
-		return m_entries.size() - 1;
-	}
+	if (at == npos)
+		return enroll({t, {}, {}, {}, {}, false});
 	entry &e = m_entries[at];
 	// Only the suffix inputs re-key: a reshaped dep set (a dive
 	// whose scan grew a video) recomputes, changed keys or notes

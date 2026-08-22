@@ -121,6 +121,7 @@ private:
 	static constexpr std::size_t npos = std::size_t(-1);
 
 	std::size_t index_of(agenda::id id) const;
+	std::size_t enroll(entry e);
 	std::size_t registered(agenda::task const &t);
 	void forget();
 	std::string resolve_at(std::size_t at);
@@ -133,9 +134,10 @@ private:
 	                                  agenda::kind k) const;
 	void journal(std::string const &line) const;
 
-	// Session scale is dozens to a few hundred tasks: linear
-	// scans, no hashed containers (the agenda's own convention).
+	// Entries append only; the index finds them (the agenda's own
+	// convention).
 	std::vector<entry>  m_entries;
+	agenda::index       m_index;
 	mutable shelf       m_shelf[agenda::kind_count];
 	std::string         m_dir;
 	hash8_fn            m_h;
