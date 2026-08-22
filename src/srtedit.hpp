@@ -15,7 +15,7 @@
 
 #include "concepts.hpp"
 #include "srt.hpp"
-#include "timefmt.hpp"
+#include "timefmtq.hpp"
 
 #include <QFont>
 #include <QKeyEvent>

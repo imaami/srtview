@@ -22,7 +22,6 @@ add_executable(srtview
 	srt.cpp
 	topics.cpp
 	vault.cpp
-	timefmt.cpp
 	discovery.cpp
 	palettefix.cpp
 	selftest.cpp

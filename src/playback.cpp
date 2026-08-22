@@ -3,7 +3,7 @@
 #include "grabber.hpp"
 #include "mpvlink.hpp"
 #include "srtedit.hpp"
-#include "timefmt.hpp"
+#include "timefmtq.hpp"
 
 
 #include <QStatusBar>

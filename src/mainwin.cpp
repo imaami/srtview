@@ -1,9 +1,7 @@
 #include "mainwin.hpp"
 
-#include "agenda.hpp"
-#include "palettefix.hpp"
-#include "srt.hpp"
-
+#include <QApplication>
+#include <QContextMenuEvent>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -11,8 +9,6 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QApplication>
-#include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMenuBar>
@@ -27,6 +23,11 @@
 #include <cstdio>
 #include <cstring>
 #include <utility>
+
+#include "agenda.hpp"
+#include "palettefix.hpp"
+#include "srt.hpp"
+#include "timefmtq.hpp"
 
 namespace {
 
