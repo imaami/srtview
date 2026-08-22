@@ -18,6 +18,13 @@ jobs:
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # A second /gpt review on the same PR supersedes the one running.
+    # Job-level on purpose: at workflow level every comment on the
+    # PR -- a bot's, a reply -- would enter the group and cancel a
+    # review under way before the job's if skipped it.
+    concurrency:
+      group: gpt-review-${{ github.event.issue.number }}
+      cancel-in-progress: true
     env:
       GH_TOKEN: ${{ github.token }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
