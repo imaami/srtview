@@ -205,22 +205,32 @@ void KnowledgePane::setRows(QVector<KnowledgeRow> rows)
 	QString keepGroup, keepTitle, keepName;
 	if (QTreeWidgetItem const *cur = m_tree.currentItem();
 	    cur && cur->parent()) {
-		keepGroup = cur->parent()->text(0);
+		QTreeWidgetItem const *top = cur;
+		while (top->parent())
+			top = top->parent();
+		keepGroup = top->text(0);
 		keepTitle = cur->text(0);
 		keepName = cur->data(0, kName).toString();
 	}
 	m_rows = std::move(rows);
 	m_tree.clear();
 	QTreeWidgetItem *byName = nullptr, *byTitle = nullptr;
+	QHash<QString, QTreeWidgetItem *> named; // group + '\n' + name
 	for (KnowledgeRow const &r : m_rows) {
+		QTreeWidgetItem *parent = groupItem(m_tree, r.group);
+		if (!r.under.isEmpty())
+			parent = named.value(r.group + QLatin1Char('\n')
+			                     + r.under, parent);
 		auto *it = new QTreeWidgetItem(
-			groupItem(m_tree, r.group),
-			{r.title, QString(), r.gloss});
+			parent, {r.title, QString(), r.gloss});
+		if (!r.name.isEmpty())
+			named.insert(r.group + QLatin1Char('\n') + r.name, it);
 		it->setData(0, kPattern, r.pattern);
 		it->setData(0, kPath, r.path);
 		it->setData(0, kVideo, r.video);
 		it->setData(0, kSrt, r.srt);
 		it->setData(0, kName, r.name);
+		it->setData(0, kLink, r.link);
 		if (!r.total.isEmpty()) {
 			it->setData(1, kBarDone,
 			            QVariant::fromValue(r.done));
@@ -299,6 +309,40 @@ void KnowledgePane::setGloss(QString const &text)
 	m_gloss.setPlainText(text);
 }
 
+bool KnowledgePane::jumpTo(QString const &group, QString const &name)
+{
+	auto const find = [&](auto const &self, QTreeWidgetItem *it)
+		-> QTreeWidgetItem * {
+		if (it->data(0, kName).toString() == name)
+			return it;
+		for (int i = 0; i < it->childCount(); ++i)
+			if (QTreeWidgetItem *hit = self(self, it->child(i)))
+				return hit;
+		return nullptr;
+	};
+	for (int g = 0; g < m_tree.topLevelItemCount(); ++g) {
+		QTreeWidgetItem *grp = m_tree.topLevelItem(g);
+		if (grp->text(0) != group)
+			continue;
+		QTreeWidgetItem *hit = find(find, grp);
+		if (!hit || hit == grp)
+			return false;
+		// The row asked for is shown whatever the filter hides:
+		// a cross-link followed on purpose outranks a pattern
+		// typed earlier, and the pattern applies again on its
+		// next edit.
+		hit->setHidden(false);
+		for (QTreeWidgetItem *up = hit->parent(); up; up = up->parent()) {
+			up->setHidden(false);
+			up->setExpanded(true);
+		}
+		m_tree.setCurrentItem(hit);
+		m_tree.scrollToItem(hit);
+		return true;
+	}
+	return false;
+}
+
 void KnowledgePane::summon()
 {
 	show();
@@ -330,19 +374,24 @@ void KnowledgePane::applyFilter()
 	QRegularExpression const re(m_filter.text(),
 		QRegularExpression::CaseInsensitiveOption);
 	bool const all = m_filter.text().isEmpty() || !re.isValid();
+	// A row shows when it matches or any row below it does; the
+	// rows below it show on their own merits.
+	auto const show = [&](auto const &self,
+	                      QTreeWidgetItem *it) -> bool {
+		bool hit = all
+			|| re.match(it->text(0)).hasMatch()
+			|| re.match(it->text(2)).hasMatch()
+			|| re.match(it->data(0, kPattern).toString()).hasMatch();
+		for (int i = 0; i < it->childCount(); ++i)
+			hit |= self(self, it->child(i));
+		it->setHidden(!hit);
+		return hit;
+	};
 	for (int g = 0; g < m_tree.topLevelItemCount(); ++g) {
 		QTreeWidgetItem *grp = m_tree.topLevelItem(g);
-		int visible = 0;
-		for (int i = 0; i < grp->childCount(); ++i) {
-			QTreeWidgetItem *it = grp->child(i);
-			bool const hit = all
-				|| re.match(it->text(0)).hasMatch()
-				|| re.match(it->text(2)).hasMatch()
-				|| re.match(it->data(0, kPattern)
-				              .toString()).hasMatch();
-			it->setHidden(!hit);
-			visible += hit;
-		}
+		bool visible = false;
+		for (int i = 0; i < grp->childCount(); ++i)
+			visible |= show(show, grp->child(i));
 		grp->setHidden(!visible);
 	}
 }

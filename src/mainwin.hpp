@@ -199,8 +199,10 @@ private:
 	bool mergeSpelling(QString const &owner, QString const &spell);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
+	void semanticSelected(QTreeWidgetItem const *item);
 	void semanticStep();
 	void feedLexicon();
+	void showEvidence(std::vector<semantic::citation> const &cites);
 	QString glossPath() const;
 	void loadGloss();
 	void showGloss(QTreeWidgetItem const *item);

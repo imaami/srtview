@@ -326,12 +326,16 @@ MainWin::MainWin()
 			it->data(0, KnowledgePane::kPattern).toString();
 		QString const video =
 			it->data(0, KnowledgePane::kVideo).toString();
+		QString const link =
+			it->data(0, KnowledgePane::kLink).toString();
 		if (!pat.isEmpty())
 			m_search.applyPattern(pat);
 		else if (!video.isEmpty())
 			openPath(video,
 			         it->data(0, KnowledgePane::kSrt)
 			           .toString());
+		else if (!link.isEmpty())
+			m_know.jumpTo(QStringLiteral("Knowledge"), link);
 	});
 	connect(&m_know.tree(), &QTreeWidget::currentItemChanged, this,
 	        [this](QTreeWidgetItem *cur, QTreeWidgetItem *) {
@@ -1289,7 +1293,7 @@ void MainWin::refreshKnowledge()
 						e.lines.front());
 				break;
 			}
-		directory.push_back({QStringLiteral("Topics"),
+		directory.push_back({QStringLiteral("Topics"), {}, {},
 		                     info.term.isEmpty() ? name
 		                                         : info.term,
 		                     QString::fromStdString(pat),
@@ -1311,6 +1315,113 @@ void MainWin::refreshKnowledge()
 			return c ? c < 0 : a.name < b.name;
 		});
 	rows += directory;
+	// Knowledge is the entity graph drawn as a tree: entities
+	// alphabetically, each opening on the relations asserted of it,
+	// each relation on its objects -- the assertions, identity the
+	// evidence-backed triple, never a generated regex.  An object
+	// that names an entity links to it, and activating the row jumps
+	// there: the cross-link of a mind map.  A definition glosses its
+	// entity, the objects gloss their relation, the statement its
+	// object.  Selecting any row shows the cues beneath it.
+	std::vector<semantic::record> const &known = m_semantic.knowledge();
+	auto const &ents = m_semantic.entities();
+	QVector<std::size_t> order;
+	for (std::size_t i = 0; i < ents.size(); ++i)
+		order.push_back(i);
+	std::ranges::sort(order, [&ents](std::size_t a, std::size_t b) {
+		return QString::compare(QString::fromStdString(ents[a].title),
+		                        QString::fromStdString(ents[b].title),
+		                        Qt::CaseInsensitive) < 0;
+	});
+	auto const entityName = [&ents](std::size_t i) {
+		return QStringLiteral("entity:")
+		     + QString::fromStdString(ents[i].id.hex());
+	};
+	// A row says what its level adds and nothing twice: an entity
+	// is glossed by its defining sentence (or its first), a relation
+	// with one object is one row -- the relation, then the object --
+	// and only a relation said of several objects opens on them,
+	// glossed by their list.  The sentence behind an object is the
+	// Glossary tab's when the row is selected.
+	auto const leafWords = [this](semantic::record const &r,
+	                              std::size_t at, bool linked) {
+		semantic::catalog::tie_count const ties = m_semantic.ties(at);
+		QString words = QString::fromLatin1(
+			semantic::name(r.what).data(),
+			qsizetype(semantic::name(r.what).size()))
+			.replace(QLatin1Char('_'), QLatin1Char(' '))
+			+ QStringLiteral(" · %1 evidence span(s)")
+			  .arg(r.evidence.size());
+		if (ties.contradicts)
+			words += QStringLiteral(" · contradicted by %1")
+			         .arg(ties.contradicts);
+		if (ties.related)
+			words += QStringLiteral(" · related to %1")
+			         .arg(ties.related);
+		if (linked)
+			words += QStringLiteral(" · names an entity");
+		return words;
+	};
+	for (std::size_t const i : order) {
+		semantic::catalog::entity const &e = ents[i];
+		std::size_t assertions = 0;
+		for (semantic::catalog::predicate const &p : e.predicates)
+			assertions += p.objects.size();
+		std::size_t const about = e.definition != semantic::catalog::npos
+			? e.definition
+			: e.predicates.front().objects.front().at;
+		rows.push_back({QStringLiteral("Knowledge"), {}, {},
+		                QString::fromStdString(e.title), {}, {}, {}, {},
+		                QStringLiteral("%1 assertion(s)").arg(assertions),
+		                QString::fromStdString(known[about].statement),
+		                entityName(i), {}, {}});
+		for (std::size_t pi = 0; pi < e.predicates.size(); ++pi) {
+			semantic::catalog::predicate const &p = e.predicates[pi];
+			auto const object = [&](semantic::catalog::object const &o) {
+				bool const linked = o.entity != semantic::catalog::npos
+				                 && o.entity != i;
+				return std::pair{QString::fromStdString(known[o.at].object)
+				                 + (linked ? QStringLiteral(" \u25b8")
+				                           : QString()),
+				                 linked ? entityName(o.entity)
+				                        : QString()};
+			};
+			if (p.objects.size() == 1) {
+				semantic::catalog::object const &o = p.objects.front();
+				auto const [text, link] = object(o);
+				rows.push_back({QStringLiteral("Knowledge"),
+				                entityName(i), link,
+				                QString::fromStdString(p.title), {},
+				                {}, {}, {},
+				                leafWords(known[o.at], o.at,
+				                          !link.isEmpty()),
+				                text,
+				                QString::fromStdString(known[o.at].id.hex()),
+				                {}, {}});
+				continue;
+			}
+			QString const pname = entityName(i)
+			                    + QStringLiteral("/%1").arg(pi);
+			QStringList objects;
+			for (semantic::catalog::object const &o : p.objects)
+				objects << object(o).first;
+			rows.push_back({QStringLiteral("Knowledge"), entityName(i),
+			                {}, QString::fromStdString(p.title), {},
+			                {}, {}, {}, {},
+			                objects.join(QStringLiteral(" · ")),
+			                pname, {}, {}});
+			for (semantic::catalog::object const &o : p.objects) {
+				auto const [text, link] = object(o);
+				rows.push_back({QStringLiteral("Knowledge"), pname, link,
+				                text, {}, {}, {}, {},
+				                leafWords(known[o.at], o.at,
+				                          !link.isEmpty()),
+				                QString::fromStdString(known[o.at].statement),
+				                QString::fromStdString(known[o.at].id.hex()),
+				                {}, {}});
+			}
+		}
+	}
 	// Only threads harvested into THIS corpus list: the shared
 	// cache directory holds every corpus's essays, and strangers
 	// stay invisible.  Distinct probes can converge on one regex:
@@ -1343,7 +1454,7 @@ void MainWin::refreshKnowledge()
 		QString title = qpat;
 		if (int const n = ++seen[qpat]; n > 1)
 			title += QStringLiteral(" (%1)").arg(n);
-		rows.push_back({QStringLiteral("Focuses"), title, qpat,
+		rows.push_back({QStringLiteral("Focuses"), {}, {}, title, qpat,
 		                path, {}, {}, {}, {}, path, {}, {}});
 	}
 	// The same basename twice in the playlist: the parent
@@ -1382,7 +1493,7 @@ void MainWin::refreshKnowledge()
 		if (ttotal)
 			words << QStringLiteral("glossary %1/%2")
 			         .arg(tdone).arg(ttotal);
-		rows.push_back({QStringLiteral("Videos"), title, {},
+		rows.push_back({QStringLiteral("Videos"), {}, {}, title, {},
 		                cached ? path : QString(),
 		                it.video, it.srt,
 		                words.join(QStringLiteral(" · ")),
@@ -2126,6 +2237,14 @@ void MainWin::showGloss(QTreeWidgetItem const *item)
 // display cap trims presentation only.
 void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 {
+	QTreeWidgetItem const *top = item;
+	while (top && top->parent())
+		top = top->parent();
+	if (item && top != item
+	    && top->text(0) == QStringLiteral("Knowledge")) {
+		semanticSelected(item);
+		return;
+	}
 	showGloss(item);
 	QVector<KnowledgeHit> hits;
 	QHash<QString, int> counts;
@@ -2161,6 +2280,48 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 	m_know.setMatches(std::move(hits), counts);
 }
 
+// A semantic row already owns exact evidence spans; selecting it is
+// a direct projection of those citations, not another regex search.
+void MainWin::semanticSelected(QTreeWidgetItem const *item)
+{
+	QString const name = item->data(0, KnowledgePane::kName).toString();
+	std::vector<semantic::record> const &known = m_semantic.knowledge();
+	std::vector<semantic::record const *> picked;
+	if (name.startsWith(QStringLiteral("entity:"))) {
+		// Every assertion under the row -- an entity's, or one
+		// relation's -- its statements one per line in the
+		// glossary, its cues all together.
+		QStringList const part = name.mid(7).split(QLatin1Char('/'));
+		agenda::id const eid = agenda::id::from_hex(
+			part.first().toStdString());
+		for (semantic::catalog::entity const &e : m_semantic.entities()) {
+			if (e.id != eid)
+				continue;
+			for (std::size_t pi = 0; pi < e.predicates.size(); ++pi) {
+				if (part.size() > 1 && part[1].toULongLong() != pi)
+					continue;
+				for (semantic::catalog::object const &o
+				     : e.predicates[pi].objects)
+					picked.push_back(&known[o.at]);
+			}
+		}
+	} else {
+		agenda::id const id = agenda::id::from_hex(name.toStdString());
+		for (semantic::record const &r : known)
+			if (r.id == id)
+				picked.push_back(&r);
+	}
+	QStringList statements;
+	std::vector<semantic::citation> cites;
+	for (semantic::record const *r : picked) {
+		statements << QString::fromStdString(r->statement);
+		for (semantic::evidence_span const &e : r->evidence)
+			cites.push_back({e.source, e.first, e.last});
+	}
+	m_know.setGloss(statements.join(QLatin1Char('\n')));
+	showEvidence(cites);
+}
+
 void MainWin::semanticStep()
 {
 	m_semantic.tick();
@@ -2187,6 +2348,29 @@ void MainWin::feedLexicon()
 		groups[g].push_back(it.key().toStdString());
 	}
 	m_semantic.lexicon(std::move(groups));
+}
+
+// Citations name a source id and cue span; the video path, the
+// timestamps and the quote are looked up in the corpus as loaded
+// now, never read back from a stored span -- a video moved since
+// the record was written would otherwise open nowhere.
+void MainWin::showEvidence(std::vector<semantic::citation> const &cites)
+{
+	QVector<KnowledgeHit> hits;
+	QHash<QString, int> counts;
+	for (semantic::citation const &c : cites) {
+		auto const e = m_semantic.evidence(c);
+		if (!e)
+			continue;
+		QString const video = QString::fromStdString(e->title);
+		QString srt;
+		if (qsizetype const at = playlistIndex(video); at >= 0)
+			srt = srtOf(m_playlist[at]);
+		hits.push_back({video, srt, QString::fromStdString(e->quote),
+		                e->start, int(e->first)});
+		++counts[video];
+	}
+	m_know.setMatches(std::move(hits), counts);
 }
 
 // A topic file: the corpus source of videos and composable regexes

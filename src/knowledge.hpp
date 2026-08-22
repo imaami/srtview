@@ -1,16 +1,14 @@
 // knowledge.hpp -- the knowledge pane: a dockable, keyboard-first
 // browser over what the background pipeline has already produced.
 //
-// Version zero deliberately reads only what exists today: the
-// corpus topics (hand-written, committed searches, harvested
-// hypotheses -- badged apart), the harvested focus threads, and the
-// per-video summaries, each previewing its cache artifact and
+// The pane reads the current corpus topics, harvested focus threads,
+// per-video summaries and evidence-backed semantic records, each
+// previewing its cache artifact or exact citations and
 // activating into the live machinery -- a topic or focus applies
 // its exact pattern to the search (which animates matches, the
 // corpus tally, and through it the heat that steers the pipeline),
-// a video row switches playback.  No knowledge store yet: rows are
-// handed in prebuilt by the owner, which is where corpus and cache
-// state already live.  The pane owns presentation only: grouping,
+// a video row switches playback.  Rows are handed in prebuilt: the
+// pane owns presentation only -- grouping,
 // regex filtering in the app's own pattern dialect, preview, and
 // the selection surface the owner wires activation onto (child
 // signals + lambdas, the app's mocless convention).
@@ -30,8 +28,15 @@
 // preview, empty when nothing is cached yet.  done/total drive the
 // progress column's bar, one pair entry per phase (empty = no
 // bar); tip is that cell's tooltip -- the words behind the bar.
+// under names the row this one nests below within its group (by
+// that row's name, which must have been handed in first); empty
+// rows sit directly under the group.  link names a row of the same
+// group that activating this one jumps to -- a graph's cross-link
+// drawn in a tree.
 struct KnowledgeRow {
 	QString    group;    // tree section: "Topics", "Focuses", ...
+	QString    under;    // parent row's name, or empty
+	QString    link;     // row to jump to on activation, or empty
 	QString    title;
 	QString    pattern;  // exact pattern text, never rewritten
 	QString    path;     // artifact file for the preview pane
@@ -64,8 +69,9 @@ public:
 	// Replaces the whole model; selection is kept when the same
 	// row still exists in the same group -- by name when it
 	// survived, else by title (an artifact-path name can vanish
-	// under a vault rename).  Cheap at session
-	// scale (dozens of rows), so refresh is rebuild -- except an
+	// under a vault rename).  Nested rows start collapsed: a group
+	// reads as its unique entries, each opening on its leaves.
+	// Cheap at session scale, so refresh is rebuild -- except an
 	// unchanged model, which is a no-op: the owner refreshes on a
 	// timer, and a gratuitous rebuild would re-emit the selection
 	// (rescanning transcripts).
@@ -94,6 +100,10 @@ public:
 	// Show, raise and put the keyboard in the filter box.
 	void summon();
 
+	// Makes the named row of the group current, its ancestors
+	// opened, and scrolls to it; false when no such row.
+	bool jumpTo(QString const &group, QString const &name);
+
 	// Base-domain chrome scaling, child by child: platform themes
 	// pin per-class fonts that outrank parent propagation, so a
 	// font handed to the dock alone moves nothing inside it.
@@ -108,6 +118,7 @@ public:
 		kName,
 		kBarDone,
 		kBarTotal,
+		kLink,
 	};
 
 private:
