@@ -45,16 +45,31 @@ gh_curl()
 		"$@"
 }
 
+# Every comment the job writes opens with a marker naming the PR and
+# the head it looked at, so tooling can find the job's own comments
+# among a PR's -- the failures too, which is how a reader learns why
+# nothing came.  GitHub refuses a comment past 65536 characters; a
+# review that long is cut and still posted.
 post_comment()
 {
 	local body=$1
 
+	if (( ${#body} > 65000 )); then
+		body="${body:0:65000}"$'\n\n[... truncated by gpt-review ...]'
+	fi
+	body="<!-- gpt-review: pr=$pr sha=${head_sha:-} -->"$'\n'"$body"
 	printf '%s' "$body" | jq -Rs '{body: .}' > "$tmp/comment.json"
 	gh_curl \
 		-X POST \
 		-H 'Content-Type: application/json' \
 		--data-binary "@$tmp/comment.json" \
 		"$api/repos/$repo/issues/$pr/comments" >/dev/null
+}
+
+fail()
+{
+	post_comment "**GPT review failed:** $1"
+	exit 1
 }
 
 react_eyes()
@@ -117,12 +132,11 @@ focus=$(printf '%s\n' "$comment_body" |
 
 react_eyes
 
-if [[ -z ${OPENAI_API_KEY:-} ]]; then
-	post_comment '**GPT review failed:** repository secret `OPENAI_API_KEY` is not configured.'
-	exit 1
-fi
+[[ -n ${OPENAI_API_KEY:-} ]] ||
+	fail 'repository secret `OPENAI_API_KEY` is not configured.'
 
-gh_curl "$api/repos/$repo/pulls/$pr" > "$tmp/pr.json"
+gh_curl "$api/repos/$repo/pulls/$pr" > "$tmp/pr.json" ||
+	fail "could not read the pull request through the GitHub API."
 
 title=$(jq -r '.title' "$tmp/pr.json")
 pr_body=$(jq -r '.body // ""' "$tmp/pr.json")
@@ -135,20 +149,28 @@ additions=$(jq -r '.additions' "$tmp/pr.json")
 deletions=$(jq -r '.deletions' "$tmp/pr.json")
 
 # Fetch the diff as data only. We deliberately do not check out or execute
-# the PR head because this job has access to OPENAI_API_KEY.
+# the PR head because this job has access to OPENAI_API_KEY.  GitHub
+# serves no diff past 300 files or 20000 lines (406); that is a
+# review that cannot happen, and the PR is told so.
 curl --silent --show-error --fail-with-body \
 	-H "Authorization: Bearer ${GH_TOKEN:?}" \
 	-H 'Accept: application/vnd.github.v3.diff' \
 	-H 'X-GitHub-Api-Version: 2022-11-28' \
 	"$api/repos/$repo/pulls/$pr" |
-	truncate_lines "$max_diff_bytes" > "$tmp/diff.txt"
+	truncate_lines "$max_diff_bytes" > "$tmp/diff.txt" ||
+	fail "could not fetch the diff; GitHub serves none for a PR past 300 files or 20000 diff lines."
 
 # Existing AI-review feedback is useful mainly as a deduplication/adversarial
 # signal. Restrict it to CodeRabbit/Copilot and cap both per-comment and total
-# size so a noisy review cannot consume the model context.
-gh_curl "$api/repos/$repo/issues/$pr/comments?per_page=100" > "$tmp/issues.json"
-gh_curl "$api/repos/$repo/pulls/$pr/comments?per_page=100" > "$tmp/review-comments.json"
-gh_curl "$api/repos/$repo/pulls/$pr/reviews?per_page=100" > "$tmp/reviews.json"
+# size so a noisy review cannot consume the model context.  The
+# feedback is context, not the subject: a page that will not come
+# leaves the review to go without it.
+for f in "issues.json:issues/$pr/comments" \
+         "review-comments.json:pulls/$pr/comments" \
+         "reviews.json:pulls/$pr/reviews"; do
+	gh_curl "$api/repos/$repo/${f#*:}?per_page=100" > "$tmp/${f%%:*}" ||
+		printf '[]' > "$tmp/${f%%:*}"
+done
 
 {
 	jq -r '
@@ -237,6 +259,8 @@ jq -n \
 		]
 	}' > "$tmp/request.json"
 
+# A transport failure leaves no HTTP code; curl's own exit is the
+# report then, and it reaches the PR like any other.
 http=$(curl --silent --show-error \
 	-o "$tmp/response.json" \
 	-w '%{http_code}' \
@@ -244,13 +268,12 @@ http=$(curl --silent --show-error \
 	-H "Authorization: Bearer $OPENAI_API_KEY" \
 	-H 'Content-Type: application/json' \
 	--data-binary "@$tmp/request.json" \
-	https://api.openai.com/v1/responses)
+	https://api.openai.com/v1/responses) || http="curl exit $?"
 
 if [[ ! $http =~ ^2 ]]; then
 	error=$(jq -r '.error.message // "unknown OpenAI API error"' \
 		"$tmp/response.json" 2>/dev/null || printf 'unparseable OpenAI API error')
-	post_comment "$(printf '**GPT review failed:** OpenAI API HTTP %s: %s' "$http" "$error")"
-	exit 1
+	fail "$(printf 'OpenAI API HTTP %s: %s' "$http" "$error")"
 fi
 
 review=$(jq -r '
@@ -271,13 +294,10 @@ reason=$(jq -r '.incomplete_details.reason // .status // "unknown"' \
 	"$tmp/response.json")
 
 if [[ -z $review || $review == null ]]; then
-	if [[ $status == completed ]]; then
-		post_comment '**GPT review failed:** OpenAI returned no text output.'
-	else
-		post_comment "$(printf '**GPT review failed:** OpenAI response %s (%s) before any text was written.' \
+	[[ $status == completed ]] ||
+		fail "$(printf 'OpenAI response %s (%s) before any text was written.' \
 			"$status" "$reason")"
-	fi
-	exit 1
+	fail 'OpenAI returned no text output.'
 fi
 
 if [[ $status != completed ]]; then
@@ -297,7 +317,6 @@ usage=$(jq -r '
 ' "$tmp/response.json")
 
 post_comment "$(cat <<EOF
-<!-- gpt-review: pr=$pr sha=$head_sha -->
 ## GPT review
 
 $model · $usage

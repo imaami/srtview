@@ -27,7 +27,7 @@ The workflow:
 5. makes one OpenAI Responses API request;
 6. posts the resulting review as a normal PR conversation comment,
    opening with `<!-- gpt-review: pr=N sha=H -->` so tooling can find
-   the job's comments.
+   the job's comments (failures carry the marker too).
 
 It never starts Codex, never runs a persistent agent, and never executes
 the PR branch.
