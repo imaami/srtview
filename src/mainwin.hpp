@@ -200,6 +200,7 @@ private:
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	void semanticSelected(QTreeWidgetItem const *item);
+	void chatAsked();
 	void semanticStep();
 	void feedLexicon();
 	void showEvidence(std::vector<semantic::citation> const &cites);
@@ -300,6 +301,7 @@ private:
 	qsizetype                       m_lexiconSize = -1; // spellings
 	                                             // the engine has
 	agenda::id                      m_rootId;    // pyramid root
+	std::vector<agenda::id>         m_chatPending;
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
 	QElapsedTimer                   m_exportTick;

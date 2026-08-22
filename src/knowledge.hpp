@@ -7,7 +7,8 @@
 // activating into the live machinery -- a topic or focus applies
 // its exact pattern to the search (which animates matches, the
 // corpus tally, and through it the heat that steers the pipeline),
-// a video row switches playback.  Rows are handed in prebuilt: the
+// a video row switches playback.  A chat tab submits grounded
+// questions through the owner.  Rows are handed in prebuilt: the
 // pane owns presentation only -- grouping,
 // regex filtering in the app's own pattern dialect, preview, and
 // the selection surface the owner wires activation onto (child
@@ -18,10 +19,12 @@
 #include <QDockWidget>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QString>
 #include <QTabWidget>
 #include <QTreeWidget>
 #include <QVector>
+#include <QWidget>
 
 // One presentable artifact.  pattern and video/srt are activation
 // payloads (either may be empty); path is the cache artifact to
@@ -96,6 +99,11 @@ public:
 	// Payload rides in item data (roles below).
 	QTreeWidget &tree() { return m_tree; }
 	QTreeWidget &hits() { return m_hits; }
+	QLineEdit &question() { return m_question; }
+	QPushButton &askButton() { return m_ask; }
+	void appendChat(QString const &speaker, QString const &text);
+	void clearChat();
+	void setChatBusy(bool busy);
 
 	// Show, raise and put the keyboard in the filter box.
 	void summon();
@@ -131,6 +139,10 @@ private:
 	QTreeWidget             m_hits;
 	QPlainTextEdit          m_preview;
 	QPlainTextEdit          m_gloss;
+	QWidget                  m_chat;
+	QPlainTextEdit          m_chatLog;
+	QLineEdit               m_question;
+	QPushButton              m_ask;
 	QVector<KnowledgeRow>   m_rows;
 };
 

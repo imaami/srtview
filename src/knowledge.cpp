@@ -2,6 +2,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontMetrics>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QPainter>
 #include <QRegularExpression>
@@ -158,6 +159,25 @@ KnowledgePane::KnowledgePane(QWidget *parent)
 	m_gloss.setReadOnly(true);
 	m_gloss.setPlaceholderText(
 		QStringLiteral("no glossary entry yet"));
+	auto *chatLay = new QVBoxLayout(&m_chat);
+	chatLay->setContentsMargins(4, 4, 4, 4);
+	chatLay->setSpacing(4);
+	m_chatLog.setReadOnly(true);
+	m_chatLog.setPlaceholderText(QStringLiteral(
+		"Ask what the videos say. Answers are limited to cited "
+		"transcript evidence."));
+	chatLay->addWidget(&m_chatLog, 1);
+	auto *askRow = new QWidget(&m_chat);
+	auto *askLay = new QHBoxLayout(askRow);
+	askLay->setContentsMargins(0, 0, 0, 0);
+	askLay->setSpacing(4);
+	m_question.setPlaceholderText(
+		QStringLiteral("ask the corpus…"));
+	m_ask.setText(QStringLiteral("Ask"));
+	askLay->addWidget(&m_question, 1);
+	askLay->addWidget(&m_ask);
+	chatLay->addWidget(askRow);
+	m_tabs.addTab(&m_chat, QStringLiteral("Chat"));
 	m_tabs.addTab(&m_hits, QStringLiteral("Matches"));
 	m_tabs.addTab(&m_preview, QStringLiteral("Summary"));
 	m_tabs.addTab(&m_gloss, QStringLiteral("Glossary"));
@@ -309,6 +329,29 @@ void KnowledgePane::setGloss(QString const &text)
 	m_gloss.setPlainText(text);
 }
 
+void KnowledgePane::appendChat(QString const &speaker,
+	                           QString const &text)
+{
+	if (!m_chatLog.toPlainText().isEmpty())
+		m_chatLog.appendPlainText(QString());
+	m_chatLog.appendPlainText(speaker + QStringLiteral(":\n") + text);
+	m_tabs.setCurrentWidget(&m_chat);
+}
+
+void KnowledgePane::clearChat()
+{
+	m_chatLog.clear();
+	m_question.clear();
+}
+
+void KnowledgePane::setChatBusy(bool busy)
+{
+	m_question.setEnabled(!busy);
+	m_ask.setEnabled(!busy);
+	m_ask.setText(busy ? QStringLiteral("Thinking…")
+	                   : QStringLiteral("Ask"));
+}
+
 bool KnowledgePane::jumpTo(QString const &group, QString const &name)
 {
 	auto const find = [&](auto const &self, QTreeWidgetItem *it)
@@ -364,6 +407,10 @@ void KnowledgePane::setUiFont(QFont const &f)
 	m_hits.setFont(f);
 	m_preview.setFont(f);
 	m_gloss.setFont(f);
+	m_chat.setFont(f);
+	m_chatLog.setFont(f);
+	m_question.setFont(f);
+	m_ask.setFont(f);
 }
 
 // Hide what the pattern misses, in the app's own dialect; an

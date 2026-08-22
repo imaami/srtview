@@ -360,6 +360,10 @@ MainWin::MainWin()
 		m_view.showCue(cue);
 		m_playback.seekCue(cue, false);
 	});
+	connect(&m_know.question(), &QLineEdit::returnPressed,
+	        this, [this] { chatAsked(); });
+	connect(&m_know.askButton(), &QPushButton::clicked,
+	        this, [this] { chatAsked(); });
 	auto *search = menuBar()->addMenu(QStringLiteral("&Search"));
 	search->addAction(QStringLiteral("&Find\u2026"), QKeySequence::Find,
 	                  this, [this] { m_search.showSearch(); });
@@ -395,13 +399,14 @@ MainWin::MainWin()
 	connect(&m_diveTick, &QTimer::timeout,
 	        this, [this] { diveStep(); });
 	// One pump, two cadences.  Every second the semantic engine
-	// notices published artifacts -- that is the path a reader
-	// waits on.  Every tenth tick the slow harvesters run: answered
-	// probes advance their focus chains (search, retry, write),
-	// completed focuses fold their REGEX hypotheses back into the
-	// corpus as generated topics, and the knowledge pane rebuilds
-	// once for everything that moved.  Work itself is wholly
-	// asynchronous in Facts; this only observes.
+	// notices published artifacts and a waiting answer lands --
+	// that is the interactive path.  Every tenth tick the slow
+	// harvesters run: answered probes advance their focus chains
+	// (search, retry, write), completed focuses fold their REGEX
+	// hypotheses back into the corpus as generated topics, and
+	// the knowledge pane rebuilds once for everything that moved.
+	// Work itself is wholly asynchronous in Facts; this only
+	// observes.
 	m_pump.setInterval(1000);
 	connect(&m_pump, &QTimer::timeout, this, [this] {
 		semanticStep();
@@ -636,6 +641,16 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_termTopics.clear();
 		m_termInfo.clear();
 		m_termIndex.clear();
+	}
+	// The engine resets under any rebuild, so a question in flight
+	// is orphaned and its spinner must stop; the conversation on
+	// screen and its context are the user's and survive an
+	// adoption -- only a new corpus starts a new conversation.
+	m_chatPending.clear();
+	m_know.setChatBusy(false);
+	if (fresh) {
+		m_know.clearChat();
+		m_semantic.new_conversation();
 	}
 	seedGenerated();
 	m_playlist.clear();
@@ -2322,9 +2337,51 @@ void MainWin::semanticSelected(QTreeWidgetItem const *item)
 	showEvidence(cites);
 }
 
+void MainWin::chatAsked()
+{
+	if (!m_chatPending.empty())
+		return;
+	QString const question = m_know.question().text().trimmed();
+	if (question.isEmpty())
+		return;
+	m_know.question().clear();
+	m_know.appendChat(QStringLiteral("You"), question);
+	agenda::id const id = m_semantic.ask(question.toStdString());
+	if (!id) {
+		m_know.appendChat(QStringLiteral("SRTView"),
+			QStringLiteral("No corpus is loaded."));
+		return;
+	}
+	m_chatPending.push_back(id);
+	m_know.setChatBusy(true);
+	semanticStep();
+}
+
 void MainWin::semanticStep()
 {
 	m_semantic.tick();
+	for (std::size_t i = 0; i < m_chatPending.size();) {
+		auto const answer = m_semantic.result(m_chatPending[i]);
+		if (!answer) {
+			++i;
+			continue;
+		}
+		QString text = QString::fromStdString(answer->text);
+		for (semantic::citation const &c : answer->citations)
+			text += QLatin1Char('\n')
+			      + QString::fromStdString(m_semantic.label(c));
+		showEvidence(answer->citations);
+		m_know.appendChat(QStringLiteral("SRTView"), text);
+		m_chatPending.erase(m_chatPending.begin()
+		                    + std::ptrdiff_t(i));
+		m_know.setChatBusy(false);
+		// The keyboard returns to the question only when an answer
+		// lands in a pane the user can see: a corpus rebuild also
+		// un-busies the chat, and must not steal focus from the
+		// search bar on a cross-video hop.
+		if (m_know.isVisible())
+			m_know.question().setFocus();
+	}
 }
 
 // The term directory as the engine's lexicon: every spelling the
