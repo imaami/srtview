@@ -209,9 +209,6 @@ constexpr std::string_view kPromptOf[] = {
 // the session; anything else the server says resets the count.
 constexpr int kRefusalCap = 3;
 
-constexpr char const *kKindName[] = {"leaf", "node", "dive",
-                                     "focus", "probe", "terms",
-                                     "merge", "spell"};
 
 // A reply's context travels as the task's user data, heap-owned:
 // exactly one callback per accepted task makes adoption in
@@ -238,7 +235,6 @@ constexpr std::string_view kHeadPfx[] = {
 	"", "", "PATTERN ", "REGEX: ", "", "", "", "",
 };
 static_assert(std::size(kHeadPfx) == std::size(kPromptOf)
-              && std::size(kHeadPfx) == std::size(kKindName)
               && std::size(kHeadPfx) == agenda::kind_count,
               "per-kind tables mirror agenda::kind");
 
@@ -375,7 +371,7 @@ void journal(std::string const &dir, std::string const &line)
 // the note (a dive's pattern), the supportive mark, and the inputs.
 std::string journal_line(agenda::task const &t)
 {
-	std::string line = kKindName[std::size_t(t.what)];
+	std::string line{agenda::name(t.what)};
 	if (t.what == agenda::kind::node) {
 		line += '.';
 		line += std::to_string(t.tier);
@@ -737,7 +733,7 @@ bool Facts::submit(agenda::task const &t)
 	m_llmTask = id;
 	if (debug())
 		std::fprintf(stderr, "srtview: facts: ask %s %s\n",
-		             kKindName[std::size_t(t.what)],
+		             agenda::name(t.what).data(),
 		             t.id.hex().c_str());
 	return true;
 }

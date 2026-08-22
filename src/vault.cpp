@@ -14,19 +14,15 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// Kind names salt the suffix; subdirs mirror the facts layout.
-constexpr std::string_view kKind[]{
-	"leaf", "node", "dive", "focus", "probe", "terms", "merge",
-	"spell"
-};
+// Subdirs per kind, mirroring the facts layout; the kind's name,
+// which salts the suffix, is agenda's.
 constexpr std::string_view kSub[]{
 	"", "", "dives/", "focus/", "probe/", "terms/", "merge/",
 	"spell/"
 };
 
-static_assert(std::size(kKind) == std::size(kSub)
-              && std::size(kKind) == agenda::kind_count,
-              "the tables mirror agenda::kind");
+static_assert(std::size(kSub) == agenda::kind_count,
+              "kSub mirrors agenda::kind");
 
 // Content-keyed kinds: the plan id is already a hash of the exact
 // input, so the name stays single-part and resolution is bare
@@ -191,7 +187,7 @@ agenda::id store::chain_of(std::size_t at)
 	if (what == agenda::kind::leaf) {
 		if (!m_entries[at].input)
 			return {};
-		std::string acc{kKind[0]};
+		std::string acc{agenda::name(agenda::kind::leaf)};
 		append(acc, m_entries[at].input);
 		return m_h(acc);
 	}
@@ -201,7 +197,7 @@ agenda::id store::chain_of(std::size_t at)
 		// Pairing records arrival order; the pair is the
 		// identity, so the suffix sorts like the plan id does.
 		std::ranges::sort(deps);
-	std::string acc{kKind[std::size_t(what)]};
+	std::string acc{agenda::name(what)};
 	append(acc, m_entries[at].t.id);
 	for (agenda::id const d : deps) {
 		std::size_t const i = index_of(d);

@@ -34,6 +34,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -60,6 +61,20 @@ enum class kind : std::uint8_t {
 // instead of corrupting whatever sat past the end.
 inline constexpr std::size_t kind_count =
 	std::size_t(kind::spell) + 1;
+
+// The kind's name, as journals, debug lines and cache recipes spell
+// it: one table beside the enum instead of one per module.
+inline constexpr std::string_view kind_names[] = {
+	"leaf", "node", "dive", "focus", "probe", "terms", "merge",
+	"spell"
+};
+static_assert(std::size(kind_names) == kind_count,
+              "kind_names mirrors agenda::kind");
+
+constexpr std::string_view name(kind k)
+{
+	return kind_names[std::size_t(k)];
+}
 
 // Task identity and heat key: the leading 8 bytes of a BLAKE2b-256,
 // kept binary in memory -- hex materializes only at the filesystem
