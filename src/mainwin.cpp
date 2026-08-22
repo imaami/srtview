@@ -149,30 +149,6 @@ constexpr std::size_t kProbeSample = std::size_t{16} * 1024;
 // only; scans and counts always cover everything.
 constexpr int kMatchCap = 500;
 
-// One terms window's worth of numbered transcript, in bytes: cue
-// boundaries always, roughly a quarter of the llm clip so prompt
-// and reply breathe.
-constexpr qsizetype kTermsWindow = qsizetype{10} * 1024;
-
-// Terms-window identity covers the subtitle's discovery id, the
-// cue range and the window text itself -- content-honest, so a
-// retranscribed subtitle plans fresh windows instead of silently
-// reusing stale replies.
-agenda::id termsId(QString const &srtId, int first, int last,
-                   QByteArray const &text)
-{
-	QCryptographicHash h(QCryptographicHash::Blake2b_256);
-	h.addData(QByteArrayView("terms\n"));
-	h.addData(srtId.toUtf8());
-	h.addData(QByteArrayView("\n"));
-	h.addData(QByteArray::number(first));
-	h.addData(QByteArrayView("-"));
-	h.addData(QByteArray::number(last));
-	h.addData(QByteArrayView("\n"));
-	h.addData(text);
-	return takeId(h);
-}
-
 // The head of an excerpt block, cut at a line boundary; excerpt
 // lines are newline-terminated, so a no-fit only happens when the
 // first line alone overflows the slice.
@@ -238,6 +214,7 @@ MainWin::MainWin()
 	, m_know(this)
 	, m_link(&m_playback)
 	, m_facts(hash8)
+	, m_semantic(m_facts, hash8)
 	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
 	             this)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
@@ -413,21 +390,29 @@ MainWin::MainWin()
 	m_diveTick.setInterval(1);
 	connect(&m_diveTick, &QTimer::timeout,
 	        this, [this] { diveStep(); });
-	// The probe and harvest pumps share a slow tick: answered
+	// One pump, two cadences.  Every second the semantic engine
+	// notices published artifacts -- that is the path a reader
+	// waits on.  Every tenth tick the slow harvesters run: answered
 	// probes advance their focus chains (search, retry, write),
-	// and completed focuses fold their REGEX hypotheses back into
-	// the corpus as generated topics.
-	m_focusTick.setInterval(10000);
-	connect(&m_focusTick, &QTimer::timeout, this, [this] {
+	// completed focuses fold their REGEX hypotheses back into the
+	// corpus as generated topics, and the knowledge pane rebuilds
+	// once for everything that moved.  Work itself is wholly
+	// asynchronous in Facts; this only observes.
+	m_pump.setInterval(1000);
+	connect(&m_pump, &QTimer::timeout, this, [this] {
+		semanticStep();
+		if (++m_pumped % 10)
+			return;
 		pumpProbes();
 		harvestTerms();
+		feedLexicon();
 		harvestSpell();
 		stageMerge();
 		harvestMerge();
 		harvestFocus();
 		refreshKnowledge();
 	});
-	m_focusTick.start();
+	m_pump.start();
 
 	repairMenuPalette(menuBar());
 }
@@ -667,14 +652,44 @@ void MainWin::rebuildCorpus(bool fresh)
 	// pyramid over them in playlist order.  The transcript cache is
 	// shared with the tally and the exporter: nothing parses twice.
 	std::vector<agenda::id> leaves;
+	std::vector<engine::SemanticEngine<Facts>::source> sources;
+	QCryptographicHash semanticCorpus(QCryptographicHash::Blake2b_256);
+	semanticCorpus.addData(QByteArrayView("semantic-corpus-v1"));
+	std::set<agenda::id> semanticSeen;
 	for (PlayItem const &it : m_playlist) {
-		agenda::id const key = offerFacts(srtOf(it));
+		QString const srt = srtOf(it);
+		agenda::id const key = offerFacts(srt);
 		if (key && std::ranges::find(leaves, key) == leaves.end())
 			leaves.push_back(key);
+		if (!key || !semanticSeen.insert(key).second)
+			continue;
+		exporter::transcript const &tx =
+			exporter::load(m_transcripts, srt);
+		engine::SemanticEngine<Facts>::source source;
+		source.id = key.hex();
+		source.title = it.video.toUtf8().toStdString();
+		// One line per cue, as exporter::load() builds them.
+		std::size_t const n = tx.cues.size();
+		source.cues.reserve(n);
+		semanticCorpus.addData(QByteArrayView(
+			reinterpret_cast<char const *>(key.b.data()),
+			qsizetype(key.b.size())));
+		for (std::size_t i = 0; i < n; ++i) {
+			QByteArray const line = tx.lines[qsizetype(i)].toUtf8();
+			source.cues.push_back({std::uint32_t(i),
+			                       tx.cues[i].start, tx.cues[i].end,
+			                       line.toStdString()});
+			semanticCorpus.addData(line);
+			semanticCorpus.addData(QByteArrayView("\0", 1));
+		}
+		sources.push_back(std::move(source));
 	}
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
+	m_semantic.reset(takeId(semanticCorpus).hex(),
+	                 std::move(sources));
+	m_lexiconSize = -1;
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
 	// Terms before focus, here and on the tick: whatever terms
@@ -1384,63 +1399,39 @@ void MainWin::refreshKnowledge()
 // so cached replies stay mappable to their cue ranges.
 void MainWin::queueTerms()
 {
-	// Staged ids as a set, built once: a per-flush linear scan of
+	// Staged ids as a set, built once: a per-window linear scan of
 	// m_termsWork would go quadratic as the corpus grows.
 	std::set<agenda::id> staged;
 	for (TermsWork const &w : m_termsWork)
 		staged.insert(w.id);
-	for (PlayItem const &it : m_playlist) {
-		QString const srt = srtOf(it);
-		if (srt.isEmpty())
+	// The engine's windows, by the subtitle identity they were cut
+	// from: one cut of the corpus serves extraction and terms, and
+	// the model sees the identical text for both.
+	QHash<QString, qsizetype> bySrt;
+	for (qsizetype i = 0; i < m_playlist.size(); ++i)
+		if (QString const srt = srtOf(m_playlist[i]); !srt.isEmpty())
+			bySrt.insert(QString::fromStdString(
+				m_disc.id_for_video(srt.toStdString())), i);
+	for (std::size_t at = 0; at < m_semantic.windows(); ++at) {
+		semantic::window const &w = m_semantic.window(at);
+		agenda::id const id = m_semantic.key("terms", w);
+		qsizetype const i = bySrt.value(QString::fromUtf8(
+			w.source.data(), qsizetype(w.source.size())), -1);
+		if (i < 0 || !staged.insert(id).second)
 			continue;
-		QString const sid = QString::fromStdString(
-			m_disc.id_for_video(srt.toStdString()));
-		if (sid.isEmpty())
-			continue;
-		exporter::transcript const &tx =
-			exporter::load(m_transcripts, srt);
-		dbgHop(QStringLiteral("terms: window %1 sid=%2 lines=%3")
-		       .arg(srt, sid).arg(tx.lines.size()));
-		QByteArray text;
-		int first = 0;
-		auto const flush = [&](int last) {
-			if (text.isEmpty())
-				return;
-			agenda::id const id = termsId(sid, first, last,
-			                              text);
-			if (staged.insert(id).second) {
-				agenda::task t;
-				t.id = id;
-				t.keys = {agenda::id::from_hex(
-					sid.toStdString())};
-				t.note = QFileInfo(it.video).fileName()
-				         	.toStdString()
-				       + " #" + std::to_string(first)
-				       + "-" + std::to_string(last);
-				t.what = agenda::kind::terms;
-				t.exported = false;
-				m_facts.offer(std::move(t),
-				              text.toStdString());
-				m_termsWork.push_back({id, it.video, srt,
-				                       first, last});
-			}
-			text.clear();
-		};
-		for (qsizetype i = 0; i < tx.lines.size(); ++i) {
-			if (text.isEmpty())
-				first = int(i);
-			text += '#';
-			text += QByteArray::number(i);
-			text += " [";
-			text += fmtTime(tx.cues[std::size_t(i)].start,
-			                true).toUtf8();
-			text += "] ";
-			text += tx.lines[i].toUtf8();
-			text += '\n';
-			if (text.size() >= kTermsWindow)
-				flush(int(i));
-		}
-		flush(int(tx.lines.size()) - 1);
+		PlayItem const &it = m_playlist[i];
+		agenda::task t;
+		t.id = id;
+		t.keys = {agenda::id::from_hex(w.source)};
+		t.note = QFileInfo(it.video).fileName().toStdString()
+		       + " #" + std::to_string(w.cues.front().number)
+		       + "-" + std::to_string(w.cues.back().number);
+		t.what = agenda::kind::terms;
+		t.exported = false;
+		m_facts.offer(std::move(t), engine::window_body(w));
+		m_termsWork.push_back({id, it.video, srtOf(it),
+		                       int(w.cues.front().number),
+		                       int(w.cues.back().number)});
 	}
 }
 
@@ -2168,6 +2159,34 @@ void MainWin::knowledgeSelected(QTreeWidgetItem const *item)
 		}
 	}
 	m_know.setMatches(std::move(hits), counts);
+}
+
+void MainWin::semanticStep()
+{
+	m_semantic.tick();
+}
+
+// The term directory as the engine's lexicon: every spelling the
+// terms pass proposed and the harvest saw on a cited line, grouped
+// by the term topic that owns it.  Pushed whenever the index has
+// grown; the engine puts the entity names one group holds to the
+// judge, which is how GIDRA meets Ghidra.
+void MainWin::feedLexicon()
+{
+	if (m_termIndex.size() == m_lexiconSize)
+		return;
+	m_lexiconSize = m_termIndex.size();
+	QHash<QString, std::size_t> groupOf;
+	std::vector<std::vector<std::string>> groups;
+	for (auto it = m_termIndex.cbegin(); it != m_termIndex.cend(); ++it) {
+		std::size_t const g = groupOf.value(it.value(), groups.size());
+		if (g == groups.size()) {
+			groupOf.insert(it.value(), g);
+			groups.emplace_back();
+		}
+		groups[g].push_back(it.key().toStdString());
+	}
+	m_semantic.lexicon(std::move(groups));
 }
 
 // A topic file: the corpus source of videos and composable regexes

@@ -16,6 +16,7 @@
 #include "prefs.hpp"
 #include "search.hpp"
 #include "searchbar.hpp"
+#include "semantic_engine.hpp"
 #include "srtedit.hpp"
 #include "topics.hpp"
 #include "trail.hpp"
@@ -198,6 +199,8 @@ private:
 	bool mergeSpelling(QString const &owner, QString const &spell);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
+	void semanticStep();
+	void feedLexicon();
 	QString glossPath() const;
 	void loadGloss();
 	void showGloss(QTreeWidgetItem const *item);
@@ -244,6 +247,7 @@ private:
 	MpvLink<PlaybackCtl>            m_link;
 	Grabber                         m_grab;
 	Facts                           m_facts;
+	engine::SemanticEngine<Facts>   m_semantic;
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
@@ -252,9 +256,10 @@ private:
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
 	QTimer                          m_diveTick;  // topic scan pump
-	QTimer                          m_focusTick; // harvest pump
+	QTimer                          m_pump;      // harvest pump
 	std::vector<DiveScan>           m_diveScans; // staged scans
 	std::size_t                     m_diveAt = 0;// scan cursor
+	unsigned                        m_pumped = 0;// pump ticks
 	std::vector<FinishedDive>       m_dives;     // for pairing
 	std::set<std::string>           m_diveRetired; // superseded
 	                                             // mid-session
@@ -290,6 +295,8 @@ private:
 	std::set<std::string>           m_termTopics;// index-only names
 	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
 	QHash<QString, QString>         m_termIndex; // folded term -> name
+	qsizetype                       m_lexiconSize = -1; // spellings
+	                                             // the engine has
 	agenda::id                      m_rootId;    // pyramid root
 	QList<int>                      m_tally;     // hits per video
 	QString                         m_tallyKey;  // pattern it is for
