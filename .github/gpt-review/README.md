@@ -107,11 +107,16 @@ The default caps are:
 ```text
 GPT_REVIEW_MAX_DIFF_BYTES=600000
 GPT_REVIEW_MAX_BOT_BYTES=120000
+GPT_REVIEW_MAX_OUTPUT_TOKENS=64000
 ```
 
 They can be set in the workflow environment if a future PR needs
 different limits. Truncation happens on line boundaries, and each
-existing-review surface is read one page (100 entries) deep.
+existing-review surface is read one page (100 entries) deep. The output
+cap counts the model's reasoning tokens as well as the review text, so
+it is sized for `xhigh` reasoning, not for the few thousand tokens the
+review itself takes; a response the cap cuts short is posted with a
+note, or reported when it cut before any text.
 
 The first version posts one top-level review comment rather than inline
 threads. That keeps the machinery deterministic and avoids trusting an

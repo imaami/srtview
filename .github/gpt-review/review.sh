@@ -8,6 +8,12 @@ readonly event="${GITHUB_EVENT_PATH:?GITHUB_EVENT_PATH is unset}"
 readonly prompt_file=".github/gpt-review/prompt.md"
 readonly max_diff_bytes="${GPT_REVIEW_MAX_DIFF_BYTES:-600000}"
 readonly max_bot_bytes="${GPT_REVIEW_MAX_BOT_BYTES:-120000}"
+# The Responses API counts reasoning tokens against this cap along
+# with the visible ones, and a reasoning model at xhigh spends tens
+# of thousands before it writes a word: a cap sized for the review
+# text alone ends the call before the review, as "incomplete" with
+# no message at all.
+readonly max_output_tokens="${GPT_REVIEW_MAX_OUTPUT_TOKENS:-64000}"
 
 umask 077
 tmp=$(mktemp -d)
@@ -196,6 +202,7 @@ metadata=$(jq -n \
 jq -n \
 	--arg model "${OPENAI_MODEL:-gpt-5.6-sol}" \
 	--arg effort "${OPENAI_REASONING_EFFORT:-xhigh}" \
+	--argjson max_out "$max_output_tokens" \
 	--rawfile instructions "$prompt_file" \
 	--arg metadata "$metadata" \
 	--arg pr_body "$pr_body" \
@@ -207,7 +214,7 @@ jq -n \
 		model: $model,
 		store: false,
 		reasoning: {effort: $effort},
-		max_output_tokens: 8000,
+		max_output_tokens: $max_out,
 		input: [
 			{
 				role: "developer",
@@ -256,9 +263,26 @@ review=$(jq -r '
 	] | join("\n")
 ' "$tmp/response.json")
 
+# A response the cap or the model cut short says so in its status;
+# one with text is still posted, marked, and one without is a
+# failure with its reason, not "no text output".
+status=$(jq -r '.status // "completed"' "$tmp/response.json")
+reason=$(jq -r '.incomplete_details.reason // .status // "unknown"' \
+	"$tmp/response.json")
+
 if [[ -z $review || $review == null ]]; then
-	post_comment '**GPT review failed:** OpenAI returned no text output.'
+	if [[ $status == completed ]]; then
+		post_comment '**GPT review failed:** OpenAI returned no text output.'
+	else
+		post_comment "$(printf '**GPT review failed:** OpenAI response %s (%s) before any text was written.' \
+			"$status" "$reason")"
+	fi
 	exit 1
+fi
+
+if [[ $status != completed ]]; then
+	review+=$(printf '\n\n*Review cut short: response %s (%s).*' \
+		"$status" "$reason")
 fi
 
 model=$(jq -r '.model // empty' "$tmp/response.json")
