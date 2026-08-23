@@ -47,10 +47,13 @@ jobs:
     steps:
       # issue_comment runs at the default branch. Keep it that way: the
       # workflow has a secret and must never execute code from the PR.
+      # Full history on purpose: the reviewer's read-only git tool
+      # walks log and blame, and a shallow clone would show it a
+      # repository with amnesia.
       - name: Check out trusted reviewer
         uses: actions/checkout@v6
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Review PR

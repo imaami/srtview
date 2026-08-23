@@ -15,6 +15,11 @@ readonly max_bot_bytes="${GPT_REVIEW_MAX_BOT_BYTES:-120000}"
 # text alone ends the call before the review, as "incomplete" with
 # no message at all.
 readonly max_output_tokens="${GPT_REVIEW_MAX_OUTPUT_TOKENS:-64000}"
+# The reviewer reads the repository itself, through one read-only
+# git tool; each tool reply and the number of tool rounds are
+# bounded so a curious model cannot flood its own context.
+readonly max_tool_bytes="${GPT_REVIEW_MAX_TOOL_BYTES:-50000}"
+readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
 
 umask 077
 tmp=$(mktemp -d)
@@ -193,8 +198,19 @@ changed=$(jq -r '.changed_files' "$tmp/pr.json")
 additions=$(jq -r '.additions' "$tmp/pr.json")
 deletions=$(jq -r '.deletions' "$tmp/pr.json")
 
-# Fetch the diff as data only. We deliberately do not check out or execute
-# the PR head because this job has access to OPENAI_API_KEY.  GitHub
+# The PR head and base as refs in the trusted clone: git OBJECTS
+# only, data the reviewer's read-only tool can browse.  Nothing of
+# the PR is ever checked out, built, sourced or executed -- this
+# job holds OPENAI_API_KEY -- and the working tree stays the
+# default branch's.
+auth=$(printf 'x-access-token:%s' "${GH_TOKEN:?}" | base64 -w0)
+git -c "http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader=AUTHORIZATION: basic $auth" \
+	fetch --quiet --no-tags "${GITHUB_SERVER_URL:-https://github.com}/$repo" \
+	"pull/$pr/head:refs/gpt-review/head" \
+	"+refs/heads/$base_ref:refs/gpt-review/base" ||
+	fail "could not fetch the PR head and base as git refs."
+
+# Fetch the diff as data only.  GitHub
 # serves no diff past 300 files or 20000 lines (406); that is a
 # review that cannot happen, and the PR is told so.
 curl --silent --show-error --fail-with-body \
@@ -267,10 +283,36 @@ metadata=$(jq -n \
 	  base:$base, head:$head, head_sha:$sha, changed_files:$changed,
 	  additions:$additions, deletions:$deletions}')
 
+# The reviewer's one tool: git, read-only, over the trusted clone
+# and the fetched refs.  The subcommand whitelist keeps it off the
+# network and the argument denylist off the flags that execute a
+# command or write through a path (-O runs a pager, --output writes
+# a file); everything else -- log, show, diff, grep, blame -- is
+# object reads.  A refused call returns its reason as tool output:
+# the model corrects course, the job does not care.
+run_git()
+{
+	local sub=${1:-}
+	case $sub in
+	log|show|diff|grep|blame|ls-tree|ls-files|rev-list|rev-parse|shortlog|cat-file|describe) ;;
+	*)
+		printf 'gpt-review tool: git %q is not allowed; use: log show diff grep blame ls-tree ls-files rev-list rev-parse shortlog cat-file describe\n' "$sub"
+		return 0
+		;;
+	esac
+	local a
+	for a in "$@"; do
+		case $a in
+		-O*|--open-files-in-pager*|--output*|--ext-diff|--textconv)
+			printf 'gpt-review tool: argument %q is not allowed\n' "$a"
+			return 0
+			;;
+		esac
+	done
+	timeout 30 git --no-pager "$@" 2>&1 | head -c "$max_tool_bytes" || :
+}
+
 jq -n \
-	--arg model "${OPENAI_MODEL:-gpt-5.6-sol}" \
-	--arg effort "${OPENAI_REASONING_EFFORT:-xhigh}" \
-	--argjson max_out "$max_output_tokens" \
 	--rawfile instructions "$prompt_file" \
 	--arg metadata "$metadata" \
 	--arg pr_body "$pr_body" \
@@ -278,51 +320,114 @@ jq -n \
 	--rawfile policy "$tmp/policy.txt" \
 	--rawfile bots "$tmp/bots.txt" \
 	--rawfile diff "$tmp/diff.txt" \
-	'{
-		model: $model,
-		store: false,
-		reasoning: {effort: $effort},
-		max_output_tokens: $max_out,
-		input: [
-			{
-				role: "developer",
-				content: [{type:"input_text", text:$instructions}]
-			},
-			{
-				role: "user",
-				content: [{
-					type:"input_text",
-					text: (
-						"<PR_METADATA>\n" + $metadata + "\n</PR_METADATA>\n\n" +
-						"<PR_DESCRIPTION>\n" + $pr_body + "\n</PR_DESCRIPTION>\n\n" +
-						"<OPTIONAL_REVIEW_FOCUS>\n" + $focus + "\n</OPTIONAL_REVIEW_FOCUS>\n\n" +
-						"<REPOSITORY_POLICY>\n" + $policy + "\n</REPOSITORY_POLICY>\n\n" +
-						"<EXISTING_AI_REVIEWS>\n" + $bots + "\n</EXISTING_AI_REVIEWS>\n\n" +
-						"<PR_DIFF>\n" + $diff + "\n</PR_DIFF>"
-					)
-				}]
-			}
-		]
-	}' > "$tmp/request.json"
+	'[
+		{
+			role: "developer",
+			content: [{type:"input_text", text:$instructions}]
+		},
+		{
+			role: "user",
+			content: [{
+				type:"input_text",
+				text: (
+					"<PR_METADATA>\n" + $metadata + "\n</PR_METADATA>\n\n" +
+					"<PR_DESCRIPTION>\n" + $pr_body + "\n</PR_DESCRIPTION>\n\n" +
+					"<OPTIONAL_REVIEW_FOCUS>\n" + $focus + "\n</OPTIONAL_REVIEW_FOCUS>\n\n" +
+					"<REPOSITORY_POLICY>\n" + $policy + "\n</REPOSITORY_POLICY>\n\n" +
+					"<EXISTING_AI_REVIEWS>\n" + $bots + "\n</EXISTING_AI_REVIEWS>\n\n" +
+					"<PR_DIFF>\n" + $diff + "\n</PR_DIFF>"
+				)
+			}]
+		}
+	]' > "$tmp/input.json"
 
-# A transport failure leaves no HTTP code; curl's own exit is the
-# report then, and it reaches the PR like any other.
-http=$(curl --silent --show-error \
-	-o "$tmp/response.json" \
-	-w '%{http_code}' \
-	-X POST \
-	-H "Authorization: Bearer $OPENAI_API_KEY" \
-	-H 'Content-Type: application/json' \
-	--data-binary "@$tmp/request.json" \
-	"$openai/v1/responses") || http="curl exit $?"
+# The tool loop, stateless on purpose (store: false): every round
+# resends the whole transcript, reasoning items riding along
+# encrypted, and each function call runs here and returns as a
+# function_call_output item.  When the round budget is out the
+# model is told to write with what it has.
+tool_calls=0
+input_total=0
+output_total=0
+while :; do
+	choice=auto
+	if (( tool_calls >= max_tool_calls )); then
+		choice=none
+		jq '. + [{role:"user", content:[{type:"input_text",
+			text:"Tool budget spent. Write the review from what you have seen."}]}]' \
+			"$tmp/input.json" > "$tmp/input.next" &&
+			mv "$tmp/input.next" "$tmp/input.json"
+	fi
+	jq -n \
+		--arg model "${OPENAI_MODEL:-gpt-5.6-sol}" \
+		--arg effort "${OPENAI_REASONING_EFFORT:-xhigh}" \
+		--argjson max_out "$max_output_tokens" \
+		--arg choice "$choice" \
+		--slurpfile input "$tmp/input.json" \
+		'{
+			model: $model,
+			store: false,
+			include: ["reasoning.encrypted_content"],
+			reasoning: {effort: $effort},
+			max_output_tokens: $max_out,
+			tool_choice: $choice,
+			tools: [{
+				type: "function",
+				name: "git",
+				description: "Run one read-only git command in the repository clone. args is argv after git, e.g. [\"log\",\"--oneline\",\"-20\",\"refs/gpt-review/head\"]. Allowed subcommands: log show diff grep blame ls-tree ls-files rev-list rev-parse shortlog cat-file describe.",
+				strict: true,
+				parameters: {
+					type: "object",
+					properties: {
+						args: {type: "array", items: {type: "string"}}
+					},
+					required: ["args"],
+					additionalProperties: false
+				}
+			}],
+			input: $input[0]
+		}' > "$tmp/request.json"
 
-if [[ ! $http =~ ^[0-9]+$ ]]; then
-	fail "OpenAI API unreachable ($http)."
-elif [[ ! $http =~ ^2 ]]; then
-	error=$(jq -r '.error.message // "unknown OpenAI API error"' \
-		"$tmp/response.json" 2>/dev/null || printf 'unparseable OpenAI API error')
-	fail "$(printf 'OpenAI API HTTP %s: %s' "$http" "$error")"
-fi
+	# A transport failure leaves no HTTP code; curl's own exit is
+	# the report then, and it reaches the PR like any other.
+	http=$(curl --silent --show-error \
+		-o "$tmp/response.json" \
+		-w '%{http_code}' \
+		-X POST \
+		-H "Authorization: Bearer $OPENAI_API_KEY" \
+		-H 'Content-Type: application/json' \
+		--data-binary "@$tmp/request.json" \
+		"$openai/v1/responses") || http="curl exit $?"
+
+	if [[ ! $http =~ ^[0-9]+$ ]]; then
+		fail "OpenAI API unreachable ($http)."
+	elif [[ ! $http =~ ^2 ]]; then
+		error=$(jq -r '.error.message // "unknown OpenAI API error"' \
+			"$tmp/response.json" 2>/dev/null || printf 'unparseable OpenAI API error')
+		fail "$(printf 'OpenAI API HTTP %s: %s' "$http" "$error")"
+	fi
+
+	input_total=$((input_total + $(jq -r '.usage.input_tokens // 0' "$tmp/response.json")))
+	output_total=$((output_total + $(jq -r '.usage.output_tokens // 0' "$tmp/response.json")))
+
+	jq -s '.[0] + [.[1].output[]?]' "$tmp/input.json" "$tmp/response.json" \
+		> "$tmp/input.next" && mv "$tmp/input.next" "$tmp/input.json"
+
+	jq -c '.output[]? | select(.type == "function_call")' \
+		"$tmp/response.json" > "$tmp/calls.jsonl"
+	[[ -s $tmp/calls.jsonl ]] || break
+
+	while IFS= read -r call; do
+		call_id=$(jq -r '.call_id' <<< "$call")
+		mapfile -t args < <(jq -r '(.arguments | fromjson).args[]?' <<< "$call")
+		tool_calls=$((tool_calls + 1))
+		run_git "${args[@]}" > "$tmp/tool.out"
+		jq --arg id "$call_id" --rawfile out "$tmp/tool.out" \
+			'. + [{type:"function_call_output", call_id:$id, output:$out}]' \
+			"$tmp/input.json" > "$tmp/input.next" &&
+			mv "$tmp/input.next" "$tmp/input.json"
+	done < "$tmp/calls.jsonl"
+done
 
 review=$(jq -r '
 	[
@@ -354,15 +459,7 @@ if [[ $status != completed ]]; then
 fi
 
 model=$(jq -r '.model // empty' "$tmp/response.json")
-usage=$(jq -r '
-	if .usage then
-		"input " + ((.usage.input_tokens // 0) | tostring) +
-		", output " + ((.usage.output_tokens // 0) | tostring) +
-		" tokens"
-	else
-		"usage unavailable"
-	end
-' "$tmp/response.json")
+usage="$tool_calls git call(s) · input $input_total, output $output_total tokens"
 
 post_comment "$(cat <<EOF
 ## GPT review
