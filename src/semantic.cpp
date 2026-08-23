@@ -1349,14 +1349,30 @@ std::vector<record> const &catalog::consolidated()
 			at = name_root[at] = name_root[name_root[at]];
 		return at;
 	};
-	for (edge const &e : m_edges) {
-		std::size_t const a = named.find(e.a), b = named.find(e.b);
-		if (e.what != relation::same || a == agenda::index::npos
-		    || b == agenda::index::npos)
-			continue;
+	auto const unite_names = [&](std::size_t a, std::size_t b) {
 		std::size_t const ra = nroot(a), rb = nroot(b);
 		if (ra != rb)
 			name_root[std::max(ra, rb)] = std::min(ra, rb);
+	};
+	for (edge const &e : m_edges) {
+		std::size_t const a = named.find(e.a), b = named.find(e.b);
+		if (e.what == relation::same && a != agenda::index::npos
+		    && b != agenda::index::npos)
+			unite_names(a, b);
+	}
+	// The lexicon's groups unite the names they hold as the
+	// verdicts do; a spelling no record names is simply absent.
+	for (std::vector<agenda::id> const &group : m_aliases) {
+		std::size_t first = agenda::index::npos;
+		for (agenda::id const id : group) {
+			std::size_t const at = named.find(id);
+			if (at == agenda::index::npos)
+				continue;
+			if (first == agenda::index::npos)
+				first = at;
+			else
+				unite_names(first, at);
+		}
 	}
 	m_entities.clear();
 	m_entityAt.clear();
@@ -1427,6 +1443,12 @@ std::size_t catalog::place(std::string_view source) const
 agenda::id catalog::entity_id(std::string_view title) const
 {
 	return m_hash("semantic-entity-v1\n" + folded(title));
+}
+
+void catalog::aliases(std::vector<std::vector<agenda::id>> groups)
+{
+	m_aliases = std::move(groups);
+	m_stale = true;
 }
 
 std::size_t catalog::entity_of(agenda::id id)

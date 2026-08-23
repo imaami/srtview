@@ -267,6 +267,14 @@ public:
 	// two of them -- a verdict that SLAWE and SLEIGH name one thing
 	// -- makes them one entity, titled as the first was.
 	agenda::id entity_id(std::string_view title) const;
+	// Names the corpus lexicon spells as one term, as groups of
+	// entity ids: they unite in the view as a same verdict unites
+	// them.  The terms pass asked the model which observed
+	// spellings belong together and the harvest saw every spelling
+	// on a cited cue; that answer is identity here, and no judge
+	// is asked what the lexicon already said.  Replaces the groups
+	// before it; a name no group holds is an entity of its own.
+	void aliases(std::vector<std::vector<agenda::id>> groups);
 	std::size_t entity_of(agenda::id id);
 	// Whether two records sit in one concept of the view -- no
 	// verdict is owed for a pair identity already united.
@@ -306,6 +314,7 @@ private:
 	std::vector<tie_count> m_viewTies;
 	std::vector<entity> m_entities;
 	agenda::index m_entityAt; // entity id -> m_entities, merged
+	std::vector<std::vector<agenda::id>> m_aliases; // lexicon groups
 	std::vector<std::size_t> m_conceptOf; // record index -> concept
 	bool m_stale = true;                        // view behind records/edges
 	std::vector<edge> m_edges;

@@ -315,6 +315,27 @@ int main()
 		      && graph.consolidated()[k[0].predicates[0].objects[0].at]
 		             .statement.ends_with("before."),
 		      "a restated concept keeps its first-spoken place");
+		// The lexicon's word is identity: names it spells as one
+		// term are one entity without a verdict, a spelling no
+		// record names is absent, and the groups replace each other.
+		auto spelt = semantic::parse_records(
+			R"({"records":[{"kind":"claim","subject":"Deidre","relation":"runs on","object":"the JVM","statement":"Deidre runs on the JVM.","cues":[5]}]})",
+			w, mix);
+		require(spelt.records.size() == 1 && graph.put(spelt.records[0]),
+		        "a third spelling publishes");
+		require(graph.entities().size() == 3,
+		        "a third spelling is a third entity until the lexicon");
+		graph.aliases({{graph.entity_id("ghidra"),
+		                graph.entity_id("DEIDRE"),
+		                graph.entity_id("nobody says this")}});
+		check(graph.entities().size() == 2
+		      && graph.entity_of(graph.entity_id("Deidre")) == 0
+		      && graph.entities()[0].predicates.size() == 2
+		      && graph.entities()[0].predicates[1].objects.size() == 2,
+		      "a lexicon group unites its names without a verdict");
+		graph.aliases({});
+		check(graph.entities().size() == 3,
+		      "a lexicon replaced by none leaves the verdicts standing");
 	}
 	// astronomy is said at cue 4, deployment from cue 5 on: the
 	// entities come in the order the corpus first speaks of them.
