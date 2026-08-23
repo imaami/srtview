@@ -29,7 +29,12 @@ its way out).
 
 ## Phase 1 — fetch & triage. No code edits, no API writes.
 Run fetch per bot in scope. Triage EVERY unresolved finding, including
-outdated ones (outdated ≠ wrong; code moved, the bug may not have).
+outdated ones (outdated ≠ wrong; code moved, the bug may not have) and
+the review rows flagged `outside:true` — CodeRabbit parks findings it
+cannot anchor to the diff in the review body under "Outside diff
+range", and they carry real bugs as often as threads do. They have no
+thread: act on them like any finding, answer in a PR comment
+(`rabbit.sh comment`), and record the fix or refutation there.
 Skip already-resolved threads but report their count. These are AI
 reviewers: weigh, don't defer. For any bug claim you'd call VALID,
 verify concretely — trace the path or write a failing test; if you

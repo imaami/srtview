@@ -59,10 +59,15 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
    body:.comments.nodes[0].body}') ||
 		fail "inline fetch (graphql)"
 
+	# CodeRabbit parks findings it cannot anchor to the diff in the
+	# review body under "Outside diff range"; the flag keeps them
+	# from hiding among boilerplate review shells.
 	reviews=$(gh api "repos/$owner/$name/pulls/$pr/reviews" --paginate \
 		--jq '.[]|select(.user.login
 		                 | ascii_downcase | startswith("'"$BOT"'"))
-		      |{source:"review",id,state,body}') ||
+		      |{source:"review",id,state,
+		        outside:(.body|contains("Outside diff range")),
+		        body}') ||
 		fail "reviews fetch"
 
 	issues=$(gh api "repos/$owner/$name/issues/$pr/comments" --paginate \
