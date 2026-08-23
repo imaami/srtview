@@ -183,14 +183,14 @@ fi
 # dies of SIGPIPE, and pipefail turned a valid command early in a
 # long comment into "no command".  -c drains to the end.
 printf '%s\n' "$comment_body" | tr -d '\r' |
-	grep -c -E '^/gpt[[:space:]]+review([[:space:]]|$)' > /dev/null || {
+	grep -c -E '^/gpt review( |$)' > /dev/null || {
 	printf 'gpt-review: comment carries no /gpt review command line\n' >&2
 	exit 0
 }
 
 focus=$(printf '%s\n' "$comment_body" | tr -d '\r' | LC_ALL=C awk '
 	{
-		if (!found && match($0, /^\/gpt[ \t]+review([ \t]+|$)/)) {
+		if (!found && match($0, /^\/gpt review( +|$)/)) {
 			found = 1
 			$0 = substr($0, RLENGTH + 1)
 		} else if ($0 ~ /^[\/@]/)

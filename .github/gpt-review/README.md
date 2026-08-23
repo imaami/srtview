@@ -4,7 +4,8 @@ A deliberately small, comment-triggered OpenAI reviewer.
 
 ## What it does
 
-On a pull request, a trusted maintainer can write:
+On a pull request, a trusted maintainer can write the literal
+command, one space, at the start of a line:
 
 ```text
 /gpt review

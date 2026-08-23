@@ -19,7 +19,10 @@ jobs:
     # The command may stand on any line of the comment -- one comment
     # prods every bot -- so the gate matches it at the start of the
     # body or of some line (fromJSON is how an expression spells a
-    # newline); the script still validates the exact command line.
+    # newline).  The command is the literal "/gpt review", one
+    # space: expressions cannot regex, so the script accepts exactly
+    # what this gate can see -- a validator wider than its gate is a
+    # command that never runs.
     if: >-
       github.event.issue.pull_request &&
       (startsWith(github.event.comment.body, '/gpt review') ||
