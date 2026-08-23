@@ -393,7 +393,7 @@ int main()
 		      "the folded entity replays from cache");
 	}
 
-	// --- the lexicon unites names that share no word --------------
+	// --- the lexicon's word is identity ----------------------------
 	{
 		fs::path const rig7 = rig / "lexicon";
 		for (char const *k : {"extract", "judge", "answer"})
@@ -410,22 +410,20 @@ int main()
 		        "names sharing no word are two entities nobody "
 		        "thought to compare");
 		e7.lexicon({{"ghidra", "Gidra", "deidre"}});
-		check(terms.asks(agenda::kind::judge) == 1
-		      && terms.asked.back().second.starts_with("ENTITY A\nNAME: "),
-		      "a lexicon group puts its known names to the judge");
-		terms.answer(agenda::kind::judge, 0,
-		             R"({"relation":"same","rationale":"One tool, two hearings."})");
-		e7.tick();
-		check(e7.entities().size() == 1,
-		      "the verdict folds the spellings into one entity");
+		check(e7.entities().size() == 1
+		      && terms.asks(agenda::kind::judge) == 0,
+		      "a lexicon group is one entity on the model's word, "
+		      "no verdict asked");
 		terms.answer(agenda::kind::extract, 1,
 		             R"({"records":[{"kind":"claim","subject":"Deidre","relation":"runs on","object":"the JVM","statement":"Deidre runs on the JVM.","cues":[5]}]})");
 		e7.tick();
-		check(e7.entities().size() == 2
-		      && terms.asks(agenda::kind::judge) == 2
-		      && terms.asked.back().second.find("NAME: Deidre")
-		         != std::string::npos,
-		      "a name that appears later meets its group at once");
+		check(e7.entities().size() == 1
+		      && e7.entities()[0].predicates.size() == 3
+		      && terms.asks(agenda::kind::judge) == 0,
+		      "a name that appears later joins its group at once");
+		e7.lexicon({});
+		check(e7.entities().size() == 3,
+		      "a lexicon withdrawn leaves the names apart again");
 	}
 
 	// --- contradictions ride into the bundle ----------------------

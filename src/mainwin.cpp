@@ -2387,8 +2387,8 @@ void MainWin::semanticStep()
 // The term directory as the engine's lexicon: every spelling the
 // terms pass proposed and the harvest saw on a cited line, grouped
 // by the term topic that owns it.  Pushed whenever the index has
-// grown; the engine puts the entity names one group holds to the
-// judge, which is how GIDRA meets Ghidra.
+// grown; the names one group holds are one entity on the model's
+// word, which is how GIDRA meets Ghidra.
 void MainWin::feedLexicon()
 {
 	if (m_termIndex.size() == m_lexiconSize)

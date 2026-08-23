@@ -257,13 +257,12 @@ public:
 
 	// The corpus lexicon: groups of spellings the terms pass found
 	// for one term and the owner validated against the transcript
-	// -- Ghidra, gidra, deidre.  Two entity names in one group are
-	// put to the judge as one thing however few words they share:
-	// a transcription's manglings of a name share none, and the
-	// lexicon is where the model already said which spellings
-	// belong together.  Replaces the lexicon before it; pairs among
-	// the entities known are staged at once, later names as they
-	// appear.  reset() drops it, as it belongs to the corpus.
+	// -- Ghidra, gidra, deidre.  The model was asked which
+	// spellings belong together and answered; the names one group
+	// holds are one entity on its word, without a verdict, however
+	// few words they share.  The judge is asked only about names
+	// the lexicon does not group.  Replaces the lexicon before it;
+	// reset() drops it, as it belongs to the corpus.
 	void lexicon(std::vector<std::vector<std::string>> groups);
 
 	std::vector<semantic::record> const &knowledge() const;
@@ -324,7 +323,6 @@ private:
 	                 semantic::record const &candidate);
 	void stage_entities(std::size_t fresh);
 	void stage_entity_pair(std::size_t a, std::size_t b);
-	std::size_t spelling_group(std::size_t entity) const;
 	std::string entity_body(std::size_t at) const;
 	std::string judge_body(judge_work const &w) const;
 	void offer_judge(judge_work const &w);
@@ -353,7 +351,6 @@ private:
 	std::vector<extract_work> m_extract;
 	std::vector<judge_work> m_judge;
 	agenda::index m_judgeAt; // judge id -> m_judge
-	agenda::index m_spellAt; // a spelling's entity id -> its group
 	std::uint64_t m_swept = 0;  // backend landed() at the last sweep
 	bool m_more = true;         // the last sweep spent its budget
 	bool m_retry = false;       // a publication failed this sweep
@@ -391,7 +388,6 @@ void SemanticEngine<Backend>::reset(std::string corpus,
 	m_extract.clear();
 	m_judge.clear();
 	m_judgeAt.clear();
-	m_spellAt.clear();
 	m_answers.clear();
 	m_more = true;
 	// The catalog is keyed by the corpus AND the recipes that
@@ -648,10 +644,10 @@ void SemanticEngine<Backend>::stage_judge(semantic::record const &fresh,
 }
 
 // The entities nearest a fresh one by the words of their names,
-// each asked whether it is the same thing, and then every name the
-// lexicon groups with it: a mangled name shares no word with the
-// one it mangles, and the terms pass is where the model already
-// said which spellings belong together.
+// each asked whether it is the same thing.  A mangled name shares
+// no word with the one it mangles and finds no partner here; the
+// lexicon, where the model already said which spellings belong
+// together, is identity itself and needs no partner.
 template <semantic_backend Backend>
 void SemanticEngine<Backend>::stage_entities(std::size_t fresh)
 {
@@ -672,42 +668,23 @@ void SemanticEngine<Backend>::stage_entities(std::size_t fresh)
 	}
 	for (near const &n : best)
 		stage_entity_pair(fresh, n.at);
-	if (std::size_t const g = spelling_group(fresh);
-	    g != agenda::index::npos)
-		for (std::size_t i = 0; i < ents.size(); ++i)
-			if (i != fresh && spelling_group(i) == g)
-				stage_entity_pair(fresh, i);
-}
-
-template <semantic_backend Backend>
-std::size_t SemanticEngine<Backend>::spelling_group(std::size_t entity) const
-{
-	return m_spellAt.find(m_catalog->entities()[entity].id);
 }
 
 template <semantic_backend Backend>
 void SemanticEngine<Backend>::lexicon(
 	std::vector<std::vector<std::string>> groups)
 {
-	m_spellAt.clear();
 	if (!m_catalog)
 		return;
-	for (std::size_t g = 0; g < groups.size(); ++g)
-		for (std::string const &spelling : groups[g])
-			m_spellAt.add(m_catalog->entity_id(spelling), g);
-	// Every pair of known names in one group, each group's first
-	// name against the rest and so on: a renewed lexicon may
-	// unite names that stood apart for sessions.
-	std::vector<std::vector<std::size_t>> members(groups.size());
-	std::size_t const n = m_catalog->entities().size();
-	for (std::size_t i = 0; i < n; ++i)
-		if (std::size_t const g = spelling_group(i);
-		    g != agenda::index::npos)
-			members[g].push_back(i);
-	for (std::vector<std::size_t> const &group : members)
-		for (std::size_t i = 0; i < group.size(); ++i)
-			for (std::size_t j = i + 1; j < group.size(); ++j)
-				stage_entity_pair(group[i], group[j]);
+	std::vector<std::vector<agenda::id>> ids;
+	ids.reserve(groups.size());
+	for (std::vector<std::string> const &group : groups) {
+		auto &out = ids.emplace_back();
+		out.reserve(group.size());
+		for (std::string const &spelling : group)
+			out.push_back(m_catalog->entity_id(spelling));
+	}
+	m_catalog->aliases(std::move(ids));
 }
 
 template <semantic_backend Backend>
