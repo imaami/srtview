@@ -141,23 +141,39 @@ if [[ $commenter != "$repo_owner" || ${GITHUB_TRIGGERING_ACTOR:-} != "$repo_owne
 fi
 
 # The command stands at the start of a line, any line: one comment
-# prods every bot, each on a line of its own.  The focus is what the
-# comment says besides -- the rest of the command's line and every
-# line that is not a command to some bot, which is to say not one
-# that opens with / or @ -- so a note written for the reviewer
-# reaches it and the other bots' orders do not.
-command_line=$(printf '%s\n' "$comment_body" | tr -d '\r' |
-	grep -m1 -E '^/gpt[[:space:]]+review([[:space:]]|$)' || :)
-
-if [[ -z $command_line ]]; then
+# prods every bot, each on a line of its own.  The focus is what
+# the comment says besides -- the rest of the first command line,
+# kept whole even when it opens with / or @, and every other line
+# that is not a command to some bot, which is to say not one that
+# opens with / or @.  A note written for the reviewer reaches it,
+# the other bots' orders do not, and each ORIGINAL line is judged
+# exactly once: a filter run on stripped text mistook a focus
+# opening with / for a bot command, and a substitution run on
+# every line turned a second command line, or a /gpt reviewer,
+# into focus.
+printf '%s\n' "$comment_body" | tr -d '\r' |
+	grep -q -E '^/gpt[[:space:]]+review([[:space:]]|$)' || {
 	printf 'gpt-review: comment carries no /gpt review command line\n' >&2
 	exit 0
-fi
+}
 
-focus=$(printf '%s\n' "$comment_body" | tr -d '\r' |
-	sed -E 's@^/gpt[[:space:]]+review[[:space:]]*@@; /^[/@]/d' |
-	awk 'NF { printf "%s", gap; gap = ""; seen = 1; print; next }
-	     seen { gap = gap "\n" }')
+focus=$(printf '%s\n' "$comment_body" | tr -d '\r' | LC_ALL=C awk '
+	{
+		if (!found && match($0, /^\/gpt[ \t]+review([ \t]+|$)/)) {
+			found = 1
+			$0 = substr($0, RLENGTH + 1)
+		} else if ($0 ~ /^[\/@]/)
+			next
+		if ($0 == "") {
+			if (out)
+				gap = gap "\n"
+			next
+		}
+		printf "%s%s\n", gap, $0
+		gap = ""
+		out = 1
+	}
+')
 
 react_eyes
 
