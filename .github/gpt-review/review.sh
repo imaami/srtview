@@ -464,7 +464,7 @@ usage="$tool_calls git call(s) · input $input_total, output $output_total token
 post_comment "$(cat <<EOF
 ## GPT review
 
-$model · $usage
+Reviewed commit: \`$head_sha\` · $model · $usage
 
 $review
 EOF
