@@ -20,6 +20,10 @@ readonly max_output_tokens="${GPT_REVIEW_MAX_OUTPUT_TOKENS:-64000}"
 # bounded so a curious model cannot flood its own context.
 readonly max_tool_bytes="${GPT_REVIEW_MAX_TOOL_BYTES:-50000}"
 readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
+# The wall clock's share: the job dies mute at its fifteen-minute
+# timeout, so the loop keeps its own deadline with room after it
+# for one forced finale, the comment and the sweep.
+readonly max_seconds="${GPT_REVIEW_MAX_SECONDS:-720}"
 
 umask 077
 tmp=$(mktemp -d)
@@ -221,8 +225,10 @@ deletions=$(jq -r '.deletions' "$tmp/pr.json")
 # the PR is ever checked out, built, sourced or executed -- this
 # job holds OPENAI_API_KEY -- and the working tree stays the
 # default branch's.
+deadline=$((SECONDS + max_seconds))
 auth=$(printf 'x-access-token:%s' "${GH_TOKEN:?}" | base64 -w0)
-git -c "http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader=AUTHORIZATION: basic $auth" \
+timeout 120 \
+	git -c "http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader=AUTHORIZATION: basic $auth" \
 	fetch --quiet --no-tags "${GITHUB_SERVER_URL:-https://github.com}/$repo" \
 	"pull/$pr/head:refs/gpt-review/head" \
 	"+refs/heads/$base_ref:refs/gpt-review/base" ||
@@ -455,15 +461,31 @@ tool_calls=0
 git_calls=0
 input_total=0
 output_total=0
+forced=
 while :; do
-	choice=auto
+	# One forced finale, whatever ran out -- rounds, clock or
+	# context -- and the model is told which.  A finale that still
+	# answers nothing fails aloud; the job timeout would have
+	# killed everything in silence.
+	spent=
 	if (( tool_calls >= max_tool_calls )); then
+		spent="the tool-call budget"
+	elif (( SECONDS >= deadline )); then
+		spent="the clock"
+	fi
+	choice=auto
+	if [[ $spent ]]; then
+		[[ $forced ]] &&
+			fail "out of time after $tool_calls tool call(s) with no review written."
+		forced=1
 		choice=none
-		jq '. + [{role:"user", content:[{type:"input_text",
-			text:"Tool budget spent. Write the review from what you have seen."}]}]' \
+		jq --arg why "$spent" '. + [{role:"user", content:[{type:"input_text",
+			text:("Spent: " + $why + ". Write the review from what you have seen.")}]}]' \
 			"$tmp/input.json" > "$tmp/input.next" &&
 			mv "$tmp/input.next" "$tmp/input.json"
 	fi
+	remaining=$((deadline - SECONDS))
+	(( remaining >= 60 )) || remaining=90
 	jq -n \
 		--arg model "${OPENAI_MODEL:-gpt-5.6-sol}" \
 		--arg effort "${OPENAI_REASONING_EFFORT:-xhigh}" \
@@ -495,8 +517,12 @@ while :; do
 		}' > "$tmp/request.json"
 
 	# A transport failure leaves no HTTP code; curl's own exit is
-	# the report then, and it reaches the PR like any other.
+	# the report then, and it reaches the PR like any other.  Each
+	# round gets the loop's remaining time, never less than a
+	# floor: a round that would cross the deadline is dead anyway,
+	# and dying by curl posts its failure.
 	http=$(curl --silent --show-error \
+		--connect-timeout 10 --max-time "$remaining" \
 		-o "$tmp/response.json" \
 		-w '%{http_code}' \
 		-X POST \
