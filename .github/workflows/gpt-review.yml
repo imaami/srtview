@@ -26,10 +26,6 @@ jobs:
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The secret lives in this environment, whose deployment branches
-    # are restricted to the default branch: a job can read it only
-    # when it runs from there, which is this workflow and no other.
-    environment: gpt-review
     # A second /gpt review on the same PR waits for the one running.
     # Job-level on purpose: at workflow level every comment on the
     # PR -- a bot's, a reply -- would enter the group before the
