@@ -215,16 +215,17 @@ git -c "http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader=AUTHORIZATION
 	"+refs/heads/$base_ref:refs/gpt-review/base" ||
 	fail "could not fetch the PR head and base as git refs."
 
-# Fetch the diff as data only.  GitHub
-# serves no diff past 300 files or 20000 lines (406); that is a
-# review that cannot happen, and the PR is told so.
-curl --silent --show-error --fail-with-body \
-	-H "Authorization: Bearer ${GH_TOKEN:?}" \
-	-H 'Accept: application/vnd.github.v3.diff' \
-	-H 'X-GitHub-Api-Version: 2022-11-28' \
-	"$api/repos/$repo/pulls/$pr" |
+# The reviewed commit is the one fetched, and everything hangs off
+# it: the PR can move between the metadata read, the fetch and a
+# diff served by REST, and then the label, the refs and the diff
+# would name different commits.  So head_sha is re-read from the
+# fetched ref and the orientation diff is cut locally from the
+# pinned refs -- one source of truth, and no 300-file, 20000-line
+# ceiling of the REST diff endpoint either.
+head_sha=$(git rev-parse refs/gpt-review/head)
+git --no-pager diff "refs/gpt-review/base...refs/gpt-review/head" |
 	truncate_lines "$max_diff_bytes" > "$tmp/diff.txt" ||
-	fail "could not fetch the diff; GitHub serves none for a PR past 300 files or 20000 diff lines."
+	fail "could not cut the diff from the fetched refs."
 
 # Existing AI-review feedback is useful mainly as a deduplication/adversarial
 # signal. Restrict it to the reviewers on this repository -- CodeRabbit,
