@@ -24,28 +24,53 @@ gh_curl()
 		"$@"
 }
 
+# The HTTP status alone, for the one call whose failure modes must
+# be told apart instead of tolerated wholesale.
+gh_status()
+{
+	curl --silent -o /dev/null -w '%{http_code}' \
+		--connect-timeout 10 --max-time 60 \
+		-H "Authorization: Bearer ${GH_TOKEN:?GH_TOKEN is unset}" \
+		-H 'Accept: application/vnd.github+json' \
+		-H 'X-GitHub-Api-Version: 2022-11-28' \
+		"$@" || printf 'curl exit %d' "$?"
+}
+
 # Page 1 again and again until it comes back empty: deleting from
 # the page walked would skip every other entry, and past a hundred
-# skips one page was all that got swept.  Two sweeps may overlap --
-# the concurrency group is per PR -- so a delete that fails is
-# someone else's success, noted and skipped; a pass that deletes
-# nothing at all stops the loop instead of spinning on it.
+# skips one page was all that got swept.  Sweeps may overlap, so a
+# 404 is a rival's success, noted and skipped -- but ONLY a 404: a
+# 403 is a token short of actions: write, a 5xx is GitHub's hour,
+# and calling either "already gone" left every skipped run behind
+# with a green exit.  Any other status is reported and fails the
+# sweep; a pass that deletes nothing stops the loop rather than
+# spinning on it.
 swept=0
+failed=0
 while :; do
 	pass=0
 	ids=$(gh_curl "$api/repos/$repo/actions/workflows/$workflow/runs?status=skipped&per_page=100" |
 		jq -r '.workflow_runs[].id')
 	[[ $ids ]] || break
 	for id in $ids; do
-		if gh_curl -X DELETE "$api/repos/$repo/actions/runs/$id" \
-			> /dev/null 2>&1; then
+		status=$(gh_status -X DELETE "$api/repos/$repo/actions/runs/$id")
+		case $status in
+		204)
 			printf 'gpt-review: swept skipped run %s\n' "$id"
 			pass=$((pass + 1))
-		else
-			printf 'gpt-review: run %s was already gone\n' "$id"
-		fi
+			;;
+		404|410)
+			printf 'gpt-review: run %s already swept by a rival\n' "$id"
+			;;
+		*)
+			printf 'gpt-review: run %s not deleted: %s\n' \
+				"$id" "$status" >&2
+			failed=1
+			;;
+		esac
 	done
 	swept=$((swept + pass))
 	(( pass )) || break
 done
 printf 'gpt-review: %d skipped run(s) swept\n' "$swept"
+exit "$failed"
