@@ -110,7 +110,9 @@ or a `refs/pull/...` head and then running repository scripts.
 ## Files
 
 - `.github/workflows/gpt-review.yml` — trigger and least-privilege token
-  permissions.
+  permissions (`contents: read`, `pull-requests: write`: the comment and
+  the reaction are written to a pull request, which `issues: write` does
+  not cover).
 - `.github/gpt-review/review.sh` — GitHub/OpenAI API plumbing.
 - `.github/gpt-review/prompt.md` — review policy.
 

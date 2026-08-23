@@ -4,10 +4,13 @@ on:
   issue_comment:
     types: [created]
 
+# Everything the job writes -- the review comment, the eyes reaction
+# -- is on a pull request, and GITHUB_TOKEN needs pull-requests:
+# write for that even through the issues endpoints; issues: write
+# alone is refused with 403 once the paid call has been made.
 permissions:
   contents: read
-  issues: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   review:
