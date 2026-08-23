@@ -51,7 +51,7 @@
 // refusals in a row latch the pipeline offline for the session --
 // nothing is written, so the next session simply retries.  Tasks
 // run with a quiet gap in between (SRTVIEW_LLM_PACE=<seconds>,
-// default 30, 0 disables): sustained generation is a full-power
+// default 3, 0 disables): sustained generation is a full-power
 // burn, and the accelerator needs breathing room by default.
 // SRTVIEW_LLM_MODEL_ID supplies a stable model/quant fingerprint for
 // recipe-aware caching when the model behind one endpoint may change.

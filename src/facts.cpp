@@ -397,7 +397,7 @@ vault::recipes recipe_ids(vault::hash8_fn h)
 // Generation is a sustained full-power burn on the accelerator, and
 // a corpus queues many in a row: the default gap gives the silicon
 // breathing room.  SRTVIEW_LLM_PACE=<seconds> widens it, 0 disables.
-constexpr std::int32_t kPaceDefaultS = 30;
+constexpr std::int32_t kPaceDefaultS = 3;
 constexpr std::int32_t kPaceMaxS     = 3600;
 
 std::int32_t paceEnv()

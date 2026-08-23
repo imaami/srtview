@@ -40,7 +40,7 @@
 //                          into cache recipes; set this when the
 //                          model behind one endpoint can change
 //      SRTVIEW_LLM_PACE -- quiet seconds between summarization
-//                          tasks (default 30, 0 disables): thermal
+//                          tasks (default 3, 0 disables): thermal
 //                          breathing room for the GPU
 //      SRTVIEW_DEBUG    -- log IPC traffic, player health and facts
 //                          pipeline tasks to stderr; state flips are
