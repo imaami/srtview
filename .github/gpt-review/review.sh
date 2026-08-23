@@ -37,13 +37,23 @@ need awk
 	exit 2
 }
 
+# A refused call says why in its body; that goes to the log, where
+# the status alone said nothing about a token short of a permission.
 gh_curl()
 {
+	local status
 	curl --silent --show-error --fail-with-body \
 		-H "Authorization: Bearer ${GH_TOKEN:?GH_TOKEN is unset}" \
 		-H 'Accept: application/vnd.github+json' \
 		-H 'X-GitHub-Api-Version: 2022-11-28' \
-		"$@"
+		"$@" > "$tmp/gh.out" || {
+		status=$?
+		printf 'gpt-review: GitHub API refused %s:\n' "${*: -1}" >&2
+		head -c 2000 "$tmp/gh.out" >&2
+		printf '\n' >&2
+		return "$status"
+	}
+	cat "$tmp/gh.out"
 }
 
 # Every comment the job writes opens with a marker naming the PR and
@@ -73,6 +83,10 @@ fail()
 	exit 1
 }
 
+# The eyes on the command are the first write the job makes, with
+# the permission the review comment will need: a token short of it
+# fails here, before the paid call, with the refusal in the log --
+# nothing can reach the PR then, which is the point of knowing.
 react_eyes()
 {
 	printf '%s\n' '{"content":"eyes"}' > "$tmp/reaction.json"
@@ -81,7 +95,10 @@ react_eyes()
 		-H 'Content-Type: application/json' \
 		--data-binary "@$tmp/reaction.json" \
 		"$api/repos/$repo/issues/comments/$comment_id/reactions" \
-		>/dev/null 2>&1 || :
+		>/dev/null || {
+		printf 'gpt-review: the token cannot write to the pull request; no review was asked\n' >&2
+		exit 1
+	}
 }
 
 # Cuts at a line boundary and then drains the rest: exiting early
