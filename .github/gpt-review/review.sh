@@ -358,6 +358,21 @@ allowed_option()
 	return 1
 }
 
+# A free argument is a rev, a pathspec or a pattern, and must not
+# name the filesystem outside the repository: git diff handed two
+# paths slides into no-index comparison without the option being
+# spelled, and /etc/hostname would read straight past an option
+# allowlist.  Absolute paths and .. path components are refused; a
+# rev range keeps its dots, which sit between names, never between
+# slashes.
+free_arg_ok()
+{
+	case $1 in
+	/*|..|../*|*/..|*/../*) return 1 ;;
+	esac
+	return 0
+}
+
 run_git()
 {
 	local sub=${1:-}
@@ -371,11 +386,17 @@ run_git()
 	shift
 	local a
 	for a in "$@"; do
-		[[ $a == -* ]] || continue
-		allowed_option "$a" || {
-			printf 'gpt-review tool: option %q is not in the allowlist\n' "$a"
-			return 0
-		}
+		if [[ $a == -* ]]; then
+			allowed_option "$a" || {
+				printf 'gpt-review tool: option %q is not in the allowlist\n' "$a"
+				return 0
+			}
+		else
+			free_arg_ok "$a" || {
+				printf 'gpt-review tool: %q leaves the repository\n' "$a"
+				return 0
+			}
+		fi
 	done
 	env -i PATH=/usr/bin:/bin HOME="$tmp/home" TZ=UTC \
 		GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
