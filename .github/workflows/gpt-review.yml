@@ -28,16 +28,12 @@ jobs:
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # A second /gpt review on the same PR waits for the one running.
-    # Job-level on purpose: at workflow level every comment on the
-    # PR -- a bot's, a reply -- would enter the group before the
-    # job's if skipped it.  Never cancel-in-progress: the gate can
-    # pass on a line the script then rejects -- a quoted command, a
-    # /gpt reviewer -- and such a run must not kill a real review
-    # and leave nothing.
-    concurrency:
-      group: gpt-review-${{ github.event.issue.number }}
-      cancel-in-progress: false
+    # No concurrency group on purpose.  A group holds one running
+    # and ONE pending job, and a third request replaces the pending
+    # one whatever cancel-in-progress says -- a valid command would
+    # vanish without a review or a failure.  Parallel reviews are
+    # independent and each was asked for; the sweep already
+    # tolerates rivals.
     env:
       GH_TOKEN: ${{ github.token }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
