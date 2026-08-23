@@ -469,6 +469,7 @@ git_calls=0
 input_total=0
 output_total=0
 forced=
+: > "$tmp/review.txt"
 while :; do
 	# One forced finale, whatever ran out -- rounds, clock or
 	# context -- and the model is told which.  A finale that still
@@ -554,6 +555,24 @@ while :; do
 	input_total=$((input_total + $(jq -r '.usage.input_tokens // 0' "$tmp/response.json")))
 	output_total=$((output_total + $(jq -r '.usage.output_tokens // 0' "$tmp/response.json")))
 
+	# A round may speak and call tools in one breath; what it said
+	# is kept as it comes, and the finale appends instead of
+	# replacing -- only the last round's words reached the PR
+	# before.
+	text=$(jq -r '
+		[
+			.output[]?
+			| select(.type == "message")
+			| .content[]?
+			| select(.type == "output_text")
+			| .text
+		] | join("\n")
+	' "$tmp/response.json")
+	if [[ $text ]]; then
+		[[ -s $tmp/review.txt ]] && printf '\n\n' >> "$tmp/review.txt"
+		printf '%s' "$text" >> "$tmp/review.txt"
+	fi
+
 	jq -s '.[0] + [.[1].output[]?]' "$tmp/input.json" "$tmp/response.json" \
 		> "$tmp/input.next" && mv "$tmp/input.next" "$tmp/input.json"
 
@@ -564,18 +583,22 @@ while :; do
 	while IFS= read -r call; do
 		call_id=$(jq -r '.call_id' <<< "$call")
 		# A response may carry more calls than the budgets have
-		# left -- rounds or, with forty parallel calls of fifty
+		# left -- rounds, the clock (forty serial calls of thirty
+		# seconds each outrun the job timeout between two round
+		# checks), or, with forty parallel calls of fifty
 		# kilobytes each, the transcript itself; the surplus is
-		# answered, never run, so the finale's resend still fits
-		# the window.
+		# answered, never run, so the finale still happens and
+		# its resend fits the window.
 		if (( tool_calls >= max_tool_calls )); then
 			printf 'gpt-review tool: budget spent\n' > "$tmp/tool.out"
+		elif (( SECONDS + 30 >= explore_by )); then
+			echo 'gpt-review tool: clock budget spent' > "$tmp/tool.out"
 		elif (( $(stat -c %s "$tmp/input.json") >= max_transcript_bytes )); then
 			printf 'gpt-review tool: context budget spent\n' > "$tmp/tool.out"
 		else
 			mapfile -t args < <(jq -r '(.arguments | fromjson).args[]?' <<< "$call")
 			run_git "${args[@]}" > "$tmp/tool.out"
-			git_calls=$((git_calls + 1))
+			((git_calls += 1))
 		fi
 		tool_calls=$((tool_calls + 1))
 		jq --arg id "$call_id" --rawfile out "$tmp/tool.out" \
@@ -585,15 +608,7 @@ while :; do
 	done < "$tmp/calls.jsonl"
 done
 
-review=$(jq -r '
-	[
-		.output[]?
-		| select(.type == "message")
-		| .content[]?
-		| select(.type == "output_text")
-		| .text
-	] | join("\n")
-' "$tmp/response.json")
+review=$(cat "$tmp/review.txt")
 
 # A response the cap or the model cut short says so in its status;
 # one with text is still posted, marked, and one without is a
