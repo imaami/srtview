@@ -24,6 +24,7 @@ readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
 umask 077
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/home"
 
 need()
 {
@@ -285,11 +286,60 @@ metadata=$(jq -n \
 
 # The reviewer's one tool: git, read-only, over the trusted clone
 # and the fetched refs.  The subcommand whitelist keeps it off the
-# network and the argument denylist off the flags that execute a
-# command or write through a path (-O runs a pager, --output writes
-# a file); everything else -- log, show, diff, grep, blame -- is
-# object reads.  A refused call returns its reason as tool output:
-# the model corrects course, the job does not care.
+# network, and options are ALLOWLISTED by exact name: git accepts
+# any unique abbreviation of a long option, so a denylist of full
+# spellings is a sieve (--open-files-in-page= still reached grep's
+# pager, and the pager is a command line).  A name not listed --
+# abbreviated, misspelt or dangerous -- is refused, and the refusal
+# is tool output the model reads and corrects course on.  Left out
+# on purpose: everything that executes (-O and grep's pager,
+# --ext-diff, --textconv, --filters), writes (--output and kin), or
+# reads outside the object store (--no-index, blame --contents,
+# --ignore-revs-file, --stdin, --batch).  Free arguments -- revs,
+# paths, patterns -- pass; a path outside the repository is git's
+# own error.  And should something slip anyway, it lands in an
+# empty room: the tool runs under env -i, no OPENAI_API_KEY, no
+# GH_TOKEN, no runner variables.
+allowed_option()
+{
+	case ${1%%=*} in
+	--|--abbrev|--abbrev-commit|--abbrev-ref|--after|--all|--all-match|\
+	--ancestry-path|--and|--author|--author-date-order|--basic-regexp|\
+	--before|--boundary|--branches|--break|--cached|--cherry|\
+	--cherry-pick|--children|--color|--color-words|--column|--committer|\
+	--contains|--count|--date|--date-order|--decorate|--diff-filter|\
+	--do-walk|--email|--exclude|--exclude-standard|--extended-regexp|\
+	--files-with-matches|--files-without-match|--find-copies|\
+	--find-copies-harder|--find-renames|--first-parent|--fixed-strings|\
+	--follow|--format|--full-diff|--full-history|--full-index|\
+	--full-name|--full-tree|--function-context|--glob|--graph|--heading|\
+	--heads|--ignore-all-space|--ignore-blank-lines|--ignore-space-at-eol|\
+	--ignore-space-change|--incremental|--invert-grep|--left-only|\
+	--left-right|--line-number|--line-porcelain|--long|--max-count|\
+	--max-depth|--max-parents|--merge-base|--merged|--merges|\
+	--min-parents|--name-only|--name-status|--no-abbrev|\
+	--no-abbrev-commit|--no-color|--no-contains|--no-decorate|\
+	--no-max-parents|--no-merged|--no-merges|--no-min-parents|\
+	--no-patch|--no-walk|--not|--numbered|--numstat|--oneline|\
+	--only-matching|--or|--others|--parents|--patch|--perl-regexp|\
+	--pickaxe-all|--pickaxe-regex|--points-at|--porcelain|--pretty|\
+	--raw|--regexp-ignore-case|--remotes|--reverse|--right-only|--root|\
+	--shortstat|--show-email|--show-function|--show-name|--show-number|\
+	--show-stats|--simplify-merges|--since|--skip|--sort|--source|\
+	--sparse|--stage|--stat|--summary|--symbolic|--symbolic-full-name|\
+	--short|--tags|--topo-order|--unified|--until|--verify|--word-diff|\
+	--word-diff-regex)
+		return 0 ;;
+	esac
+	case $1 in
+	-[0-9]*|-p|-t|-s|-r|-l|-z|-m|-c|-h|-v|-i|-w|-b|-e*|-E|-F|-P|-W|\
+	-n|-n[0-9]*|-U|-U[0-9]*|-A[0-9]*|-B[0-9]*|-C|-C[0-9]*|-M|-M[0-9]*|\
+	-S*|-G*|-L*)
+		return 0 ;;
+	esac
+	return 1
+}
+
 run_git()
 {
 	local sub=${1:-}
@@ -300,16 +350,19 @@ run_git()
 		return 0
 		;;
 	esac
+	shift
 	local a
 	for a in "$@"; do
-		case $a in
-		-O*|--open-files-in-pager*|--output*|--ext-diff|--textconv)
-			printf 'gpt-review tool: argument %q is not allowed\n' "$a"
+		[[ $a == -* ]] || continue
+		allowed_option "$a" || {
+			printf 'gpt-review tool: option %q is not in the allowlist\n' "$a"
 			return 0
-			;;
-		esac
+		}
 	done
-	timeout 30 git --no-pager "$@" 2>&1 | head -c "$max_tool_bytes" || :
+	env -i PATH=/usr/bin:/bin HOME="$tmp/home" TZ=UTC \
+		GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+		timeout 30 git --no-pager "$sub" "$@" 2>&1 |
+		head -c "$max_tool_bytes" || :
 }
 
 jq -n \
@@ -374,7 +427,7 @@ while :; do
 			tools: [{
 				type: "function",
 				name: "git",
-				description: "Run one read-only git command in the repository clone. args is argv after git, e.g. [\"log\",\"--oneline\",\"-20\",\"refs/gpt-review/head\"]. Allowed subcommands: log show diff grep blame ls-tree ls-files rev-list rev-parse shortlog cat-file describe.",
+				description: "Run one read-only git command in the repository clone. args is argv after git, e.g. [\"log\",\"--oneline\",\"-20\",\"refs/gpt-review/head\"]. Allowed subcommands: log show diff grep blame ls-tree ls-files rev-list rev-parse shortlog cat-file describe. Options are allowlisted by exact name, never abbreviated; a refused option names itself in the output. Revs, paths and patterns are free arguments.",
 				strict: true,
 				parameters: {
 					type: "object",
