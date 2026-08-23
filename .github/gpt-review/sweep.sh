@@ -47,11 +47,14 @@ gh_status()
 # spinning on it.
 swept=0
 failed=0
+last_first=
 while :; do
 	pass=0
+	gone=0
 	ids=$(gh_curl "$api/repos/$repo/actions/workflows/$workflow/runs?status=skipped&per_page=100" |
 		jq -r '.workflow_runs[].id')
 	[[ $ids ]] || break
+	first=${ids%%$'\n'*}
 	for id in $ids; do
 		status=$(gh_status -X DELETE "$api/repos/$repo/actions/runs/$id")
 		case $status in
@@ -61,6 +64,7 @@ while :; do
 			;;
 		404|410)
 			printf 'gpt-review: run %s already swept by a rival\n' "$id"
+			gone=$((gone + 1))
 			;;
 		*)
 			printf 'gpt-review: run %s not deleted: %s\n' \
@@ -70,7 +74,15 @@ while :; do
 		esac
 	done
 	swept=$((swept + pass))
-	(( pass )) || break
+	# A page the rival emptied is progress too -- the state moved,
+	# and more runs may have shifted onto page one -- but the SAME
+	# page coming back with nothing deleted is the listing lagging
+	# behind, not work remaining: without that guard two lagging
+	# sweeps would spin on each other's ghosts.
+	if (( pass == 0 )); then
+		[[ $first != "$last_first" ]] && (( gone > 0 )) || break
+	fi
+	last_first=$first
 done
 printf 'gpt-review: %d skipped run(s) swept\n' "$swept"
 exit "$failed"
