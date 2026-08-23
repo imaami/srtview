@@ -46,7 +46,15 @@ proposed action. Then STOP and wait for explicit approval.
 
 ## Phase 2 — act. Only approved items, exactly as approved.
 - VALID: implement; verify (build/tests); commit with a message
-  referencing the finding; push ONCE after all fixes. Then per thread:
+  referencing the finding. Right after the Co-Authored-By trailer,
+  add one `Assisted-By:` line per bot whose finding the commit
+  addresses — no email part, since not every assistant has one:
+  `coderabbitai` for CodeRabbit, `chatgpt-codex-connector` for
+  Codex, `copilot-pull-request-reviewer` for Copilot, and for GPT
+  the model name verbatim from its review header (the fetch row's
+  `model` field, e.g. `gpt-5.6-sol` — never hardcoded, it follows
+  the workflow's model setting). Push ONCE after all fixes. Then
+  per thread:
   reply with what changed + the commit SHA, then resolve.
 - WRONG: reply with the concrete refutation. Mention @coderabbitai
   only if we want its counter-response (it answers asynchronously,

@@ -38,6 +38,9 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
    resolved:.isMinimized, why:.minimizedReason, url,
    sha:(.body | capture("sha=(?<s>[0-9a-f]*)").s),
    failed:(.body | test("GPT review failed")),
+   model:(try (.body
+               | capture("(?m)^(?<m>[A-Za-z0-9._-]+) · ").m)
+          catch ""),
    body}' ||
 		fail "gpt comments fetch (graphql)"
 }
