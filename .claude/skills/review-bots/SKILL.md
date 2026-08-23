@@ -47,8 +47,10 @@ proposed action. Then STOP and wait for explicit approval.
 ## Phase 2 — act. Only approved items, exactly as approved.
 - VALID: implement; verify (build/tests); commit with a message
   referencing the finding. Right after the Co-Authored-By trailer,
-  add one `Assisted-By:` line per bot whose finding the commit
-  addresses — no email part, since not every assistant has one:
+  add one `Assisted-By:` line per bot whose finding THAT commit
+  fixes — the finders of this commit's flaw only, never the other
+  bots merely active on the PR — no email part, since not every
+  assistant has one:
   `coderabbitai` for CodeRabbit, `chatgpt-codex-connector` for
   Codex, `copilot-pull-request-reviewer` for Copilot, and for GPT
   the model name verbatim from its review header (the fetch row's
