@@ -199,9 +199,9 @@ static void test_order_bands()
 	      "semantic extraction follows the summary backbone");
 	check(p.take() == tid("t1"),
 	      "terms between summaries and dives: the index backbone");
-	check(p.take() == tid("d1"), "dives after nodes");
 	check(p.take() == tid("j1"),
-	      "bounded consolidation follows evidence gathering");
+	      "verdicts before dives: short calls that reshape the tree");
+	check(p.take() == tid("d1"), "dives after nodes");
 	check(p.take() == tid("f1"), "focuses after dives");
 	check(p.take() == tid("p1"),
 	      "probes last: gathered evidence writes before new "

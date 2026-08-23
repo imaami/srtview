@@ -19,12 +19,16 @@ namespace {
 // export edge floats a topic over its supportive components, and
 // heat (unbounded) moves everything across those bands.
 // Evidence extraction sits between nodes and the lexical terms pass;
-// pair judgments wait below dives, while an interactive answer jumps
-// the queue.  merge sits at the bottom: the fold judgment over the term
-// directory is most useful once the queue has otherwise drained
-// and the directory has stopped moving.
+// pair judgments sit between terms and dives -- a verdict is a
+// short call that reshapes the knowledge tree, a dive a long one
+// that adds an essay, and the lexicon the terms pass builds answers
+// many a name question before the judge sees it -- while an
+// interactive answer jumps the queue.  merge sits at the bottom:
+// the fold judgment over the term directory is most useful once
+// the queue has otherwise drained and the directory has stopped
+// moving.
 constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
-                                 0.4, 0.42, 1.75, 0.8, 4.0};
+                                 0.4, 0.42, 1.75, 1.25, 4.0};
 static_assert(std::size(kKindBase) == kind_count,
               "kKindBase mirrors agenda::kind");
 constexpr double kTierStep    = 1.0 / 32.0;
