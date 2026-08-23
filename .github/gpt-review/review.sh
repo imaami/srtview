@@ -20,10 +20,14 @@ readonly max_output_tokens="${GPT_REVIEW_MAX_OUTPUT_TOKENS:-64000}"
 # bounded so a curious model cannot flood its own context.
 readonly max_tool_bytes="${GPT_REVIEW_MAX_TOOL_BYTES:-50000}"
 readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
-# The wall clock's share: the job dies mute at its fifteen-minute
-# timeout, so the loop keeps its own deadline with room after it
-# for one forced finale, the comment and the sweep.
-readonly max_seconds="${GPT_REVIEW_MAX_SECONDS:-720}"
+# The wall clock's share, measured from script entry: exploration
+# rounds may spend this much, and everything after them lives on a
+# fixed reserve -- ninety seconds of forced finale, a comment post,
+# the sweep -- so the worst case stays inside the job's mute
+# fifteen-minute timeout with the checkout's overhead counted.
+readonly max_seconds="${GPT_REVIEW_MAX_SECONDS:-600}"
+readonly finale_seconds=90
+readonly explore_by=$((SECONDS + max_seconds))
 # The transcript is resent whole every round; forty rounds of tool
 # replies can outgrow a context window mid-review, so crossing
 # this forces the finale like the other budgets do.
@@ -229,7 +233,6 @@ deletions=$(jq -r '.deletions' "$tmp/pr.json")
 # the PR is ever checked out, built, sourced or executed -- this
 # job holds OPENAI_API_KEY -- and the working tree stays the
 # default branch's.
-deadline=$((SECONDS + max_seconds))
 auth=$(printf 'x-access-token:%s' "${GH_TOKEN:?}" | base64 -w0)
 timeout 120 \
 	git -c "http.${GITHUB_SERVER_URL:-https://github.com}/.extraheader=AUTHORIZATION: basic $auth" \
@@ -471,10 +474,14 @@ while :; do
 	# context -- and the model is told which.  A finale that still
 	# answers nothing fails aloud; the job timeout would have
 	# killed everything in silence.
+	# A round too close to the exploration deadline is not run a
+	# little: it is the finale's turn, on the finale's own clock.
+	# An exhausted remainder is never topped up.
+	remaining=$((explore_by - SECONDS))
 	spent=
 	if (( tool_calls >= max_tool_calls )); then
 		spent="the tool-call budget"
-	elif (( SECONDS >= deadline )); then
+	elif (( remaining < 45 )); then
 		spent="the clock"
 	elif (( $(stat -c %s "$tmp/input.json") >= max_transcript_bytes )); then
 		spent="the context budget"
@@ -485,13 +492,12 @@ while :; do
 			fail "out of time after $tool_calls tool call(s) with no review written."
 		forced=1
 		choice=none
+		remaining=$finale_seconds
 		jq --arg why "$spent" '. + [{role:"user", content:[{type:"input_text",
 			text:("Spent: " + $why + ". Write the review from what you have seen.")}]}]' \
 			"$tmp/input.json" > "$tmp/input.next" &&
 			mv "$tmp/input.next" "$tmp/input.json"
 	fi
-	remaining=$((deadline - SECONDS))
-	(( remaining >= 60 )) || remaining=90
 	jq -n \
 		--arg model "${OPENAI_MODEL:-gpt-5.6-sol}" \
 		--arg effort "${OPENAI_REASONING_EFFORT:-xhigh}" \
