@@ -66,8 +66,8 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
 		--jq '.[]|select(.user.login
 		                 | ascii_downcase | startswith("'"$BOT"'"))
 		      |{source:"review",id,state,
-		        outside:(.body|contains("Outside diff range")),
-		        body}') ||
+		        outside:((.body // "")|contains("Outside diff range")),
+		        body:(.body // "")}') ||
 		fail "reviews fetch"
 
 	issues=$(gh api "repos/$owner/$name/issues/$pr/comments" --paginate \
