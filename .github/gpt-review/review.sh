@@ -24,6 +24,10 @@ readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
 # timeout, so the loop keeps its own deadline with room after it
 # for one forced finale, the comment and the sweep.
 readonly max_seconds="${GPT_REVIEW_MAX_SECONDS:-720}"
+# The transcript is resent whole every round; forty rounds of tool
+# replies can outgrow a context window mid-review, so crossing
+# this forces the finale like the other budgets do.
+readonly max_transcript_bytes="${GPT_REVIEW_MAX_TRANSCRIPT_BYTES:-786432}"
 
 umask 077
 tmp=$(mktemp -d)
@@ -472,6 +476,8 @@ while :; do
 		spent="the tool-call budget"
 	elif (( SECONDS >= deadline )); then
 		spent="the clock"
+	elif (( $(stat -c %s "$tmp/input.json") >= max_transcript_bytes )); then
+		spent="the context budget"
 	fi
 	choice=auto
 	if [[ $spent ]]; then
