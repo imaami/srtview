@@ -414,11 +414,11 @@ MainWin::MainWin()
 			return;
 		pumpProbes();
 		harvestTerms();
-		feedLexicon();
 		harvestSpell();
 		stageMerge();
 		harvestMerge();
 		harvestFocus();
+		feedLexicon();
 		refreshKnowledge();
 	});
 	m_pump.start();
@@ -708,7 +708,7 @@ void MainWin::rebuildCorpus(bool fresh)
 	m_facts.corpus(std::move(nodes));
 	m_semantic.reset(takeId(semanticCorpus).hex(),
 	                 std::move(sources));
-	m_lexiconSize = -1;
+	m_lexicon.clear();
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
 	// Terms before focus, here and on the tick: whatever terms
@@ -2391,9 +2391,10 @@ void MainWin::semanticStep()
 // word, which is how GIDRA meets Ghidra.
 void MainWin::feedLexicon()
 {
-	if (m_termIndex.size() == m_lexiconSize)
-		return;
-	m_lexiconSize = m_termIndex.size();
+	// The groups as the index spells them now, in one order
+	// whatever order the hash walks them in, compared whole with
+	// what the engine has: the index changes by insert, by removal,
+	// and by a merge that re-owns spellings without a count moving.
 	QHash<QString, std::size_t> groupOf;
 	std::vector<std::vector<std::string>> groups;
 	for (auto it = m_termIndex.cbegin(); it != m_termIndex.cend(); ++it) {
@@ -2404,6 +2405,12 @@ void MainWin::feedLexicon()
 		}
 		groups[g].push_back(it.key().toStdString());
 	}
+	for (std::vector<std::string> &group : groups)
+		std::ranges::sort(group);
+	std::ranges::sort(groups);
+	if (groups == m_lexicon)
+		return;
+	m_lexicon = groups;
 	m_semantic.lexicon(std::move(groups));
 }
 

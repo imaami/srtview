@@ -298,8 +298,9 @@ private:
 	std::set<std::string>           m_termTopics;// index-only names
 	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
 	QHash<QString, QString>         m_termIndex; // folded term -> name
-	qsizetype                       m_lexiconSize = -1; // spellings
-	                                             // the engine has
+	std::vector<std::vector<std::string>>
+	                                m_lexicon;   // groups the
+	                                             // engine has
 	agenda::id                      m_rootId;    // pyramid root
 	std::vector<agenda::id>         m_chatPending;
 	QList<int>                      m_tally;     // hits per video
