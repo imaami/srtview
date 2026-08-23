@@ -398,10 +398,23 @@ run_git()
 			}
 		fi
 	done
+	# The model must see the seams: an unmarked prefix reads as
+	# the whole file, and a swallowed timeout as an empty result.
+	local status=0
 	env -i PATH=/usr/bin:/bin HOME="$tmp/home" TZ=UTC \
 		GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
-		timeout 30 git --no-pager "$sub" "$@" 2>&1 |
-		head -c "$max_tool_bytes" || :
+		timeout 30 git --no-pager "$sub" "$@" \
+		> "$tmp/git.out" 2>&1 || status=$?
+	head -c "$max_tool_bytes" "$tmp/git.out"
+	if (( $(stat -c %s "$tmp/git.out") > max_tool_bytes )); then
+		printf '\n[gpt-review: output truncated at %s bytes]\n' \
+			"$max_tool_bytes"
+	fi
+	if (( status == 124 )); then
+		printf '[gpt-review: git timed out after 30s]\n'
+	elif (( status != 0 )); then
+		printf '[gpt-review: git exited %d]\n' "$status"
+	fi
 }
 
 jq -n \
@@ -439,6 +452,7 @@ jq -n \
 # function_call_output item.  When the round budget is out the
 # model is told to write with what it has.
 tool_calls=0
+git_calls=0
 input_total=0
 output_total=0
 while :; do
@@ -518,6 +532,7 @@ while :; do
 		else
 			mapfile -t args < <(jq -r '(.arguments | fromjson).args[]?' <<< "$call")
 			run_git "${args[@]}" > "$tmp/tool.out"
+			git_calls=$((git_calls + 1))
 		fi
 		tool_calls=$((tool_calls + 1))
 		jq --arg id "$call_id" --rawfile out "$tmp/tool.out" \
@@ -557,7 +572,7 @@ if [[ $status != completed ]]; then
 fi
 
 model=$(jq -r '.model // empty' "$tmp/response.json")
-usage="$tool_calls git call(s) · input $input_total, output $output_total tokens"
+usage="$git_calls git call(s) · input $input_total, output $output_total tokens"
 
 post_comment "$(cat <<EOF
 ## GPT review
