@@ -49,6 +49,7 @@ gh_curl()
 {
 	local status
 	curl --silent --show-error --fail-with-body \
+		--connect-timeout 10 --max-time 120 \
 		-H "Authorization: Bearer ${GH_TOKEN:?GH_TOKEN is unset}" \
 		-H 'Accept: application/vnd.github+json' \
 		-H 'X-GitHub-Api-Version: 2022-11-28' \
@@ -157,8 +158,11 @@ fi
 # opening with / for a bot command, and a substitution run on
 # every line turned a second command line, or a /gpt reviewer,
 # into focus.
+# -c, not -q: -q hangs up at the first match, the writer upstream
+# dies of SIGPIPE, and pipefail turned a valid command early in a
+# long comment into "no command".  -c drains to the end.
 printf '%s\n' "$comment_body" | tr -d '\r' |
-	grep -q -E '^/gpt[[:space:]]+review([[:space:]]|$)' || {
+	grep -c -E '^/gpt[[:space:]]+review([[:space:]]|$)' > /dev/null || {
 	printf 'gpt-review: comment carries no /gpt review command line\n' >&2
 	exit 0
 }
@@ -472,9 +476,15 @@ while :; do
 
 	while IFS= read -r call; do
 		call_id=$(jq -r '.call_id' <<< "$call")
-		mapfile -t args < <(jq -r '(.arguments | fromjson).args[]?' <<< "$call")
+		# A response may carry more calls than the budget has
+		# left; the surplus is answered, never run.
+		if (( tool_calls >= max_tool_calls )); then
+			printf 'gpt-review tool: budget spent\n' > "$tmp/tool.out"
+		else
+			mapfile -t args < <(jq -r '(.arguments | fromjson).args[]?' <<< "$call")
+			run_git "${args[@]}" > "$tmp/tool.out"
+		fi
 		tool_calls=$((tool_calls + 1))
-		run_git "${args[@]}" > "$tmp/tool.out"
 		jq --arg id "$call_id" --rawfile out "$tmp/tool.out" \
 			'. + [{type:"function_call_output", call_id:$id, output:$out}]' \
 			"$tmp/input.json" > "$tmp/input.next" &&
