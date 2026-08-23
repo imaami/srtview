@@ -378,7 +378,8 @@ int main()
 		      && names.asked.back().second.find("\n---\nENTITY B\nNAME: ")
 		         != std::string::npos,
 		      "names sharing a word are put to the judge as entities");
-		check(names.asked.back().first.tier == 0
+		check(names.asked.size() >= 2
+		      && names.asked.back().first.tier == 0
 		      && names.asked[names.asked.size() - 2].first.tier == 1,
 		      "a verdict on names outranks one on records");
 		names.answer(agenda::kind::judge, 1,
@@ -421,7 +422,7 @@ int main()
 		             R"({"records":[{"kind":"claim","subject":"Deidre","relation":"runs on","object":"the JVM","statement":"Deidre runs on the JVM.","cues":[5]}]})");
 		e7.tick();
 		check(e7.entities().size() == 1
-		      && e7.entities()[0].predicates.size() == 3
+		      && e7.entities().front().predicates.size() == 3
 		      && terms.asks(agenda::kind::judge) == 0,
 		      "a name that appears later joins its group at once");
 		e7.lexicon({});
