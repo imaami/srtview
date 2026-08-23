@@ -177,10 +177,16 @@ static void test_order_bands()
 	p.add({.id = tid("a1"), .what = agenda::kind::answer});
 	p.add({.id = tid("p1"), .what = agenda::kind::probe});
 	p.add({.id = tid("f1"), .what = agenda::kind::focus});
+	// Flags as production sets them: a dive of a top-level topic
+	// carries the export edge, a judgment never does and a record
+	// judgment sits a tier under a name judgment.
 	p.add({.id = tid("d1"), .what = agenda::kind::dive});
-	p.add({.id = tid("j1"), .what = agenda::kind::judge});
-	p.add({.id = tid("t1"), .what = agenda::kind::terms});
-	p.add({.id = tid("e1"), .what = agenda::kind::extract});
+	p.add({.id = tid("j1"), .what = agenda::kind::judge, .tier = 1,
+	       .exported = false});
+	p.add({.id = tid("t1"), .what = agenda::kind::terms,
+	       .exported = false});
+	p.add({.id = tid("e1"), .what = agenda::kind::extract,
+	       .exported = false});
 	p.add({.id = tid("n1"), .what = agenda::kind::node, .tier = 2});
 	p.add({.id = tid("n2"), .what = agenda::kind::node, .tier = 1});
 	p.add({.id = tid("l1"), .what = agenda::kind::leaf});
