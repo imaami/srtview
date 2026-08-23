@@ -722,6 +722,10 @@ void MainWin::rebuildCorpus(bool fresh)
 	stageMerge();
 	harvestMerge();
 	harvestFocus();
+	// The lexicon before the first semantic tick: cached windows
+	// harvest from the first second on, and a name the directory
+	// unites must not be put to the judge meanwhile.
+	feedLexicon();
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
