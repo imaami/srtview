@@ -15,12 +15,13 @@ permissions:
 jobs:
   review:
     # The command may stand on any line of the comment -- one comment
-    # prods every bot -- so the gate is a substring test; the script
-    # matches the command at a line's start and does nothing else for
-    # a comment that merely mentions it.
+    # prods every bot -- so the gate matches it at the start of the
+    # body or of some line (fromJSON is how an expression spells a
+    # newline); the script still validates the exact command line.
     if: >-
       github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/gpt review') &&
+      (startsWith(github.event.comment.body, '/gpt review') ||
+       contains(github.event.comment.body, fromJSON('"\n/gpt review"'))) &&
       github.event.comment.user.login == github.repository_owner &&
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-latest
@@ -29,13 +30,16 @@ jobs:
     # are restricted to the default branch: a job can read it only
     # when it runs from there, which is this workflow and no other.
     environment: gpt-review
-    # A second /gpt review on the same PR supersedes the one running.
+    # A second /gpt review on the same PR waits for the one running.
     # Job-level on purpose: at workflow level every comment on the
-    # PR -- a bot's, a reply -- would enter the group and cancel a
-    # review under way before the job's if skipped it.
+    # PR -- a bot's, a reply -- would enter the group before the
+    # job's if skipped it.  Never cancel-in-progress: the gate can
+    # pass on a line the script then rejects -- a quoted command, a
+    # /gpt reviewer -- and such a run must not kill a real review
+    # and leave nothing.
     concurrency:
       group: gpt-review-${{ github.event.issue.number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
