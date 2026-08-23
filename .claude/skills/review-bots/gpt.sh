@@ -42,9 +42,9 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
 		fail "gpt comments fetch (graphql)"
 }
 
-# The trigger.  The command must open the comment -- the workflow
-# keys on its first line -- so the disclaimer follows it; the
-# reviewer reads focus off the command line only.
+# The trigger.  The command may stand on any line; the reviewer
+# reads every line that is not a command to some bot as its focus,
+# the disclaimer included, which is harmless.
 ask()
 {
 	[[ ${1:-} != *$'\n'* ]] || fail 'ask: the focus is one line'

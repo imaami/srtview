@@ -10,14 +10,21 @@ On a pull request, a trusted maintainer can write:
 /gpt review
 ```
 
-or add a focus, on the same line:
+or add a focus, on the command's line or in the lines around it:
 
 ```text
+@coderabbitai full review
+@codex review
 /gpt review concurrency, ownership, UB, and error paths
+
+Note to GPT: treat bloat as a flaw.
 ```
 
-The lines below the command are the commenter's own and are not sent
-to the model.
+The command may stand on any line, so one comment can prod every bot.
+Everything the comment says besides commands -- the rest of the
+command's line and every line that does not open with `/` or `@` --
+is sent to the model as the review focus; the other bots' orders are
+not.
 
 The workflow:
 

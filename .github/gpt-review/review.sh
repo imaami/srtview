@@ -140,16 +140,24 @@ if [[ $commenter != "$repo_owner" || ${GITHUB_TRIGGERING_ACTOR:-} != "$repo_owne
 	exit 0
 fi
 
-if [[ ! $comment_body =~ ^/gpt[[:space:]]+review([[:space:]]|$) ]]; then
-	printf 'gpt-review: comment is not a /gpt review command\n' >&2
+# The command stands at the start of a line, any line: one comment
+# prods every bot, each on a line of its own.  The focus is what the
+# comment says besides -- the rest of the command's line and every
+# line that is not a command to some bot, which is to say not one
+# that opens with / or @ -- so a note written for the reviewer
+# reaches it and the other bots' orders do not.
+command_line=$(printf '%s\n' "$comment_body" | tr -d '\r' |
+	grep -m1 -E '^/gpt[[:space:]]+review([[:space:]]|$)' || :)
+
+if [[ -z $command_line ]]; then
+	printf 'gpt-review: comment carries no /gpt review command line\n' >&2
 	exit 0
 fi
 
-# The focus is the rest of the command's line.  The lines below it
-# are the commenter's own -- a note to the thread, a signature --
-# and were being sent to the model as review focus.
-focus=$(printf '%s\n' "$comment_body" |
-	sed -n -E '1s@^/gpt[[:space:]]+review[[:space:]]*@@p' | tr -d '\r')
+focus=$(printf '%s\n' "$comment_body" | tr -d '\r' |
+	sed -E 's@^/gpt[[:space:]]+review[[:space:]]*@@; /^[/@]/d' |
+	awk 'NF { printf "%s", gap; gap = ""; seen = 1; print; next }
+	     seen { gap = gap "\n" }')
 
 react_eyes
 
