@@ -23,7 +23,9 @@ comment per review (no threads; a failure is a comment too, flagged
 `failed`), so its fetch rows carry the comment's node id as the
 thread id: `reply` posts a PR comment linking the review, `resolve`
 minimizes the review as resolved once every finding in it has its
-fix or refutation on record, `unresolve` restores it.
+fix or refutation on record, `unresolve` restores it, and `sweep`
+deletes the workflow's skipped runs (each real run also sweeps on
+its way out).
 
 ## Phase 1 — fetch & triage. No code edits, no API writes.
 Run fetch per bot in scope. Triage EVERY unresolved finding, including

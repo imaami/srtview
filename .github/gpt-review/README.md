@@ -119,11 +119,15 @@ or a `refs/pull/...` head and then running repository scripts.
 ## Files
 
 - `.github/workflows/gpt-review.yml` — trigger and least-privilege token
-  permissions (`contents: read`, `pull-requests: write`: the comment and
+  permissions (`contents: read`; `pull-requests: write`: the comment and
   the reaction are written to a pull request, which `issues: write` does
-  not cover).
+  not cover; `actions: write`: the sweep below).
 - `.github/gpt-review/review.sh` — GitHub/OpenAI API plumbing.
 - `.github/gpt-review/prompt.md` — review policy.
+- `.github/gpt-review/sweep.sh` — deletes this workflow's skipped runs.
+  Every comment on every PR wakes an `issue_comment` workflow and a
+  skipped job still leaves a run in the Actions list; each real run
+  sweeps them on its way out, and `gpt.sh sweep` does it by hand.
 
 ## Limits
 

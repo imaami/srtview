@@ -12,8 +12,8 @@
 # usage: gpt.sh (fetch | ask [focus] | reply <id> <body> |
 #                resolve <id> | unresolve <id> | comment <body>)
 
-VERBS='ask comment fetch reply resolve unresolve'
-USAGE='fetch | ask [focus] | reply <id> <body> | resolve <id> | unresolve <id> | comment <body>'
+VERBS='ask comment fetch reply resolve sweep unresolve'
+USAGE='fetch | ask [focus] | reply <id> <body> | resolve <id> | unresolve <id> | sweep | comment <body>'
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 # Every gpt-review comment on the PR, reviews and failures alike,
@@ -74,6 +74,18 @@ mutation($id:ID!){ minimizeComment(input:{subjectId:$id,classifier:RESOLVED})
 { minimizedComment { isMinimized }}}' \
 		--jq .data.minimizeComment.minimizedComment.isMinimized ||
 		fail "resolve $1"
+}
+
+# The Actions-list noise a comment-triggered workflow makes: every
+# real run sweeps it on the way out, and this does it by hand with
+# the caller's token, which needs actions: write on the repo.
+sweep()
+{
+	ctx
+	GH_TOKEN="${GH_TOKEN:-$(gh auth token)}" \
+	GITHUB_REPOSITORY="$owner/$name" \
+		bash "$(git rev-parse --show-toplevel)/.github/gpt-review/sweep.sh" ||
+		fail 'sweep (does the token have actions: write?)'
 }
 
 unresolve()

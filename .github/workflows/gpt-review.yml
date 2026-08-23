@@ -11,6 +11,8 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  # For the sweep: deleting this workflow's own skipped runs.
+  actions: write
 
 jobs:
   review:
@@ -53,3 +55,9 @@ jobs:
 
       - name: Review PR
         run: bash .github/gpt-review/review.sh
+
+      # Whatever became of the review: the skipped runs other
+      # comments left behind are noise by construction.
+      - name: Sweep skipped runs
+        if: always()
+        run: bash .github/gpt-review/sweep.sh
