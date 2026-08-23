@@ -23,7 +23,8 @@ readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
 
 umask 077
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+reaction_id=
+trap 'unreact_eyes || :; rm -rf "$tmp"' EXIT
 mkdir "$tmp/home"
 
 need()
@@ -94,18 +95,30 @@ fail()
 # the permission the review comment will need: a token short of it
 # fails here, before the paid call, with the refusal in the log --
 # nothing can reach the PR then, which is the point of knowing.
+# The reaction's id is kept, and the exit trap takes the eyes off
+# again whichever way the job ends: the other reviewers drop
+# theirs when they finish, and lingering eyes read as work still
+# under way.
 react_eyes()
 {
 	printf '%s\n' '{"content":"eyes"}' > "$tmp/reaction.json"
-	gh_curl \
+	reaction_id=$(gh_curl \
 		-X POST \
 		-H 'Content-Type: application/json' \
 		--data-binary "@$tmp/reaction.json" \
-		"$api/repos/$repo/issues/comments/$comment_id/reactions" \
-		>/dev/null || {
+		"$api/repos/$repo/issues/comments/$comment_id/reactions" |
+		jq -r '.id // empty') || {
 		printf 'gpt-review: the token cannot write to the pull request; no review was asked\n' >&2
 		exit 1
 	}
+}
+
+unreact_eyes()
+{
+	[[ $reaction_id ]] || return 0
+	gh_curl -X DELETE \
+		"$api/repos/$repo/issues/comments/$comment_id/reactions/$reaction_id" \
+		> /dev/null 2>&1 || :
 }
 
 # Cuts at a line boundary and then drains the rest: exiting early
