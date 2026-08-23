@@ -766,6 +766,9 @@ void SemanticEngine<Backend>::offer_judge(judge_work const &w)
 	agenda::task t;
 	t.id = w.current;
 	t.what = agenda::kind::judge;
+	// A verdict on two names restructures the tree; one on two
+	// records adds a tie.  Names go first within the kind.
+	t.tier = w.entity ? 0 : 1;
 	t.exported = false;
 	t.note = w.a.hex() + " ~ " + w.b.hex();
 	if (!w.entity) {

@@ -378,6 +378,9 @@ int main()
 		      && names.asked.back().second.find("\n---\nENTITY B\nNAME: ")
 		         != std::string::npos,
 		      "names sharing a word are put to the judge as entities");
+		check(names.asked.back().first.tier == 0
+		      && names.asked[names.asked.size() - 2].first.tier == 1,
+		      "a verdict on names outranks one on records");
 		names.answer(agenda::kind::judge, 1,
 		             R"({"relation":"same","rationale":"One name, two spellings."})");
 		e6.tick();
