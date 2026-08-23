@@ -563,10 +563,15 @@ while :; do
 
 	while IFS= read -r call; do
 		call_id=$(jq -r '.call_id' <<< "$call")
-		# A response may carry more calls than the budget has
-		# left; the surplus is answered, never run.
+		# A response may carry more calls than the budgets have
+		# left -- rounds or, with forty parallel calls of fifty
+		# kilobytes each, the transcript itself; the surplus is
+		# answered, never run, so the finale's resend still fits
+		# the window.
 		if (( tool_calls >= max_tool_calls )); then
 			printf 'gpt-review tool: budget spent\n' > "$tmp/tool.out"
+		elif (( $(stat -c %s "$tmp/input.json") >= max_transcript_bytes )); then
+			printf 'gpt-review tool: context budget spent\n' > "$tmp/tool.out"
 		else
 			mapfile -t args < <(jq -r '(.arguments | fromjson).args[]?' <<< "$call")
 			run_git "${args[@]}" > "$tmp/tool.out"
