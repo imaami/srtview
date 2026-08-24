@@ -118,6 +118,7 @@ void test_lifecycle()
 	ocr::tess bad("eng", "/nonexistent/tessdata");
 	check(!bad, "bogus tessdata leaves the engine down");
 	check(!bad.error().empty(), "and says why");
+	check(bad.datapath().empty(), "a downed engine has no datapath");
 	ocr::result const r = bad.read(canvas(64, 64).view(), {});
 	check(!r.err.empty() && r.lines.empty(),
 	      "read on a down engine reports, not crashes");
@@ -493,6 +494,7 @@ int main()
 
 	ocr::tess eng;
 	require(bool(eng), "system tessdata provides eng");
+	check(!eng.datapath().empty(), "a live engine names its models");
 	test_reads(eng);
 	test_recognition(eng);
 

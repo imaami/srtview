@@ -85,6 +85,10 @@ public:
 	explicit operator bool() const;
 	std::string_view error() const;
 
+	// The directory Init resolved the models from; empty while
+	// the engine is down.  Callers derive model identity from it.
+	std::string datapath() const;
+
 	result read(view const &v, options const &o);
 
 	static char const *version();

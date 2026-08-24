@@ -9,6 +9,7 @@
 #ifndef SRTVIEW_SRC_LECTOR_HPP_
 #define SRTVIEW_SRC_LECTOR_HPP_
 
+#include <string>
 #include <string_view>
 
 #include "decoder.hpp"
@@ -25,6 +26,7 @@ public:
 
 	explicit operator bool() const { return bool(m_tess); }
 	std::string_view error() const { return m_tess.error(); }
+	std::string datapath() const { return m_tess.datapath(); }
 
 	result perform(request const &r);
 

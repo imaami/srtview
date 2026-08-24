@@ -115,6 +115,11 @@ std::string_view tess::error() const
 	return m ? std::string_view(m->err) : std::string_view();
 }
 
+std::string tess::datapath() const
+{
+	return *this ? m->api.GetDatapath() : std::string();
+}
+
 char const *tess::version()
 {
 	return tesseract::TessBaseAPI::Version();
