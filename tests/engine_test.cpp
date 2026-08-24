@@ -115,7 +115,7 @@ using Engine = engine::SemanticEngine<fake>;
 
 Engine::source lecture(std::string id, std::size_t cues)
 {
-	Engine::source s{id, "/lectures/" + id + ".mp4", {}};
+	Engine::source s{id, "/lectures/" + id + ".mp4", {}, {}};
 	for (std::size_t i = 0; i < cues; ++i)
 		s.cues.push_back({std::uint32_t(i), double(i) * 5.0,
 		                  double(i) * 5.0 + 4.0,
@@ -169,6 +169,45 @@ int main()
 	check(renamed.key("semantic-extract-v1", renamed.window(0))
 	      == eng.key("semantic-extract-v1", eng.window(0)),
 	      "a renamed video keeps its window identity");
+
+	// --- frame text joins the body and the identity ---------------
+	{
+		fs::path const frig = rig / "frames";
+		fs::create_directories(frig);
+		fake fback{frig.string()};
+		Engine feng(fback, mix);
+		Engine::source src = lecture("aaaaaaaaaaaaaaa1", 300);
+		src.frames.push_back({5.0, "P-code | SLEIGH"});
+		src.frames.push_back({6.0, std::string(3000, 'x')});
+		src.frames.push_back({7.0, "clipped neighbor"});
+		src.frames.push_back({999999.0, "orphan slide"});
+		feng.reset("corpus-one", {src});
+		require(feng.windows() >= 2, "the lecture cuts to windows");
+		std::string const w0 =
+			engine::window_body(feng.window(0));
+		check(w0.find("@ [0:05.000] P-code | SLEIGH\n")
+		      != std::string::npos,
+		      "frame text renders into the window body");
+		check(w0.find("@ [") > w0.find("TITLE: ")
+		      && w0.find("@ [") < w0.find("#0 ["),
+		      "frame lines sit between the title and the cues");
+		check(w0.find(std::string(64, 'x')) == std::string::npos
+		      && w0.find("clipped neighbor") == std::string::npos,
+		      "the clip keeps the earliest frames and stops");
+		check(engine::window_body(feng.window(1)).find("@ [0:05")
+		      == std::string::npos,
+		      "a frame lands in its own window only");
+		std::string const wl = engine::window_body(
+			feng.window(feng.windows() - 1));
+		check(wl.find("orphan slide") != std::string::npos,
+		      "a stray past the last cue lands in the last window");
+		check(feng.key("semantic-extract-v1", feng.window(0))
+		      != eng.key("semantic-extract-v1", eng.window(0)),
+		      "frame text re-keys its window");
+		check(feng.key("semantic-extract-v1", feng.window(1))
+		      == eng.key("semantic-extract-v1", eng.window(1)),
+		      "a frameless window keeps its identity");
+	}
 
 	// --- extraction lands, records show, pairs are judged ---------
 	back.answer(agenda::kind::extract, 0,

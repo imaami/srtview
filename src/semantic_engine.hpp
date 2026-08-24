@@ -55,6 +55,10 @@ concept semantic_backend = requires(B &b, agenda::task t,
 namespace detail {
 inline constexpr std::size_t kWindowBytes = std::size_t{12} * 1024;
 inline constexpr std::size_t kWindowOverlap = 2;
+// One window's share of frame text: the earliest frames up to this
+// many rendered bytes; the clip happens at assignment, so the body
+// and the identity always agree on the clipped set.
+inline constexpr std::size_t kFrameBytes = 2048;
 inline constexpr std::size_t kJudgeFan = 4;
 inline constexpr std::size_t kEntityFan = 2;
 // One entity's share of a judge body, in bytes: the executor clips
@@ -182,6 +186,22 @@ inline std::string window_lines(semantic::window const &w)
 	return out;
 }
 
+// The on-screen text read inside the window's span: one line per
+// frame, rendered into the body and hashed into the identity alike
+// -- a window with different frame text is a different ask.
+inline std::string window_frames(semantic::window const &w)
+{
+	std::string out;
+	for (semantic::frame const &f : w.frames) {
+		out += "@ [";
+		out += fmt_time(f.at, true);
+		out += "] ";
+		out += f.text;
+		out += '\n';
+	}
+	return out;
+}
+
 inline std::string window_body(semantic::window const &w)
 {
 	std::string out = "SOURCE: ";
@@ -189,6 +209,7 @@ inline std::string window_body(semantic::window const &w)
 	out += "\nTITLE: ";
 	out += detail::title_line(std::string(w.title));
 	out += '\n';
+	out += window_frames(w);
 	out += window_lines(w);
 	return out;
 }
@@ -201,9 +222,10 @@ public:
 	// in transcript order, the number being the index.  The engine
 	// relies on that order and never re-establishes it.
 	struct source {
-		std::string                id;
-		std::string                title;
-		std::vector<semantic::cue> cues;
+		std::string                  id;
+		std::string                  title;
+		std::vector<semantic::cue>   cues;
+		std::vector<semantic::frame> frames; // sorted by at
 	};
 
 	SemanticEngine(Backend &back, semantic::hash8_fn h);
@@ -225,6 +247,10 @@ public:
 	// the text would buy the rule "same input, same key" with the
 	// one hint the model has.  Everything that changes the words
 	// -- a retranscribed subtitle is a new source id -- does re-key.
+	// Frame text is not like the title: it is substantive input --
+	// a reply that never saw the slide is a different answer -- so
+	// it rides in the text and the identity both, and a window
+	// re-keys when its frames change.
 	// The terms pass asks over the same windows, so one cut serves
 	// both.
 	std::size_t windows() const { return m_extract.size(); }
@@ -367,6 +393,7 @@ agenda::id SemanticEngine<Backend>::key(std::string_view tag,
 	k += w.source;
 	k += '\n';
 	k += window_lines(w);
+	k += window_frames(w);
 	return m_hash(k);
 }
 
@@ -451,6 +478,7 @@ void SemanticEngine<Backend>::reset(std::string corpus,
 template <semantic_backend Backend>
 void SemanticEngine<Backend>::cut(source const &s)
 {
+	std::vector<semantic::window> ws;
 	for (std::size_t first = 0; first < s.cues.size();) {
 		std::size_t last = first;
 		std::size_t bytes = 0;
@@ -461,15 +489,47 @@ void SemanticEngine<Backend>::cut(source const &s)
 			bytes += add;
 			++last;
 		}
-		semantic::window const w{s.id, s.title,
-			std::span(s.cues).subspan(first, last - first)};
-		agenda::id const id = key("semantic-extract-v1", w);
-		m_extract.push_back({id, id, w, 1, false});
+		ws.push_back({s.id, s.title,
+		              std::span(s.cues).subspan(first, last - first),
+		              {}});
 		if (last == s.cues.size())
 			break;
 		std::size_t const next = last - first > detail::kWindowOverlap
 		                       ? last - detail::kWindowOverlap : last;
 		first = next > first ? next : last;
+	}
+
+	// Frames partition across the windows by start time: window i
+	// owns [its first cue's start, window i+1's first cue's start),
+	// a stray before the first or past the last lands in the
+	// nearest window, and the per-window clip keeps the earliest
+	// frames.  Identities are computed only after the frames are
+	// attached: frame text keys (unlike the title -- see the
+	// accessor comment).
+	std::size_t at = 0;
+	for (std::size_t i = 0; i < ws.size(); ++i) {
+		std::size_t const begin = at;
+		while (at < s.frames.size()
+		       && (i + 1 == ws.size()
+		           || s.frames[at].at
+		              < ws[i + 1].cues.front().start))
+			++at;
+		std::size_t take = 0;
+		std::size_t bytes = 0;
+		while (begin + take < at) {
+			std::size_t const add =
+				s.frames[begin + take].text.size() + 16;
+			if (bytes + add > detail::kFrameBytes)
+				break;
+			bytes += add;
+			++take;
+		}
+		ws[i].frames = std::span(s.frames).subspan(begin, take);
+	}
+
+	for (semantic::window const &w : ws) {
+		agenda::id const id = key("semantic-extract-v1", w);
+		m_extract.push_back({id, id, w, 1, false});
 	}
 }
 

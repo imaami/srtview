@@ -48,13 +48,23 @@ struct cue {
 	std::string   text;
 };
 
+// On-screen text read from the video image at one moment (a slide,
+// a terminal) -- OCR output, never model output.  The written
+// spelling of spoken terms, carried beside the cues.
+struct frame {
+	double      at = 0.0;
+	std::string text;
+};
+
 // One contiguous run of a source's cues, numbers ascending, as
-// presented to extraction.  A view: the cues and names belong to
-// the source, which outlives every window cut from it.
+// presented to extraction, with the frame text read inside its
+// span.  A view: the cues, frames and names belong to the source,
+// which outlives every window cut from it.
 struct window {
-	std::string_view     source; // stable discovery identity
-	std::string_view     title;  // human-readable video/source path
-	std::span<cue const> cues;
+	std::string_view       source; // stable discovery identity
+	std::string_view       title;  // human-readable video/source path
+	std::span<cue const>   cues;
+	std::span<frame const> frames;
 };
 
 // Consecutive cited cues collapse into one span.  quote is exact

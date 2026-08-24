@@ -59,7 +59,7 @@ std::vector<semantic::cue> const kCues{
 
 semantic::window window()
 {
-	return {"video-identity", "/lecture/deploy.mp4", kCues};
+	return {"video-identity", "/lecture/deploy.mp4", kCues, {}};
 }
 
 semantic::record parse_one(std::string_view statement,
