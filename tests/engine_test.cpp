@@ -246,7 +246,8 @@ int main()
 		Engine gen2(tail, mix);
 		Engine::source fsrc = lecture("aaaaaaaaaaaaaaa1", 300);
 		fsrc.frames.push_back({5.0, "P-code | SLEIGH"});
-		gen2.reset("corpus-one", {fsrc});
+		gen2.reset("corpus-one", {fsrc,
+		                          lecture("aaaaaaaaaaaaaaa2", 40)});
 		check(gen2.knowledge().empty(),
 		      "a re-cut corpus starts its own catalog view");
 	}
