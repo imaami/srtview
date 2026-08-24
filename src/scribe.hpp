@@ -35,6 +35,9 @@ using ticket = std::uint64_t;    // 0 marks a refused post
 // maps it through its own upscale.
 struct request {
 	std::string  video;      // path; posters resolve ids
+	std::string  id;         // discovery identity, poster-resolved;
+	                         // the cache key downstream, empty =
+	                         // uncacheable
 	std::int64_t ms = 0;     // frame time, decoder semantics
 	options      opts;
 	std::uint8_t scale = 2;  // decode upscale, backend clamps

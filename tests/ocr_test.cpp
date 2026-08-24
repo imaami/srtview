@@ -6,13 +6,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <mutex>
 #include <semaphore>
 #include <string>
 #include <string_view>
+#include <unistd.h>
 #include <vector>
 
+#include "archive.hpp"
 #include "ocr.hpp"
 #include "scribe.hpp"
 
@@ -314,6 +318,105 @@ void test_mailbox_late_cancel()
 	check(!s.cancel(t), "and the ticket is truly gone");
 }
 
+// The archive's inner stand-in: counts performs, returns a can.
+struct probe {
+	ocr::result canned;
+	int calls = 0;
+
+	ocr::result perform(ocr::request const &)
+	{
+		++calls;
+		return canned;
+	}
+};
+
+void test_archive()
+{
+	namespace fs = std::filesystem;
+	fs::path const rig = fs::temp_directory_path()
+	                   / ("srtview-ocr-" + std::to_string(getpid()));
+	fs::remove_all(rig);
+
+	probe inner;
+	inner.canned.lines.push_back({"12 34 keeps leading digits",
+	                              5, 6, 70, 8, 91.25f});
+	inner.canned.lines.push_back({" spaced  text ",
+	                              1, 2, 3, 4, 100.0f});
+	inner.canned.conf = 95.625f;
+	ocr::archive<probe> arc(rig.string(), "eng", inner);
+
+	ocr::request r;
+	r.video = "/v.mp4";
+	r.id = "cafe0123";
+	r.ms = 93500;
+
+	ocr::result got = arc.perform(r);
+	check(inner.calls == 1 && got.lines.size() == 2,
+	      "miss performs and returns");
+	fs::path const slot = rig / "cafe0123" / "93500.a2.txt";
+	check(fs::exists(slot), "and stores at the keyed slot");
+
+	got = arc.perform(r);
+	check(inner.calls == 1, "hit skips the inner backend");
+	check(got.lines.size() == 2
+	      && got.lines[0].text == "12 34 keeps leading digits"
+	      && got.lines[1].text == " spaced  text "
+	      && got.lines[0].x == 5 && got.lines[0].w == 70
+	      && got.lines[0].conf == 91.25f && got.conf == 95.625f,
+	      "round-trip is exact");
+
+	probe quiet;
+	ocr::archive<probe> arc2(rig.string(), "eng", quiet);
+	r.ms = 100;
+	arc2.perform(r);
+	got = arc2.perform(r);
+	check(quiet.calls == 1 && got.lines.empty()
+	      && got.err.empty(),
+	      "a textless frame is remembered, not re-read");
+
+	r.ms = 93500;
+	{
+		std::ofstream f(slot, std::ios::trunc);
+		f << "tesseract 5.5.0 eng\n1 2 3 4 garbage\n";
+	}
+	got = arc.perform(r);
+	check(inner.calls == 2 && got.lines.size() == 2,
+	      "a corrupt slot re-performs");
+	arc.perform(r);
+	check(inner.calls == 2, "and is healed on the way");
+
+	{
+		std::ofstream f(slot, std::ios::trunc);
+		f << "tesseract 5.5.0 eng\n1 2 3 4 50 half a li";
+	}
+	arc.perform(r);
+	check(inner.calls == 3, "a torn slot re-performs");
+
+	probe raw;
+	ocr::archive<probe> arc3(rig.string(), "eng", raw);
+	ocr::request noid = r;
+	noid.id.clear();
+	arc3.perform(noid);
+	arc3.perform(noid);
+	check(raw.calls == 2, "no identity, no cache");
+	ocr::request rect = r;
+	rect.opts.rw = 10;
+	rect.opts.rh = 10;
+	arc3.perform(rect);
+	arc3.perform(rect);
+	check(raw.calls == 4, "an roi bypasses the cache");
+
+	probe failing;
+	failing.canned.err = "cannot decode";
+	ocr::archive<probe> arc4(rig.string(), "eng", failing);
+	r.ms = 200;
+	arc4.perform(r);
+	arc4.perform(r);
+	check(failing.calls == 2, "errors are not cached");
+
+	fs::remove_all(rig);
+}
+
 void test_mailbox_teardown()
 {
 	fake f;
@@ -348,6 +451,7 @@ int main()
 	test_mailbox_cancel();
 	test_mailbox_late_cancel();
 	test_mailbox_teardown();
+	test_archive();
 
 	ocr::tess eng;
 	require(bool(eng), "system tessdata provides eng");
