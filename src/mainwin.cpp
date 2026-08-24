@@ -216,11 +216,12 @@ MainWin::MainWin()
 	, m_facts(hash8)
 	, m_semantic(m_facts, hash8)
 	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
-	             m_ocr, this)
+	             this)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
 	           m_playback, this)
 {
 	m_grab.setListener(this, this);
+	m_grab.setSink(&m_ocr);
 	m_ocr.setListener(this, this);
 	m_exportTick.start();
 	// Clicks on the top or bottom chrome focus the footer: neither
@@ -551,16 +552,14 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 
 	// Register under the discovery identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.
-	// The reader hears about the switch unconditionally -- an
-	// unresolvable identity must clear its target, or a later seek
-	// would post frames for the previous video.
+	// The grabber hears about every switch -- an unresolvable
+	// identity clears its target rather than keeping the previous
+	// video's -- and its worker feeds the OCR desk from there.
 	QString const id = videoId(video);
-	m_ocr.setVideo(video, id);
+	m_grab.setVideo(video, id);
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
-		m_grab.setVideo(video, id);
-		ocrSweep();
 	}
 	m_facts.heat(offerFacts(srt), kFocusHeat);
 
@@ -2583,7 +2582,6 @@ void MainWin::writePlaylistVersion()
 
 void MainWin::grabsIdle()
 {
-	ocrSweep();
 	if (m_exportPending)
 		runExport(true);
 }
@@ -2594,27 +2592,8 @@ void MainWin::grabProgress()
 		runExport(false);
 }
 
-// Post every grabbed pick of every playlist video for reading: the
-// frames directory is the input queue, derived from the grabber's
-// own accessor so the layout lives in one place.  The whole
-// playlist, not just the shown video -- boundary picks finish
-// encoding after a hop-heavy search has moved on, and a sweep
-// bound to the current video would strand them (it did: 236 of a
-// 538-pick harvest).  Cheap to repeat -- OcrQ posts each frame
-// once per session and the archive remembers across them.
-void MainWin::ocrSweep()
-{
-	for (PlayItem const &it : m_playlist) {
-		if (it.id.isEmpty())
-			continue;
-		m_ocr.sweep(it.video, it.id,
-		            QFileInfo(m_grab.framePath(it.id, 0))
-		            .absolutePath());
-	}
-}
-
 // ocr_listener: finished readings land.  The archive has already
-// persisted them off-thread; phase 2 only journals the arrival.
+// persisted them off-thread; for now the arrival is journaled.
 void MainWin::ocrReady()
 {
 	for (ocr::note const &n : m_ocr.drain()) {

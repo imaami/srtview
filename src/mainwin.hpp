@@ -215,7 +215,6 @@ private:
 	void grabsIdle() override;
 	void grabProgress() override;
 	void ocrReady() override;
-	void ocrSweep();
 	void startExport();
 	void runExport(bool drained);
 	void writePlaylistVersion();
@@ -252,8 +251,9 @@ private:
 	SearchBar<SearchCtl>            m_bar;
 	KnowledgePane                   m_know;
 	MpvLink<PlaybackCtl>            m_link;
+	OcrQ                            m_ocr;   // before the grabber:
+	                                         // outlives its feeder
 	Grabber                         m_grab;
-	OcrQ                            m_ocr;
 	Facts                           m_facts;
 	engine::SemanticEngine<Facts>   m_semantic;
 	PlaybackCtl                     m_playback;

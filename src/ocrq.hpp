@@ -1,28 +1,30 @@
-// ocrq.hpp -- the Qt face of the OCR pipeline: QString video paths
-// and qint64 milliseconds in, drained ocr::note batches out, the
-// scribe's worker-thread poke bounced into the listener's thread
-// as a queued call (grab_listener's pattern).  A concrete inline
-// shim like DecoderQ: one consumer, no type axis.  Owns the whole
-// stack -- lector reads, archive remembers under
-// $XDG_CACHE_HOME/srtview/ocr/<video id>/, scribe queues -- and
-// SRTVIEW_OCR=0 leaves the desk inert.  setListener before the
-// first post; setVideo, post, sweep and drain belong to the UI
-// thread -- the scribe is the only thread boundary.
+// ocrq.hpp -- the Qt face of the OCR pipeline, and deliberately
+// nothing but machinery: the UI constructs it, wires it once, and
+// drains finished readings out of the event loop; the grabber's
+// worker feeds it pick frames through pick_sink; the scribe's
+// worker performs them.  No current-video mirror, no posted-set
+// bookkeeping, no filesystem access on the UI thread --
+// coordination state on the UI side is how 236 picks got stranded
+// once.  SRTVIEW_OCR=0 constructs nothing at all: no model load,
+// no worker thread.  A concrete inline shim like DecoderQ: one
+// consumer, no type axis.
 #ifndef SRTVIEW_SRC_OCRQ_HPP_
 #define SRTVIEW_SRC_OCRQ_HPP_
 
 #include <QDir>
 #include <QFile>
-#include <QHash>
 #include <QMetaObject>
 #include <QObject>
-#include <QSet>
 #include <QString>
 
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "archive.hpp"
+#include "grabber.hpp"
 #include "lector.hpp"
 #include "scribe.hpp"
 
@@ -34,71 +36,44 @@ protected:
 	~ocr_listener() = default;
 };
 
-class OcrQ
+class OcrQ : public pick_sink
 {
 public:
 	OcrQ()
-		: m_back(cacheRoot().toStdString(), "eng", m_lector),
-		  m_desk(m_back, &OcrQ::poke, this)
 	{
+		if (qEnvironmentVariable("SRTVIEW_OCR")
+		    != QStringLiteral("0"))
+			m_s.emplace(cacheRoot().toStdString(),
+			            &OcrQ::poke, this);
 	}
 
+	// Wire before the grabber can feed; ctx's thread receives.
 	void setListener(QObject *ctx, ocr_listener *l)
 	{
 		m_ctx = ctx;
 		m_l = l;
 	}
 
-	// The video whose jumps are being followed (set on every
-	// open).  An unresolvable identity clears the target: better
-	// no posts than posts landing on the previous video.
-	void setVideo(QString const &path, QString const &id)
+	// pick_sink: the grabber's worker announces a pick frame.
+	// Conversions plus one short-lock queue push, nothing else.
+	void pickReady(QString const &path, QString const &id,
+	               qint64 ms, bool rush) override
 	{
-		if (path.isEmpty() || id.isEmpty()) {
-			m_path.clear();
-			m_id.clear();
-			return;
-		}
-		m_path = path;
-		m_id = id;
+		if (m_s && ms >= 0)
+			m_s->desk.post(req(path, id, ms), rush);
 	}
 
-	// A jump landed at ms: read the inspected frame first.
-	ocr::ticket post(qint64 ms, bool rush)
+	std::vector<ocr::note> drain()
 	{
-		if (!m_on || m_path.isEmpty() || ms < 0)
-			return 0;
-		m_posted[m_id].insert(ms);
-		return m_desk.post(req(m_path, m_id, ms), rush);
+		return m_s ? m_s->desk.drain()
+		           : std::vector<ocr::note>();
 	}
 
-	// Every grabbed pick of one video: the picks on disk are the
-	// input queue, one post per frame per session -- the scribe
-	// coalesces in-flight twins, the archive absorbs the
-	// already-read.  Any video, not just the shown one: boundary
-	// picks finish encoding after the user has hopped away, so
-	// the caller re-offers every playlist video each time the
-	// grabber drains.
-	void sweep(QString const &path, QString const &id,
-	           QString const &framesDir)
+	void stop()
 	{
-		if (!m_on || path.isEmpty() || id.isEmpty())
-			return;
-		QSet<qint64> &posted = m_posted[id];
-		auto const names = QDir(framesDir).entryList(
-			{QStringLiteral("*.png")}, QDir::Files);
-		for (QString const &name : names) {
-			bool ok = false;
-			qint64 const ms = name.chopped(4).toLongLong(&ok);
-			if (!ok || posted.contains(ms))
-				continue;
-			posted.insert(ms);
-			m_desk.post(req(path, id, ms), false);
-		}
+		if (m_s)
+			m_s->desk.stop();
 	}
-
-	std::vector<ocr::note> drain() { return m_desk.drain(); }
-	void stop() { m_desk.stop(); }
 
 private:
 	// The opportunistic knobs: auto segmentation proved clean on
@@ -129,7 +104,7 @@ private:
 		return r;
 	}
 
-	// The scribe's poke, on the worker thread: bounce into the
+	// The scribe's poke, on its worker thread: bounce into the
 	// listener's thread as a queued call.
 	static void poke(void *self)
 	{
@@ -140,18 +115,21 @@ private:
 				Qt::QueuedConnection);
 	}
 
-	ocr::lector                            m_lector;
-	ocr::archive<ocr::lector>              m_back;
-	QString                                m_path, m_id;
-	QHash<QString, QSet<qint64>>           m_posted;
-	QObject                               *m_ctx = nullptr;
-	ocr_listener                          *m_l = nullptr;
-	bool m_on = qEnvironmentVariable("SRTVIEW_OCR")
-	            != QStringLiteral("0");
-	// Last on purpose: destroyed first, so the worker joins while
-	// the backend and the callback state above are still alive --
-	// a live job's poke must never read dead members.
-	ocr::scribe<ocr::archive<ocr::lector>> m_desk;
+	// The whole pipeline or nothing; the scribe last, so it
+	// joins first while everything it can touch still lives.
+	struct stack {
+		stack(std::string root, void (*pk)(void *), void *cx)
+			: back(std::move(root), "eng", read),
+			  desk(back, pk, cx) {}
+
+		ocr::lector                            read;
+		ocr::archive<ocr::lector>              back;
+		ocr::scribe<ocr::archive<ocr::lector>> desk;
+	};
+
+	QObject             *m_ctx = nullptr;
+	ocr_listener        *m_l = nullptr;
+	std::optional<stack> m_s;   // last: destroyed first
 };
 
 #endif // SRTVIEW_SRC_OCRQ_HPP_

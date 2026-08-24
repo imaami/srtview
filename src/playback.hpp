@@ -10,7 +10,6 @@
 #include <QAction>
 
 class Grabber;
-class OcrQ;
 class mpv_link_base;
 class srt_view_base;
 class QStatusBar;
@@ -29,7 +28,7 @@ class PlaybackCtl
 public:
 	PlaybackCtl(mpv_link_base &link, srt_view_base &view,
 	            QStatusBar &status, Trail &trail, Grabber &grab,
-	            OcrQ &ocr, video_sync *sync);
+	            video_sync *sync);
 
 	void seekCue(int cue, bool forcePause);
 	void setPause(bool on);
@@ -58,7 +57,6 @@ private:
 	QStatusBar     &m_status;
 	Trail          &m_trail;
 	Grabber        &m_grab;
-	OcrQ           &m_ocr;
 	video_sync     *m_sync;
 	QAction         m_followAct;
 };
