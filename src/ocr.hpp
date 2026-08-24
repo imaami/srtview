@@ -42,6 +42,13 @@ inline constexpr bool valid_layout(layout l)
 	return std::to_underlying(l) < layout_count;
 }
 
+// Bumped whenever any result-shaping behavior changes -- the
+// upscale filter, the resolution hint, the trimming, the box
+// conversion, the segmentation map.  Cached results carry it, so
+// a pipeline change re-earns its slots exactly like a library or
+// model upgrade does.
+inline constexpr unsigned pipeline_version = 1;
+
 struct options {
 	int    rx = 0;       // region of interest in view pixels;
 	int    ry = 0;       // zero size = the whole image

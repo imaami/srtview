@@ -81,6 +81,8 @@ public:
 		m_stamp += tess::version();
 		m_stamp += ' ';
 		m_stamp += label;
+		m_stamp += " pipe ";
+		m_stamp += std::to_string(pipeline_version);
 	}
 
 	result perform(request const &r)

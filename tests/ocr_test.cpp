@@ -384,7 +384,8 @@ void test_archive()
 
 	std::string const stamp = "tesseract "
 	                        + std::string(ocr::tess::version())
-	                        + " eng";
+	                        + " eng pipe "
+	                        + std::to_string(ocr::pipeline_version);
 	r.ms = 93500;
 	{
 		std::ofstream f(slot, std::ios::trunc);
