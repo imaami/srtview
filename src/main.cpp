@@ -42,6 +42,10 @@
 //      SRTVIEW_LLM_PACE -- quiet seconds between summarization
 //                          tasks (default 3, 0 disables): thermal
 //                          breathing room for the GPU
+//      SRTVIEW_OCR      -- 0 disables the frame-text reader; on by
+//                          default: jumped-to frames and grabbed
+//                          picks are OCR'd once and cached under
+//                          $XDG_CACHE_HOME/srtview/ocr
 //      SRTVIEW_DEBUG    -- log IPC traffic, player health and facts
 //                          pipeline tasks to stderr; state flips are
 //                          logged always

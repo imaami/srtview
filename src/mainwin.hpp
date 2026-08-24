@@ -215,6 +215,7 @@ private:
 	void grabsIdle() override;
 	void grabProgress() override;
 	void ocrReady() override;
+	void ocrSweep();
 	void startExport();
 	void runExport(bool drained);
 	void writePlaylistVersion();

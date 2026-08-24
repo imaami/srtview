@@ -2,6 +2,7 @@
 
 #include "grabber.hpp"
 #include "mpvlink.hpp"
+#include "ocrq.hpp"
 #include "srtedit.hpp"
 #include "timefmtq.hpp"
 
@@ -10,9 +11,9 @@
 
 PlaybackCtl::PlaybackCtl(mpv_link_base &link, srt_view_base &view,
                          QStatusBar &status, Trail &trail,
-                         Grabber &grab, video_sync *sync)
+                         Grabber &grab, OcrQ &ocr, video_sync *sync)
 	: m_link(link), m_view(view), m_status(status), m_trail(trail),
-	  m_grab(grab), m_sync(sync)
+	  m_grab(grab), m_ocr(ocr), m_sync(sync)
 {
 	m_followAct.setText(QStringLiteral("&Follow playback\t(f)"));
 	m_followAct.setCheckable(true);
@@ -52,6 +53,7 @@ bool PlaybackCtl::jumpTo(double t, bool forcePause)
 		m_trail.driftTo(before);
 	m_view.setPlayTime(t);
 	m_grab.enqueue(t);
+	m_ocr.post(qint64(t * 1000.0 + 0.5), true);
 	return true;
 }
 
@@ -99,6 +101,7 @@ bool PlaybackCtl::applyTime(double t)
 	m_view.setPlayTime(t);
 	m_trail.noteVideo(t);
 	m_grab.enqueue(t);
+	m_ocr.post(qint64(t * 1000.0 + 0.5), true);
 	return true;
 }
 

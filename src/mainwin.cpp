@@ -216,7 +216,7 @@ MainWin::MainWin()
 	, m_facts(hash8)
 	, m_semantic(m_facts, hash8)
 	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
-	             this)
+	             m_ocr, this)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
 	           m_playback, this)
 {
@@ -557,6 +557,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_trail.setVideo(id);
 		m_grab.setVideo(video, id);
 		m_ocr.setVideo(video, id);
+		ocrSweep();
 	}
 	m_facts.heat(offerFacts(srt), kFocusHeat);
 
@@ -2579,6 +2580,7 @@ void MainWin::writePlaylistVersion()
 
 void MainWin::grabsIdle()
 {
+	ocrSweep();
 	if (m_exportPending)
 		runExport(true);
 }
@@ -2587,6 +2589,18 @@ void MainWin::grabProgress()
 {
 	if (m_exportPending && m_exportTick.elapsed() > 15000)
 		runExport(false);
+}
+
+// Post every grabbed pick of the shown video for reading: the
+// frames directory is the input queue, derived from the grabber's
+// own accessor so the layout lives in one place.  Cheap to repeat
+// -- OcrQ posts each frame once per session and the archive
+// remembers across them.
+void MainWin::ocrSweep()
+{
+	if (QString const id = m_trail.videoId(); !id.isEmpty())
+		m_ocr.sweep(QFileInfo(m_grab.framePath(id, 0))
+		            .absolutePath());
 }
 
 // ocr_listener: finished readings land.  The archive has already
