@@ -6,6 +6,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include <algorithm>
 #include <cstdlib>
 #include <ranges>
 #include <utility>
@@ -85,8 +86,10 @@ void decoder::close()
 {
 	sws_freeContext(m_sws_thumb);
 	sws_freeContext(m_sws_full);
+	sws_freeContext(m_sws_gray);
 	m_sws_thumb = nullptr;
 	m_sws_full = nullptr;
+	m_sws_gray = nullptr;
 	av_packet_free(&m_pkt);
 	av_frame_free(&m_have);
 	av_frame_free(&m_ahead);
@@ -183,6 +186,29 @@ bool decoder::thumb_at(std::int64_t ms, thumb &out)
 	std::uint8_t *dst[4] = {out.px.data()};
 	int const stride[4] = {thumb_w};
 	return sws_scale(m_sws_thumb, m_have->data, m_have->linesize,
+	                 0, m_have->height, dst, stride) > 0;
+}
+
+bool decoder::gray_at(std::int64_t ms, int scale, gray &out)
+{
+	if (!decode_to(ms))
+		return false;
+	scale = std::clamp(scale, 1, gray_scale_max);
+	int const w = m_have->width * scale;
+	int const h = m_have->height * scale;
+	m_sws_gray = sws_getCachedContext(m_sws_gray,
+		m_have->width, m_have->height,
+		AVPixelFormat(m_have->format),
+		w, h, AV_PIX_FMT_GRAY8, SWS_LANCZOS,
+		nullptr, nullptr, nullptr);
+	if (!m_sws_gray)
+		return false;
+	out.width = w;
+	out.height = h;
+	out.px.resize(std::size_t(w) * std::size_t(h));
+	std::uint8_t *dst[4] = {out.px.data()};
+	int const stride[4] = {w};
+	return sws_scale(m_sws_gray, m_have->data, m_have->linesize,
 	                 0, m_have->height, dst, stride) > 0;
 }
 

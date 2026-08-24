@@ -8,8 +8,10 @@
 // targets skip the seek entirely (bisection revisits neighborhoods).
 // Probes only ever become 64x36 grayscale compare thumbs straight
 // out of swscale; a full RGB frame is produced solely for a pick
-// that is about to be encoded.  Blocking by design: lives on the
-// grabber's worker thread.
+// that is about to be encoded; an OCR read takes the third path,
+// packed gray8 at an integer upscale, still one sws pass with no
+// RGB detour.  Blocking by design: lives on the calling worker
+// thread (the grabber's, or the OCR scribe's).
 #ifndef SRTVIEW_SRC_DECODER_HPP_
 #define SRTVIEW_SRC_DECODER_HPP_
 
@@ -45,6 +47,16 @@ struct frame {
 	int height = 0;
 };
 
+// One frame as tightly packed gray8 at an integer upscale, for
+// OCR: text recognition wants x-heights the source may not give.
+inline constexpr int gray_scale_max = 4;
+
+struct gray {
+	std::vector<std::uint8_t> px;    // stride = width
+	int width = 0;
+	int height = 0;
+};
+
 class decoder
 {
 public:
@@ -63,6 +75,9 @@ public:
 	bool thumb_at(std::int64_t ms, thumb &out);
 	bool frame_at(std::int64_t ms, frame &out);
 
+	// Same frame as gray8; scale is clamped to 1..gray_scale_max.
+	bool gray_at(std::int64_t ms, int scale, gray &out);
+
 private:
 	bool decode_to(std::int64_t ms);     // target frame into m_have
 	bool next_frame();                   // shift m_ahead into m_have
@@ -75,6 +90,7 @@ private:
 	AVPacket        *m_pkt = nullptr;
 	SwsContext      *m_sws_thumb = nullptr;
 	SwsContext      *m_sws_full = nullptr;
+	SwsContext      *m_sws_gray = nullptr;
 	std::int64_t     m_have_pts = -1;    // ms
 	std::int64_t     m_ahead_pts = -1;   // ms
 	int              m_stream = -1;
