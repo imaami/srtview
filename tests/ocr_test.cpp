@@ -418,6 +418,13 @@ void test_archive()
 	arc.perform(r);
 	check(inner.calls == 5, "an oversized slot re-performs");
 
+	{
+		std::ofstream f(slot, std::ios::trunc);
+		f << stamp << "\n0 0 -1 1 50 forged\n";
+	}
+	arc.perform(r);
+	check(inner.calls == 6, "an impossible box re-performs");
+
 	probe raw;
 	ocr::archive<probe> arc3(rig.string(), "eng", raw);
 	ocr::request noid = r;

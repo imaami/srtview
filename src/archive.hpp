@@ -117,9 +117,10 @@ private:
 	}
 
 	// Strict on purpose: a header from any other recognizer
-	// configuration, any malformed line, a torn tail, or an
-	// implausibly large slot all fail into a miss.  The mean
-	// confidence is derived, never stored.
+	// configuration, any malformed line, a torn tail, an
+	// implausibly large slot, or a span no recognizer could have
+	// emitted -- the store is world-editable state -- all fail
+	// into a miss.  The mean confidence is derived, never stored.
 	std::optional<result> load(std::filesystem::path const &p) const
 	{
 		constexpr std::size_t kSlotCap = std::size_t{1} << 20;
@@ -138,7 +139,11 @@ private:
 			      && detail::eat(line, s.y)
 			      && detail::eat(line, s.w)
 			      && detail::eat(line, s.h)
-			      && detail::eat(line, s.conf)))
+			      && detail::eat(line, s.conf))
+			    || line.empty())
+				return {};
+			if (s.x < 0 || s.y < 0 || s.w <= 0 || s.h <= 0
+			    || !(s.conf >= 0.0f && s.conf <= 100.0f))
 				return {};
 			s.text.assign(line);
 			sum += s.conf;
