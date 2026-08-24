@@ -11,9 +11,11 @@ add_executable(srtview
 	exporter.cpp
 	fundo.c
 	knowledge.cpp
+	lector.cpp
 	list.c
 	llm.c
 	loop.c
+	ocr.cpp
 	agenda.cpp
 	facts.cpp
 	search.cpp
@@ -28,7 +30,8 @@ add_executable(srtview
 	selftest.cpp
 )
 target_link_libraries(srtview PRIVATE Qt6::Widgets Qt6::Network
-                      PkgConfig::FFMPEG CURL::libcurl Threads::Threads)
+                      PkgConfig::FFMPEG PkgConfig::TESSERACT
+                      CURL::libcurl Threads::Threads)
 target_compile_options(srtview PRIVATE -Wall -Wextra)
 
 install(TARGETS srtview RUNTIME DESTINATION bin)

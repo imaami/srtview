@@ -221,6 +221,7 @@ MainWin::MainWin()
 	           m_playback, this)
 {
 	m_grab.setListener(this, this);
+	m_ocr.setListener(this, this);
 	m_exportTick.start();
 	// Clicks on the top or bottom chrome focus the footer: neither
 	// bar is focusable by itself, and focusing the menu bar would
@@ -555,6 +556,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
 		m_grab.setVideo(video, id);
+		m_ocr.setVideo(video, id);
 	}
 	m_facts.heat(offerFacts(srt), kFocusHeat);
 
@@ -2587,6 +2589,22 @@ void MainWin::grabProgress()
 		runExport(false);
 }
 
+// ocr_listener: finished readings land.  The archive has already
+// persisted them off-thread; phase 2 only journals the arrival.
+void MainWin::ocrReady()
+{
+	for (ocr::note const &n : m_ocr.drain()) {
+		if (!n.res.err.empty())
+			dbgHop(QStringLiteral("ocr: %1ms %2")
+			       .arg(n.r.ms)
+			       .arg(QString::fromStdString(n.res.err)));
+		else
+			dbgHop(QStringLiteral("ocr: %1ms %2 lines conf %3")
+			       .arg(n.r.ms).arg(n.res.lines.size())
+			       .arg(double(n.res.conf), 0, 'f', 1));
+	}
+}
+
 void MainWin::runExport(bool drained)
 {
 	QList<exporter::source> vids;
@@ -3062,6 +3080,7 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
+	m_ocr.stop();
 	m_grab.shutdown();
 	m_link.shutdown();
 	ev->accept();

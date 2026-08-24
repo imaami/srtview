@@ -12,6 +12,7 @@
 #include "grabber.hpp"
 #include "knowledge.hpp"
 #include "mpvlink.hpp"
+#include "ocrq.hpp"
 #include "playback.hpp"
 #include "prefs.hpp"
 #include "search.hpp"
@@ -32,7 +33,8 @@
 #include <vector>
 
 class MainWin : public QMainWindow, private search_nav,
-                private grab_listener, private video_sync
+                private grab_listener, private ocr_listener,
+                private video_sync
 {
 public:
 	MainWin();
@@ -212,6 +214,7 @@ private:
 	QList<play_entry> corpusEntries();
 	void grabsIdle() override;
 	void grabProgress() override;
+	void ocrReady() override;
 	void startExport();
 	void runExport(bool drained);
 	void writePlaylistVersion();
@@ -249,6 +252,7 @@ private:
 	KnowledgePane                   m_know;
 	MpvLink<PlaybackCtl>            m_link;
 	Grabber                         m_grab;
+	OcrQ                            m_ocr;
 	Facts                           m_facts;
 	engine::SemanticEngine<Facts>   m_semantic;
 	PlaybackCtl                     m_playback;
