@@ -86,8 +86,12 @@ public:
 	void enqueue(QString const &path, QString const &id, double t);
 
 	// The recorded picks of a hit; false while not yet grabbed.
-	bool picksFor(QString const &id, qint64 hitMs,
-	              qint64 &prev, qint64 &next);
+	// The path rides along because a first manifest touch through
+	// this query must also schedule the replay, marshalled to the
+	// worker -- an export over a fully cached video asks and asks
+	// and never enqueues, so no other call would carry the path.
+	bool picksFor(QString const &path, QString const &id,
+	              qint64 hitMs, qint64 &prev, qint64 &next);
 
 	// Cache location of one frame (may not exist).
 	QString framePath(QString const &id, qint64 ms) const;

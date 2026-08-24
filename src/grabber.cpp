@@ -153,11 +153,15 @@ void Grabber::replayPicks(QString const &path, QString const &id)
 	}
 }
 
-bool Grabber::picksFor(QString const &id, qint64 hitMs,
-                       qint64 &prev, qint64 &next)
+bool Grabber::picksFor(QString const &path, QString const &id,
+                       qint64 hitMs, qint64 &prev, qint64 &next)
 {
 	loadKnown(id);
 	QMutexLocker const lock(&m_lock);
+	if (!m_replayed.contains(id))
+		QMetaObject::invokeMethod(this, [this, path, id] {
+			replayPicks(path, id);
+		}, Qt::QueuedConnection);
 	auto const video = m_picks.constFind(id);
 	if (video == m_picks.constEnd())
 		return false;

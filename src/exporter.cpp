@@ -200,7 +200,7 @@ void partHit(sink &k, QString const &part, transcript const &tx,
 	md += snippet(tx, i);
 	qint64 const ms = qint64(tx.cues[i].start * 1000.0 + 0.5);
 	qint64 prev = -1, next = -1;
-	if (!k.grab.picksFor(v.id, ms, prev, next)) {
+	if (!k.grab.picksFor(v.video, v.id, ms, prev, next)) {
 		md += QStringLiteral("\n*(frames pending)*\n");
 		return;                      // queued by the grouping pass
 	}
@@ -218,7 +218,7 @@ void exportHit(sink &k, transcript const &tx, std::size_t i,
 	k.md += snippet(tx, i);
 	qint64 const ms = qint64(tx.cues[i].start * 1000.0 + 0.5);
 	qint64 prev = -1, next = -1;
-	if (!k.grab.picksFor(v.id, ms, prev, next)) {
+	if (!k.grab.picksFor(v.video, v.id, ms, prev, next)) {
 		k.grab.enqueue(v.video, v.id, tx.cues[i].start);
 		++k.st.queued;
 		k.md += QStringLiteral("\n*(frames pending)*\n");
