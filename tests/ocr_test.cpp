@@ -522,19 +522,25 @@ int main()
 			   + std::to_string(getpid()));
 		fs::remove_all(shelf);
 		fs::create_directories(shelf);
-		std::error_code ec;
+		std::error_code engEc, finEc, dropEc;
 		if (hasEng)
 			fs::create_symlink(data / "eng.traineddata",
-			                   shelf / "eng.traineddata", ec);
-		if (hasEng && hasFin && !ec) {
+			                   shelf / "eng.traineddata",
+			                   engEc);
+		if (hasEng && hasFin && !engEc) {
 			fs::create_symlink(data / "fin.traineddata",
-			                   shelf / "fin.traineddata", ec);
-			ocr::tess both(nullptr, shelf.string().c_str());
-			check(bool(both) && both.lang() == "fin",
-			      "with both rungs shelved, fin wins");
-			fs::remove(shelf / "fin.traineddata", ec);
+			                   shelf / "fin.traineddata",
+			                   finEc);
+			if (!finEc) {
+				ocr::tess both(nullptr,
+				               shelf.string().c_str());
+				check(bool(both) && both.lang() == "fin",
+				      "with both rungs shelved, fin wins");
+				fs::remove(shelf / "fin.traineddata",
+				           dropEc);
+			}
 		}
-		if (hasEng && !ec) {
+		if (hasEng && !engEc && !dropEc) {
 			ocr::tess fell(nullptr, shelf.string().c_str());
 			check(bool(fell) && fell.lang() == "eng",
 			      "an eng-only shelf lands the ladder on eng");
