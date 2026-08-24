@@ -572,7 +572,13 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
 	}
+	// Two heat namespaces, warmed together: the srt leaf drives
+	// the summary pyramid, the video identity drives the semantic
+	// windows, whose sources are video-addressed.
 	m_facts.heat(offerFacts(srt), kFocusHeat);
+	if (agenda::id const vid =
+		agenda::id::from_hex(id.toStdString()))
+		m_facts.heat(vid, kFocusHeat);
 
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
@@ -704,7 +710,7 @@ void MainWin::rebuildSemantic()
 	std::vector<engine::SemanticEngine<Facts>::source> sources;
 	QCryptographicHash semanticCorpus(QCryptographicHash::Blake2b_256);
 	semanticCorpus.addData(QByteArrayView("semantic-corpus-v1"));
-	std::map<agenda::id, std::size_t> bySrt;
+	std::set<std::string> semanticSeen;
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		agenda::id const key = offerFacts(srt);
@@ -712,34 +718,26 @@ void MainWin::rebuildSemantic()
 			leaves.push_back(key);
 		if (!key)
 			continue;
-		// This video's frames, whatever the transcript dedupe
-		// decides: slides belong to the video, not the srt.
-		auto const ft = m_frameText.find(it.id.toStdString());
-		if (auto const dup = bySrt.find(key);
-		    dup != bySrt.end()) {
-			// A transcript shared by two videos is one
-			// source, but each video keeps its own slides:
-			// the laggard's frames join the shared source.
-			if (ft == m_frameText.end())
-				continue;
-			auto &fr = sources[dup->second].frames;
-			fr.reserve(fr.size() + ft->second.size());
-			for (auto const &[at, text] : ft->second)
-				fr.push_back({at, text});
+		// Semantic sources are video-addressed: two videos
+		// sharing one transcript are one facts leaf but two
+		// evidence sources, each with its own slides and title
+		// -- merged frames would speak under the wrong video's
+		// name, and evidence provenance is the model's spine.
+		std::string const sourceId = it.id.isEmpty()
+			? key.hex() : it.id.toStdString();
+		if (!semanticSeen.insert(sourceId).second)
 			continue;
-		}
-		bySrt.emplace(key, sources.size());
+		auto const ft = m_frameText.find(it.id.toStdString());
 		exporter::transcript const &tx =
 			exporter::load(m_transcripts, srt);
 		engine::SemanticEngine<Facts>::source source;
-		source.id = key.hex();
+		source.id = sourceId;
 		source.title = it.video.toUtf8().toStdString();
 		// One line per cue, as exporter::load() builds them.
 		std::size_t const n = tx.cues.size();
 		source.cues.reserve(n);
 		semanticCorpus.addData(QByteArrayView(
-			reinterpret_cast<char const *>(key.b.data()),
-			qsizetype(key.b.size())));
+			source.id.data(), qsizetype(source.id.size())));
 		for (std::size_t i = 0; i < n; ++i) {
 			QByteArray const line = tx.lines[qsizetype(i)].toUtf8();
 			source.cues.push_back({std::uint32_t(i),
@@ -759,15 +757,6 @@ void MainWin::rebuildSemantic()
 		}
 		sources.push_back(std::move(source));
 	}
-	// Merged frame sets sort once: by moment, ties by text, so
-	// coinciding slides from sibling videos order stably.
-	for (auto &s : sources)
-		std::ranges::sort(s.frames,
-			[](semantic::frame const &a,
-			   semantic::frame const &b) {
-				return a.at != b.at ? a.at < b.at
-				                    : a.text < b.text;
-			});
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
