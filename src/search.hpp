@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QRegularExpression>
 #include <QTextCursor>
+#include <QTextDocument>
 
 #include <vector>
 
@@ -91,6 +92,10 @@ public:
 
 private:
 	QRegularExpression pattern() const;
+	// Qt's document find ignores the expression's own case
+	// option: sensitivity only travels as a find flag, so every
+	// find site takes its flags from here.
+	QTextDocument::FindFlags findFlags(bool backward = false) const;
 	// Record the pattern's first effective use as one combined step:
 	// text change + cursor position, plus the video jump when
 	// syncVideo -- which also anchors the hit cycle; also feeds the

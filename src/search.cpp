@@ -30,13 +30,14 @@ QColor currentHitColor(QPalette const &pal)
 // All matches of re in doc: selections for display, start offsets for
 // the position counter.
 void collectMatches(QTextDocument *doc, QRegularExpression const &re,
+                    QTextDocument::FindFlags fl,
                     QTextCharFormat const &fmt,
                     QList<QTextEdit::ExtraSelection> &sels,
                     std::vector<int> &starts)
 {
 	QTextCursor c(doc);
 	while (true) {
-		c = doc->find(re, c);
+		c = doc->find(re, c, fl);
 		if (c.isNull())
 			return;
 		if (!c.hasSelection() && c.atEnd())
@@ -117,10 +118,12 @@ void SearchCtl::commitSearch()
 		QTextCursor const from = m_anchor.isNull()
 			? QTextCursor(m_view.document()) : m_anchor;
 		QTextCursor hit = m_view.document()->find(pattern(),
-		                                          from);
+		                                          from,
+		                                          findFlags());
 		if (hit.isNull())
 			hit = m_view.document()->find(pattern(),
-				QTextCursor(m_view.document()));
+				QTextCursor(m_view.document()),
+				findFlags());
 		if (!hit.isNull()) {
 			m_view.setTextCursor(hit);
 			updateCounter(hit);
@@ -162,9 +165,7 @@ void SearchCtl::findAgain(bool backward, bool syncVideo)
 		return;
 	recordUse(syncVideo);
 	int const posBefore = m_view.textCursor().position();
-	QTextDocument::FindFlags fl;
-	if (backward)
-		fl |= QTextDocument::FindBackward;
+	QTextDocument::FindFlags const fl = findFlags(backward);
 	bool hit = m_view.find(re, fl);
 	if (!hit && m_nav && m_nav->hopVideo(re, backward)) {
 		// The direction is exhausted here but not in the corpus:
@@ -348,6 +349,19 @@ QRegularExpression SearchCtl::pattern() const
 	return re;
 }
 
+// The pattern option above serves the consumers that match with the
+// expression directly (the corpus scans); the document finds ignore
+// it by Qt contract and honor only this flag.
+QTextDocument::FindFlags SearchCtl::findFlags(bool backward) const
+{
+	QTextDocument::FindFlags fl;
+	if (backward)
+		fl |= QTextDocument::FindBackward;
+	if (m_bar.caseSensitive())
+		fl |= QTextDocument::FindCaseSensitively;
+	return fl;
+}
+
 void SearchCtl::highlightAll()
 {
 	QList<QTextEdit::ExtraSelection> sels;
@@ -367,7 +381,8 @@ void SearchCtl::highlightAll()
 		bg.setAlpha(85);
 		QTextCharFormat fmt;
 		fmt.setBackground(bg);
-		collectMatches(m_view.document(), re, fmt, sels, m_matchStarts);
+		collectMatches(m_view.document(), re, findFlags(), fmt,
+		               sels, m_matchStarts);
 	}
 	m_view.setMatchSelections(sels);
 	m_bar.setCount(0, empty ? 0 : int(m_matchStarts.size()));
