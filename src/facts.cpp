@@ -134,7 +134,14 @@ constexpr char kProbePrompt[] =
 constexpr char kTermsPrompt[] =
 	"The user message is a numbered excerpt from the machine-"
 	"transcribed subtitles of one video: lines of the form "
-	"#N [H:MM:SS] text. Identify the terms worth an index entry: "
+	"#N [H:MM:SS] text. Lines of the form @ [H:MM:SS] text are "
+	"on-screen text read from the video image at that moment -- "
+	"slides, terminal output -- and show the written spelling of "
+	"spoken terms: use them to anchor TERM spellings and to unite "
+	"mangled spoken variants with the written form, but the reader "
+	"misreads too, so weigh them as one more witness, not as truth. "
+	"A frame line is never a cue: CUES lists only #numbers. "
+	"Identify the terms worth an index entry: "
 	"systems, components, protocols, tools, acronyms, project and "
 	"product names. Skip ordinary words, bare numbers and single "
 	"letters. For each, most important first, at most twelve, emit "
@@ -199,7 +206,9 @@ constexpr char kSpellPrompt[] =
 	"DIFFERENT.";
 
 constexpr char kExtractPrompt[] =
-	"The user message is one numbered window from one transcript. "
+	"The user message is one numbered window from one transcript; "
+	"lines of the form @ [H:MM:SS] text are on-screen text read "
+	"from the video image, context for spellings and names only. "
 	"Extract only atomic knowledge directly supported by its cue "
 	"lines. A record is one factual claim, relationship, procedure "
 	"step, operational rule, or definition; split compound claims. "
