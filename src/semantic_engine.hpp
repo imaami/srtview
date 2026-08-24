@@ -417,15 +417,6 @@ void SemanticEngine<Backend>::reset(std::string corpus,
 	m_judgeAt.clear();
 	m_answers.clear();
 	m_more = true;
-	// The catalog is keyed by the corpus AND the recipes that
-	// produce its contents: records and verdicts extracted under
-	// another prompt, schema or model must not mix into this view,
-	// just as the vault misses them.  The old catalog stays on
-	// disk; switching back reuses it.
-	std::string const key = m_hash(
-		"semantic-catalog-v2\n" + m_corpus + '\n'
-		+ m_back.recipe(agenda::kind::extract).hex()
-		+ m_back.recipe(agenda::kind::judge).hex()).hex();
 	m_vocab = {};
 	m_words.clear();
 	std::vector<std::string> order;
@@ -438,6 +429,22 @@ void SemanticEngine<Backend>::reset(std::string corpus,
 		for (semantic::cue const &c : s.cues)
 			m_vocab.count(words.emplace_back(m_vocab.words(c.text)));
 	}
+	// The catalog is keyed by the corpus, the recipes AND the
+	// complete set of current window identities: records and
+	// verdicts extracted under another prompt, schema, model --
+	// or another cut, frames having arrived -- must not mix into
+	// this view, just as the vault misses them.  Untouched
+	// windows replay their cached artifacts into the new view;
+	// the old catalog stays on disk, and switching back reuses
+	// it.
+	std::string keyed = "semantic-catalog-v3\n" + m_corpus + '\n'
+		+ m_back.recipe(agenda::kind::extract).hex()
+		+ m_back.recipe(agenda::kind::judge).hex();
+	for (extract_work const &w : m_extract) {
+		keyed += '\n';
+		keyed += w.id.hex();
+	}
+	std::string const key = m_hash(keyed).hex();
 	m_catalog = std::make_unique<semantic::catalog>(
 		m_back.dir() + "/semantic/catalog/" + key, m_hash, m_vocab,
 		std::move(order));

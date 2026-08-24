@@ -237,6 +237,19 @@ int main()
 		      "a warm cache re-asks only the unanswered windows and "
 		      "the pending pair");
 	}
+
+	// A re-cut corpus -- same id, same recipes, different window
+	// identities (frames arrived) -- starts its own catalog view
+	// instead of inheriting the pre-frames generation's records.
+	{
+		fake tail{rig.string()};
+		Engine gen2(tail, mix);
+		Engine::source fsrc = lecture("aaaaaaaaaaaaaaa1", 300);
+		fsrc.frames.push_back({5.0, "P-code | SLEIGH"});
+		gen2.reset("corpus-one", {fsrc});
+		check(gen2.knowledge().empty(),
+		      "a re-cut corpus starts its own catalog view");
+	}
 	back.answer(agenda::kind::judge, 0,
 	            R"({"relation":"same","rationale":"One assertion."})");
 	eng.tick();
