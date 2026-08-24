@@ -2670,6 +2670,15 @@ void MainWin::ocrSettled()
 {
 	if (!m_ocrDirty)
 		return;
+	// A background settle yields to a live chat: the engine reset
+	// would orphan the pending answer and wedge the busy state.
+	// A corpus swap orphans deliberately -- the user changed the
+	// ground; housekeeping must not.  The dirty flag stays set,
+	// so the retry finds the work waiting.
+	if (!m_chatPending.empty()) {
+		m_ocrSettle.start();
+		return;
+	}
 	m_ocrDirty = false;
 	std::size_t framed = 0;
 	for (auto const &[id, moments] : m_frameText)
