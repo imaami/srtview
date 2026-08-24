@@ -2591,16 +2591,23 @@ void MainWin::grabProgress()
 		runExport(false);
 }
 
-// Post every grabbed pick of the shown video for reading: the
+// Post every grabbed pick of every playlist video for reading: the
 // frames directory is the input queue, derived from the grabber's
-// own accessor so the layout lives in one place.  Cheap to repeat
-// -- OcrQ posts each frame once per session and the archive
-// remembers across them.
+// own accessor so the layout lives in one place.  The whole
+// playlist, not just the shown video -- boundary picks finish
+// encoding after a hop-heavy search has moved on, and a sweep
+// bound to the current video would strand them (it did: 236 of a
+// 538-pick harvest).  Cheap to repeat -- OcrQ posts each frame
+// once per session and the archive remembers across them.
 void MainWin::ocrSweep()
 {
-	if (QString const id = m_trail.videoId(); !id.isEmpty())
-		m_ocr.sweep(QFileInfo(m_grab.framePath(id, 0))
+	for (PlayItem const &it : m_playlist) {
+		if (it.id.isEmpty())
+			continue;
+		m_ocr.sweep(it.video, it.id,
+		            QFileInfo(m_grab.framePath(it.id, 0))
 		            .absolutePath());
+	}
 }
 
 // ocr_listener: finished readings land.  The archive has already

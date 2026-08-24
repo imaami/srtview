@@ -64,18 +64,22 @@ public:
 		if (!m_on || m_path.isEmpty() || ms < 0)
 			return 0;
 		m_posted[m_id].insert(ms);
-		return m_desk.post(req(ms), rush);
+		return m_desk.post(req(m_path, m_id, ms), rush);
 	}
 
-	// Every grabbed pick of the current video: the picks on disk
-	// are the input queue, one post per frame per session -- the
-	// scribe coalesces in-flight twins, the archive absorbs the
-	// already-read.
-	void sweep(QString const &framesDir)
+	// Every grabbed pick of one video: the picks on disk are the
+	// input queue, one post per frame per session -- the scribe
+	// coalesces in-flight twins, the archive absorbs the
+	// already-read.  Any video, not just the shown one: boundary
+	// picks finish encoding after the user has hopped away, so
+	// the caller re-offers every playlist video each time the
+	// grabber drains.
+	void sweep(QString const &path, QString const &id,
+	           QString const &framesDir)
 	{
-		if (!m_on || m_id.isEmpty())
+		if (!m_on || path.isEmpty() || id.isEmpty())
 			return;
-		QSet<qint64> &posted = m_posted[m_id];
+		QSet<qint64> &posted = m_posted[id];
 		auto const names = QDir(framesDir).entryList(
 			{QStringLiteral("*.png")}, QDir::Files);
 		for (QString const &name : names) {
@@ -84,7 +88,7 @@ public:
 			if (!ok || posted.contains(ms))
 				continue;
 			posted.insert(ms);
-			m_desk.post(req(ms), false);
+			m_desk.post(req(path, id, ms), false);
 		}
 	}
 
@@ -108,11 +112,12 @@ private:
 		return base + QStringLiteral("/srtview/ocr");
 	}
 
-	ocr::request req(qint64 ms) const
+	static ocr::request req(QString const &path, QString const &id,
+	                        qint64 ms)
 	{
 		ocr::request r;
-		r.video = QFile::encodeName(m_path).toStdString();
-		r.id = m_id.toStdString();
+		r.video = QFile::encodeName(path).toStdString();
+		r.id = id.toStdString();
 		r.ms = ms;
 		r.opts.lay = kLay;
 		r.scale = kScale;
