@@ -48,10 +48,12 @@ result lector::perform(request const &r)
 	out = m_tess.read({g.px.data(), g.width, g.height, g.width,
 	                   kBasePpi * scale}, o);
 	for (span &s : out.lines) {
+		int const x1 = (s.x + s.w + scale - 1) / scale;
+		int const y1 = (s.y + s.h + scale - 1) / scale;
 		s.x /= scale;
 		s.y /= scale;
-		s.w = (s.w + scale - 1) / scale;
-		s.h = (s.h + scale - 1) / scale;
+		s.w = x1 - s.x;
+		s.h = y1 - s.y;
 	}
 
 	return out;
