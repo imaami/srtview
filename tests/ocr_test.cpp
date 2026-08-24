@@ -303,6 +303,7 @@ void test_mailbox_teardown()
 		s.post(req("B"));
 		s.post(req("C"));
 		s.stop();                     // wind-down beats the gate
+		check(s.post(req("Z")) == 0, "post after stop refused");
 		f.gate.release();             // A finishes and delivers
 		poked.acquire();
 		notes = s.drain();

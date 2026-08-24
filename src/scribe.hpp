@@ -27,7 +27,7 @@
 
 namespace ocr {
 
-using ticket = std::uint64_t;    // 0 is never issued
+using ticket = std::uint64_t;    // 0 marks a refused post
 
 // The unit of work: which video, which moment, how to look.  The
 // defaulted equality is work identity -- coalescing now, a cache
@@ -76,7 +76,7 @@ public:
 
 	// Wind down ahead of destruction: the running job finishes
 	// and delivers, queued jobs are dropped, later posts are
-	// never picked up.  The destructor implies it.
+	// refused with ticket 0.  The destructor implies it.
 	void stop() { m_thr.request_stop(); }
 
 	scribe(scribe const &) = delete;
@@ -84,12 +84,16 @@ public:
 
 	// Any thread.  An == request already queued or running gains
 	// the new ticket instead of a second job; a rush post hoists
-	// a queued speculative twin into the rush lane.
+	// a queued speculative twin into the rush lane.  Once the
+	// wind-down is requested the post is refused with ticket 0 --
+	// the jthread's stop state is the single source of truth.
 	ticket post(request r, bool rush = false)
 	{
 		ticket t;
 		{
 			std::lock_guard const lk(m_mtx);
+			if (m_thr.get_stop_token().stop_requested())
+				return 0;
 			t = ++m_last;
 			if (!adopt(r, rush, t))
 				(rush ? m_rush : m_rest)
