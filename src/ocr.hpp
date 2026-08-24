@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ocr {
@@ -33,6 +34,13 @@ struct view {
 // block (slides), scattered fragments (screencast UI), one line.
 enum struct layout : std::uint8_t { any, block, sparse, line };
 inline constexpr std::size_t layout_count = 4;
+
+// The enum is public and arrives from callers; everything that
+// indexes a layout-sized table checks this first.
+inline constexpr bool valid_layout(layout l)
+{
+	return std::to_underlying(l) < layout_count;
+}
 
 struct options {
 	int    rx = 0;       // region of interest in view pixels;

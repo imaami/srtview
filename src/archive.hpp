@@ -98,10 +98,12 @@ public:
 
 private:
 	// The cache slot, or empty when the request is uncacheable:
-	// no identity, or an ROI (a later phase's concern, if ever).
+	// no identity, an ROI (a later phase's concern, if ever), or
+	// a layout the tables cannot index.
 	std::filesystem::path place(request const &r) const
 	{
-		if (r.id.empty() || (r.opts.rw > 0 && r.opts.rh > 0))
+		if (r.id.empty() || (r.opts.rw > 0 && r.opts.rh > 0)
+		    || !valid_layout(r.opts.lay))
 			return {};
 		constexpr char lay[] = "absl";
 		static_assert(sizeof lay - 1 == layout_count,

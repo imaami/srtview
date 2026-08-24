@@ -159,6 +159,11 @@ void test_reads(ocr::tess &eng)
 	roi.rx = -2'000'000'000;
 	r = eng.read(blank.view(), roi);
 	check(!r.err.empty(), "far-left roi refused, not wrapped");
+
+	ocr::options bad;
+	bad.lay = ocr::layout(255);
+	r = eng.read(blank.view(), bad);
+	check(!r.err.empty(), "unknown layout refused, not indexed");
 }
 
 void test_recognition(ocr::tess &eng)
@@ -426,6 +431,11 @@ void test_archive()
 	arc3.perform(rect);
 	arc3.perform(rect);
 	check(raw.calls == 4, "an roi bypasses the cache");
+	ocr::request odd = r;
+	odd.opts.lay = ocr::layout(255);
+	arc3.perform(odd);
+	arc3.perform(odd);
+	check(raw.calls == 6, "an unknown layout bypasses the cache");
 
 	probe failing;
 	failing.canned.err = "cannot decode";

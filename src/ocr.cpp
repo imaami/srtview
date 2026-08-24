@@ -135,6 +135,10 @@ result tess::read(view const &v, options const &o)
 		out.err = "bad image view";
 		return out;
 	}
+	if (!valid_layout(o.lay)) {
+		out.err = "bad page layout";
+		return out;
+	}
 
 	tesseract::TessBaseAPI &api = m->api;
 	api.SetPageSegMode(kPsm[std::size_t(o.lay)]);
