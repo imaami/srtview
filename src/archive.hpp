@@ -181,15 +181,18 @@ private:
 		std::filesystem::create_directories(p.parent_path(), ec);
 		std::filesystem::path const tmp =
 			p.parent_path() / (p.filename().string() + ".tmp");
-		{
-			std::ofstream f(tmp, std::ios::binary
-			                     | std::ios::trunc);
-			f.write(text.data(),
-			        std::streamsize(text.size()));
-			if (!f) {
-				std::filesystem::remove(tmp, ec);
-				return;
-			}
+		std::ofstream f(tmp, std::ios::binary
+		                     | std::ios::trunc);
+		f.write(text.data(), std::streamsize(text.size()));
+		// close() flushes the buffered tail; only a stream still
+		// clean after it has proven every byte reached the
+		// filesystem.  The destructor's flush would fail past
+		// the rename, and a torn tmp renamed over the slot is
+		// the very hole the tmp exists to close.
+		f.close();
+		if (f.fail()) {
+			std::filesystem::remove(tmp, ec);
+			return;
 		}
 		std::filesystem::rename(tmp, p, ec);
 	}
