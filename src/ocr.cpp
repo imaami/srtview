@@ -5,6 +5,7 @@
 #include <tesseract/resultiterator.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -129,10 +130,14 @@ result tess::read(view const &v, options const &o)
 	api.SetImage(v.data, v.w, v.h, 1, v.stride);
 	api.SetSourceResolution(v.ppi > 0 ? v.ppi : kPpi);
 	if (o.rw > 0 && o.rh > 0) {
+		// Endpoints in 64-bit: an INT_MAX corner must land in
+		// the refusal below, not in signed overflow.
 		int const x0 = std::max(o.rx, 0);
 		int const y0 = std::max(o.ry, 0);
-		int const x1 = std::min(o.rx + o.rw, v.w);
-		int const y1 = std::min(o.ry + o.rh, v.h);
+		int const x1 = int(std::clamp<std::int64_t>(
+			std::int64_t(o.rx) + o.rw, 0, v.w));
+		int const y1 = int(std::clamp<std::int64_t>(
+			std::int64_t(o.ry) + o.rh, 0, v.h));
 		if (x0 >= x1 || y0 >= y1) {
 			api.Clear();
 			out.err = "roi outside the image";

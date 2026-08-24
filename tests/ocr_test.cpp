@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <semaphore>
 #include <string>
@@ -143,6 +144,17 @@ void test_reads(ocr::tess &eng)
 	roi.rh = 80;
 	r = eng.read(blank.view(), roi);
 	check(r.err.empty(), "overhanging roi clamped, not fatal");
+
+	roi = {};
+	roi.rx = std::numeric_limits<int>::max() - 10;
+	roi.rw = 100;
+	roi.rh = 10;
+	r = eng.read(blank.view(), roi);
+	check(!r.err.empty(), "int-max corner refused, not overflowed");
+
+	roi.rx = -2'000'000'000;
+	r = eng.read(blank.view(), roi);
+	check(!r.err.empty(), "far-left roi refused, not wrapped");
 }
 
 void test_recognition(ocr::tess &eng)

@@ -76,6 +76,9 @@ bool rect_of(std::string_view s, ocr::options &o)
 	std::vector<std::int64_t> v;
 	if (!nums(s, v) || v.size() != 4)
 		return false;
+	for (std::int64_t const n : v)
+		if (!std::in_range<int>(n))
+			return false;
 	o.rx = int(v[0]);
 	o.ry = int(v[1]);
 	o.rw = int(v[2]);
