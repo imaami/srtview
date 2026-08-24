@@ -49,11 +49,16 @@ public:
 		m_l = l;
 	}
 
-	// The video whose jumps are being followed (set on every open).
+	// The video whose jumps are being followed (set on every
+	// open).  An unresolvable identity clears the target: better
+	// no posts than posts landing on the previous video.
 	void setVideo(QString const &path, QString const &id)
 	{
-		if (path.isEmpty() || id.isEmpty())
+		if (path.isEmpty() || id.isEmpty()) {
+			m_path.clear();
+			m_id.clear();
 			return;
+		}
 		m_path = path;
 		m_id = id;
 	}

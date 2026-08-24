@@ -551,12 +551,15 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 
 	// Register under the discovery identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.
+	// The reader hears about the switch unconditionally -- an
+	// unresolvable identity must clear its target, or a later seek
+	// would post frames for the previous video.
 	QString const id = videoId(video);
+	m_ocr.setVideo(video, id);
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
 		m_grab.setVideo(video, id);
-		m_ocr.setVideo(video, id);
 		ocrSweep();
 	}
 	m_facts.heat(offerFacts(srt), kFocusHeat);
