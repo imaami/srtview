@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <utility>
 
 #include "decoder.hpp"
@@ -179,10 +180,16 @@ private:
 		}
 		// Whole slot or no slot: build beside, rename over.  A
 		// crash mid-write leaves only a tmp nothing ever reads.
+		// The tmp name carries the writer's pid: two instances
+		// share the cache (the srtjump sibling shares players),
+		// and a shared tmp could interleave into a mixed slot
+		// that validates.  Within one process the scribe's
+		// single worker serializes stores.
 		std::error_code ec;
 		std::filesystem::create_directories(p.parent_path(), ec);
 		std::filesystem::path const tmp =
-			p.parent_path() / (p.filename().string() + ".tmp");
+			p.parent_path() / (p.filename().string() + ".tmp."
+			                   + std::to_string(getpid()));
 		std::ofstream f(tmp, std::ios::binary
 		                     | std::ios::trunc);
 		f.write(text.data(), std::streamsize(text.size()));

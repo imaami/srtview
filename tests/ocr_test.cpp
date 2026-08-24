@@ -368,8 +368,10 @@ void test_archive()
 	fs::path const slot = rig / "cafe0123" / "93500.a2.txt";
 	check(fs::exists(slot), "and stores at the keyed slot");
 
-	check(!fs::exists(slot.string() + ".tmp"),
-	      "the store leaves no tmp behind");
+	std::size_t leftovers = 0;
+	for (auto const &e : fs::directory_iterator(slot.parent_path()))
+		leftovers += e.path() != slot;
+	check(leftovers == 0, "the store leaves no tmp behind");
 	got = arc.perform(r);
 	check(inner.calls == 1, "hit skips the inner backend");
 	check(got.lines.size() == 2
