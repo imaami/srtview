@@ -356,6 +356,8 @@ void test_archive()
 	fs::path const slot = rig / "cafe0123" / "93500.a2.txt";
 	check(fs::exists(slot), "and stores at the keyed slot");
 
+	check(!fs::exists(slot.string() + ".tmp"),
+	      "the store leaves no tmp behind");
 	got = arc.perform(r);
 	check(inner.calls == 1, "hit skips the inner backend");
 	check(got.lines.size() == 2
@@ -374,10 +376,13 @@ void test_archive()
 	      && got.err.empty(),
 	      "a textless frame is remembered, not re-read");
 
+	std::string const stamp = "tesseract "
+	                        + std::string(ocr::tess::version())
+	                        + " eng";
 	r.ms = 93500;
 	{
 		std::ofstream f(slot, std::ios::trunc);
-		f << "tesseract 5.5.0 eng\n1 2 3 4 garbage\n";
+		f << stamp << "\n1 2 3 4 garbage\n";
 	}
 	got = arc.perform(r);
 	check(inner.calls == 2 && got.lines.size() == 2,
@@ -387,10 +392,26 @@ void test_archive()
 
 	{
 		std::ofstream f(slot, std::ios::trunc);
-		f << "tesseract 5.5.0 eng\n1 2 3 4 50 half a li";
+		f << stamp << "\n1 2 3 4 50 half a li";
 	}
 	arc.perform(r);
 	check(inner.calls == 3, "a torn slot re-performs");
+
+	{
+		std::ofstream f(slot, std::ios::trunc);
+		f << "tesseract 9.9.9 xyz\n1 2 3 4 50 stale read\n";
+	}
+	arc.perform(r);
+	check(inner.calls == 4,
+	      "another configuration's slot re-performs");
+
+	{
+		std::ofstream f(slot, std::ios::trunc);
+		f << stamp << '\n'
+		  << std::string(std::size_t{2} << 20, 'x');
+	}
+	arc.perform(r);
+	check(inner.calls == 5, "an oversized slot re-performs");
 
 	probe raw;
 	ocr::archive<probe> arc3(rig.string(), "eng", raw);

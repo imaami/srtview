@@ -3,10 +3,13 @@
 // so scribe<archive<lector>> reads a frame once, ever.  Standard
 // C++23 over std::filesystem; no Qt, no tesseract, no FFmpeg.
 // Results key on (discovery id, ms, layout, scale) -- the knobs
-// that change the pixels the recognizer saw; the tool version and
-// label ride in the file header as a record, never a key.  Runs on
-// the scribe's worker thread.  A torn or corrupt slot reads as a
-// miss and is rewritten -- self-healing, so plain writes suffice.
+// that change the pixels the recognizer saw -- and the header
+// stamp (tool version plus label) is enforced on read, so a slot
+// written by another recognizer configuration reads as a miss and
+// is re-earned.  Runs on the scribe's worker thread.  Stores go
+// through a tmp-then-rename (the vault executor's pattern): a
+// crash can never leave a truncated slot that passes validation,
+// and a corrupt or oversized one reads as a miss and is rewritten.
 // Empty results cache too: a textless frame must not re-OCR every
 // session.  Requests without an id and requests with an ROI bypass
 // the cache untouched; errors are never stored.
@@ -73,7 +76,12 @@ class archive
 public:
 	archive(std::string root, std::string label, B &inner)
 		: m_b(inner), m_root(std::move(root)),
-		  m_label(std::move(label)) {}
+		  m_stamp("tesseract ")
+	{
+		m_stamp += tess::version();
+		m_stamp += ' ';
+		m_stamp += label;
+	}
 
 	result perform(request const &r)
 	{
@@ -106,18 +114,19 @@ private:
 		        + char('0' + scale) + ".txt");
 	}
 
-	// Strict on purpose: any malformed line, or a torn tail,
-	// fails the whole slot into a miss.  The mean confidence is
-	// derived, never stored.
+	// Strict on purpose: a header from any other recognizer
+	// configuration, any malformed line, a torn tail, or an
+	// implausibly large slot all fail into a miss.  The mean
+	// confidence is derived, never stored.
 	std::optional<result> load(std::filesystem::path const &p) const
 	{
+		constexpr std::size_t kSlotCap = std::size_t{1} << 20;
 		std::string all;
-		if (!slurp(p, all))
+		if (!slurp(p, all, kSlotCap))
 			return {};
 		std::string_view rest(all);
 		std::string_view line;
-		if (!detail::next_line(rest, line)
-		    || !line.starts_with("tesseract "))
+		if (!detail::next_line(rest, line) || line != m_stamp)
 			return {};
 		result out;
 		double sum = 0;
@@ -143,10 +152,7 @@ private:
 	void store(std::filesystem::path const &p,
 	           result const           &res) const
 	{
-		std::string text = "tesseract ";
-		text += tess::version();
-		text += ' ';
-		text += m_label;
+		std::string text = m_stamp;
 		text += '\n';
 		for (span const &s : res.lines) {
 			text += std::to_string(s.x);
@@ -162,15 +168,28 @@ private:
 			text += s.text;
 			text += '\n';
 		}
+		// Whole slot or no slot: build beside, rename over.  A
+		// crash mid-write leaves only a tmp nothing ever reads.
 		std::error_code ec;
 		std::filesystem::create_directories(p.parent_path(), ec);
-		std::ofstream f(p, std::ios::binary | std::ios::trunc);
-		f.write(text.data(), std::streamsize(text.size()));
+		std::filesystem::path const tmp =
+			p.parent_path() / (p.filename().string() + ".tmp");
+		{
+			std::ofstream f(tmp, std::ios::binary
+			                     | std::ios::trunc);
+			f.write(text.data(),
+			        std::streamsize(text.size()));
+			if (!f) {
+				std::filesystem::remove(tmp, ec);
+				return;
+			}
+		}
+		std::filesystem::rename(tmp, p, ec);
 	}
 
 	B                    &m_b;
 	std::filesystem::path m_root;
-	std::string           m_label;
+	std::string           m_stamp;
 };
 
 } // namespace ocr
