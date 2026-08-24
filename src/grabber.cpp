@@ -379,10 +379,21 @@ void Grabber::loadKnown(QString const &id)
 			f.readLine().simplified().split(' ');
 		if (col.size() != 3)
 			continue;
-		qint64 const hit = col[0].toLongLong();
+		// A torn append parses as zeros under toLongLong's
+		// no-questions default, and the manifest replay would
+		// activate the fabricated frame; only rows the writer
+		// could have produced are believed.
+		bool hitOk = false, prevOk = false, nextOk = false;
+		qint64 const hit = col[0].toLongLong(&hitOk);
+		qint64 const prev = col[1].toLongLong(&prevOk);
+		qint64 const next = col[2].toLongLong(&nextOk);
+		if (!hitOk || !prevOk || !nextOk || hit < 0
+		    || prev < -1 || next < -1
+		    || (prev >= 0 && prev > hit)
+		    || (next >= 0 && next < hit))
+			continue;
 		set.insert(hit);
-		picks.insert(hit, {col[1].toLongLong(),
-		                   col[2].toLongLong()});
+		picks.insert(hit, {prev, next});
 	}
 }
 
