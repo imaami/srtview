@@ -19,7 +19,11 @@
 //
 // Mutating entry points marshal onto the worker, queries read the
 // shared maps under a lock, and listener notifications are queued
-// into the listener's thread.
+// into the listener's thread.  Every pick frame -- freshly encoded
+// or replayed from a video's manifest on first touch -- is also
+// announced to an optional pick_sink on the worker thread: the OCR
+// desk listens there, worker to worker, and the UI thread is not
+// in that loop.
 #ifndef SRTVIEW_SRC_GRABBER_HPP_
 #define SRTVIEW_SRC_GRABBER_HPP_
 
@@ -47,6 +51,18 @@ protected:
 	~grab_listener() = default;
 };
 
+// Told about pick frames worth reading, on the grabber's worker
+// thread: implementations must be thread-safe and cheap -- hand
+// the identity to another worker's queue and return.  rush marks
+// the followed video's hit frame, the one under inspection.
+struct pick_sink {
+	virtual void pickReady(QString const &path, QString const &id,
+	                       qint64 ms, bool rush) = 0;
+
+protected:
+	~pick_sink() = default;
+};
+
 class Grabber : public QObject
 {
 public:
@@ -55,6 +71,10 @@ public:
 
 	// The listener is invoked queued in ctx's thread.
 	void setListener(QObject *ctx, grab_listener *l);
+
+	// The pick sink is called on the worker thread; wire it once
+	// at startup, before anything can enqueue.
+	void setSink(pick_sink *s);
 
 	// The video whose jumps are being followed (set on every open).
 	void setVideo(QString const &path, QString const &id);
@@ -78,11 +98,13 @@ private:
 	struct Job {
 		QString path, id;
 		qint64  hit = 0;
+		bool    rush = false;  // a followed-video jump's hit
 	};
 
 	void setVideoImpl(QString const &path, QString const &id);
 	void enqueueImpl(QString const &path, QString const &id,
-	                 double t);
+	                 double t, bool rush);
+	void replayPicks(QString const &path, QString const &id);
 	void shutdownImpl();
 	void startJob();
 	void runJob();
@@ -93,7 +115,7 @@ private:
 	void finishJob(Job const &j, qint64 prev, qint64 next);
 	void abortJob();
 	void drained();
-	void loadKnown(QString const &id);
+	bool loadKnown(QString const &id);   // true on first touch
 	QString dir(QString const &id) const;
 
 	using PickMap = QHash<qint64, std::pair<qint64, qint64>>;
@@ -107,6 +129,7 @@ private:
 	QString                      m_path, m_id; // the followed video
 	QObject                     *m_ctx = nullptr;
 	grab_listener               *m_listener = nullptr;
+	pick_sink                   *m_sink = nullptr;
 	unsigned                     m_strikes = 0;
 };
 
