@@ -104,13 +104,19 @@ public:
 	}
 
 	// Unhooks the ticket wherever it is: a queued job left
-	// ownerless is dropped, a running one delivers to nobody.
+	// ownerless is dropped, a running one delivers to nobody,
+	// and a finished note not yet drained is scrubbed -- after
+	// cancel(t), no note for t ever surfaces.
 	bool cancel(ticket t)
 	{
 		std::lock_guard const lk(m_mtx);
 		if (m_live && std::erase(m_live->owners, t))
 			return true;
-		return pluck(m_rush, t) || pluck(m_rest, t);
+		if (pluck(m_rush, t) || pluck(m_rest, t))
+			return true;
+		return std::erase_if(m_done, [t](note const &n) {
+			return n.t == t;
+		}) != 0;
 	}
 
 	// The finished notes so far, in completion order.

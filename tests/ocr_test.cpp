@@ -290,6 +290,18 @@ void test_mailbox_cancel()
 	      "cancelled work delivers nothing");
 }
 
+void test_mailbox_late_cancel()
+{
+	fake f;
+	std::counting_semaphore<> poked{0};
+	ocr::scribe<fake> s(f, poke_release, &poked);
+	ocr::ticket const t = s.post(req("V", 1));
+	poked.acquire();                  // completed, not drained
+	check(s.cancel(t), "cancel scrubs a completed note");
+	check(s.drain().empty(), "the scrubbed note never surfaces");
+	check(!s.cancel(t), "and the ticket is truly gone");
+}
+
 void test_mailbox_teardown()
 {
 	fake f;
@@ -322,6 +334,7 @@ int main()
 	test_mailbox_smoke();
 	test_mailbox_order();
 	test_mailbox_cancel();
+	test_mailbox_late_cancel();
 	test_mailbox_teardown();
 
 	ocr::tess eng;
