@@ -1585,18 +1585,28 @@ void MainWin::queueTerms()
 	std::set<agenda::id> staged;
 	for (TermsWork const &w : m_termsWork)
 		staged.insert(w.id);
-	// The engine's windows, by the subtitle identity they were cut
-	// from: one cut of the corpus serves extraction and terms, and
-	// the model sees the identical text for both.
-	QHash<QString, qsizetype> bySrt;
-	for (qsizetype i = 0; i < m_playlist.size(); ++i)
-		if (QString const srt = srtOf(m_playlist[i]); !srt.isEmpty())
-			bySrt.insert(QString::fromStdString(
-				m_disc.id_for_video(srt.toStdString())), i);
+	// The engine's windows, by the same source identity
+	// rebuildSemantic() cut them under -- the video's discovery
+	// id, the subtitle hash only for the unresolvable: one cut of
+	// the corpus serves extraction and terms, and the model sees
+	// the identical text for both.
+	QHash<QString, qsizetype> bySource;
+	for (qsizetype i = 0; i < m_playlist.size(); ++i) {
+		PlayItem const &it = m_playlist[i];
+		QString source = it.id;
+		if (source.isEmpty()) {
+			if (QString const srt = srtOf(it); !srt.isEmpty())
+				source = QString::fromStdString(
+					m_disc.id_for_video(
+						srt.toStdString()));
+		}
+		if (!source.isEmpty())
+			bySource.insert(source, i);
+	}
 	for (std::size_t at = 0; at < m_semantic.windows(); ++at) {
 		semantic::window const &w = m_semantic.window(at);
 		agenda::id const id = m_semantic.key("terms", w);
-		qsizetype const i = bySrt.value(QString::fromUtf8(
+		qsizetype const i = bySource.value(QString::fromUtf8(
 			w.source.data(), qsizetype(w.source.size())), -1);
 		if (i < 0 || !staged.insert(id).second)
 			continue;
