@@ -137,13 +137,16 @@ private:
 
 	ocr::lector                            m_lector;
 	ocr::archive<ocr::lector>              m_back;
-	ocr::scribe<ocr::archive<ocr::lector>> m_desk;
 	QString                                m_path, m_id;
 	QHash<QString, QSet<qint64>>           m_posted;
 	QObject                               *m_ctx = nullptr;
 	ocr_listener                          *m_l = nullptr;
 	bool m_on = qEnvironmentVariable("SRTVIEW_OCR")
 	            != QStringLiteral("0");
+	// Last on purpose: destroyed first, so the worker joins while
+	// the backend and the callback state above are still alive --
+	// a live job's poke must never read dead members.
+	ocr::scribe<ocr::archive<ocr::lector>> m_desk;
 };
 
 #endif // SRTVIEW_SRC_OCRQ_HPP_
