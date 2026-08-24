@@ -22,11 +22,16 @@ readonly max_tool_bytes="${GPT_REVIEW_MAX_TOOL_BYTES:-50000}"
 readonly max_tool_calls="${GPT_REVIEW_MAX_TOOL_CALLS:-40}"
 # The wall clock's share, measured from script entry: exploration
 # rounds may spend this much, and everything after them lives on a
-# fixed reserve -- ninety seconds of forced finale, a comment post,
+# fixed reserve -- four minutes of forced finale, a comment post,
 # the sweep -- so the worst case stays inside the job's mute
 # fifteen-minute timeout with the checkout's overhead counted.
+# The finale is the largest call of the run (the whole transcript,
+# xhigh reasoning, tool_choice none) and the Responses API sends
+# nothing until the answer is complete: ninety seconds proved too
+# tight once the PR grew, dying as timeouts with zero bytes
+# received while every exploration round kept succeeding.
 readonly max_seconds="${GPT_REVIEW_MAX_SECONDS:-600}"
-readonly finale_seconds=90
+readonly finale_seconds=240
 readonly explore_by=$((SECONDS + max_seconds))
 # The transcript is resent whole every round; forty rounds of tool
 # replies can outgrow a context window mid-review, so crossing
