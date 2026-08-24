@@ -28,6 +28,7 @@
 #include <QRegularExpression>
 
 #include <cstddef>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -215,6 +216,8 @@ private:
 	void grabsIdle() override;
 	void grabProgress() override;
 	void ocrReady() override;
+	void ocrSettled();
+	void rebuildSemantic();
 	void startExport();
 	void runExport(bool drained);
 	void writePlaylistVersion();
@@ -237,6 +240,11 @@ private:
 	void setState(QString const &s);
 	void errState(QString const &s);
 
+	// Frame text folded from drained OCR notes: video discovery
+	// id -> seconds -> joined span text.  Snapshotted into the
+	// engine's sources on the debounced resnapshot.
+	std::map<std::string, std::map<double, std::string>> m_frameText;
+	bool                            m_ocrDirty = false;
 	Prefs                           m_prefs;
 	Trail                           m_trail;
 	discovery                       m_disc;
@@ -263,6 +271,8 @@ private:
 	QLabel                          m_pattern;   // live regex, left edge
 	QTimer                          m_infoTick;  // time/pause poll
 	QTimer                          m_tallyLag;  // debounced tally
+	QTimer                          m_ocrSettle; // debounced frame
+	                                             // resnapshot
 	QTimer                          m_diveTick;  // topic scan pump
 	QTimer                          m_pump;      // harvest pump
 	std::vector<DiveScan>           m_diveScans; // staged scans

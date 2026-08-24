@@ -194,6 +194,13 @@ double zoomFactor(int steps)
 	return std::pow(kZoomStep, steps);
 }
 
+// OCR spans below this confidence stay out of the semantic
+// windows: on the synthetic acceptance battery real text reads at
+// ~78-95 while moving-content garbage lands at 4-50.  A sensor-
+// quality gate like the JSON well-formedness checks, never a
+// semantic judgment -- the model weighs everything that passes.
+constexpr float kOcrConfFloor = 60.0f;
+
 // Corpus-search diagnostics, SRTVIEW_DEBUG-gated like the mpv
 // clients' dbg().
 void dbgHop(QString const &msg)
@@ -393,6 +400,10 @@ MainWin::MainWin()
 	m_tallyLag.setInterval(300);
 	connect(&m_tallyLag, &QTimer::timeout,
 	        this, [this] { recomputeTally(); });
+	m_ocrSettle.setSingleShot(true);
+	m_ocrSettle.setInterval(5000);
+	connect(&m_ocrSettle, &QTimer::timeout,
+	        this, [this] { ocrSettled(); });
 	// Nonzero, so the scan leaves real idle between cells: a zero
 	// timer re-fires as fast as the loop drains, and semantic
 	// background work has no latency constraint worth a warm
@@ -672,9 +683,23 @@ void MainWin::rebuildCorpus(bool fresh)
 			m_videosById.insert(it.id, it);
 		m_playlist << it;
 	}
-	// One leaf offer per srt not yet in the facts cache, then the
-	// pyramid over them in playlist order.  The transcript cache is
-	// shared with the tally and the exporter: nothing parses twice.
+	rebuildSemantic();
+	queueDives(fresh);
+	updateInfo();
+	refreshKnowledge();
+}
+
+// The semantic half of a corpus rebuild, and the whole of a frame
+// resnapshot: one leaf offer per srt not yet in the facts cache,
+// the pyramid over them in playlist order, the engine reset over
+// sources cut with their frame text, and the staging chain.  The
+// transcript cache is shared with the tally and the exporter, so
+// nothing parses twice; every step replays warm -- offers resolve
+// through the vault, plan ids dedupe, cached windows answer at
+// once -- so calling this again with new frames re-asks only the
+// windows whose identity the frames changed.
+void MainWin::rebuildSemantic()
+{
 	std::vector<agenda::id> leaves;
 	std::vector<engine::SemanticEngine<Facts>::source> sources;
 	QCryptographicHash semanticCorpus(QCryptographicHash::Blake2b_256);
@@ -706,6 +731,16 @@ void MainWin::rebuildCorpus(bool fresh)
 			semanticCorpus.addData(line);
 			semanticCorpus.addData(QByteArrayView("\0", 1));
 		}
+		// The frame text read from this video, folded from the
+		// OCR notes.  Deliberately outside the corpus hash: new
+		// frames are new window identities inside the same
+		// corpus, not a new corpus.
+		if (auto const ft = m_frameText.find(it.id.toStdString());
+		    ft != m_frameText.end()) {
+			source.frames.reserve(ft->second.size());
+			for (auto const &[at, text] : ft->second)
+				source.frames.push_back({at, text});
+		}
 		sources.push_back(std::move(source));
 	}
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
@@ -731,9 +766,6 @@ void MainWin::rebuildCorpus(bool fresh)
 	// harvest from the first second on, and a name the directory
 	// unites must not be put to the judge meanwhile.
 	feedLexicon();
-	queueDives(fresh);
-	updateInfo();
-	refreshKnowledge();
 }
 
 // A video seen outside the playlist joins the corpus in memory: a
@@ -2593,19 +2625,58 @@ void MainWin::grabProgress()
 }
 
 // ocr_listener: finished readings land.  The archive has already
-// persisted them off-thread; for now the arrival is journaled.
+// persisted them off-thread; here they fold into the frame-text
+// index the semantic windows are cut with, and a dirty batch arms
+// the debounced resnapshot.
 void MainWin::ocrReady()
 {
 	for (ocr::note const &n : m_ocr.drain()) {
-		if (!n.res.err.empty())
+		if (!n.res.err.empty()) {
 			dbgHop(QStringLiteral("ocr: %1ms %2")
 			       .arg(n.r.ms)
 			       .arg(QString::fromStdString(n.res.err)));
-		else
-			dbgHop(QStringLiteral("ocr: %1ms %2 lines conf %3")
-			       .arg(n.r.ms).arg(n.res.lines.size())
-			       .arg(double(n.res.conf), 0, 'f', 1));
+			continue;
+		}
+		dbgHop(QStringLiteral("ocr: %1ms %2 lines conf %3")
+		       .arg(n.r.ms).arg(n.res.lines.size())
+		       .arg(double(n.res.conf), 0, 'f', 1));
+		std::string joined;
+		for (ocr::span const &s : n.res.lines) {
+			if (s.conf < kOcrConfFloor)
+				continue;
+			if (!joined.empty())
+				joined += " | ";
+			joined += s.text;
+		}
+		if (joined.empty())
+			continue;
+		std::string &slot =
+			m_frameText[n.r.id][double(n.r.ms) / 1000.0];
+		if (slot == joined)
+			continue;
+		slot = std::move(joined);
+		m_ocrDirty = true;
 	}
+	if (m_ocrDirty)
+		m_ocrSettle.start();
+}
+
+// The OCR queue went quiet with new frame text on the books: cut
+// the corpus again with the frames attached.  The reset replays
+// warm -- cached identities answer at once, only frame-touched
+// windows ask anew -- so the debounce spares churn, never
+// correctness.
+void MainWin::ocrSettled()
+{
+	if (!m_ocrDirty)
+		return;
+	m_ocrDirty = false;
+	std::size_t framed = 0;
+	for (auto const &[id, moments] : m_frameText)
+		framed += moments.size();
+	dbgHop(QStringLiteral("ocr: corpus resnapshot, %1 framed "
+	                      "moments").arg(framed));
+	rebuildSemantic();
 }
 
 void MainWin::runExport(bool drained)
