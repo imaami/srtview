@@ -77,6 +77,19 @@ target_compile_options(engine_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME engine_tests COMMAND engine_tests)
 
+# The ocr module is standard C++ over libtesseract; no Qt, no
+# FFmpeg -- pixels come injected, and the recognition image is
+# rendered from an embedded bitmap font.
+add_executable(ocr_tests
+	ocr_test.cpp
+	${CMAKE_SOURCE_DIR}/src/ocr.cpp
+)
+target_include_directories(ocr_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(ocr_tests PRIVATE -Wall -Wextra)
+target_link_libraries(ocr_tests PRIVATE PkgConfig::TESSERACT)
+
+add_test(NAME ocr_tests COMMAND ocr_tests)
+
 # The epoll dispatcher is plain C + Linux; no C++, no libcurl.
 add_executable(loop_tests
 	loop_test.c
