@@ -32,3 +32,16 @@ target_link_libraries(srtview PRIVATE Qt6::Widgets Qt6::Network
 target_compile_options(srtview PRIVATE -Wall -Wextra)
 
 install(TARGETS srtview RUNTIME DESTINATION bin)
+
+# The detached OCR pipeline proof: scribe<lector> driven from the
+# command line.  Deliberately not part of srtview yet -- phase 1
+# builds and evaluates the modular pieces (see ocr.hpp).
+add_executable(ocrview
+	decoder.cpp
+	lector.cpp
+	ocr.cpp
+	ocrview.cpp
+)
+target_link_libraries(ocrview PRIVATE PkgConfig::FFMPEG
+                      PkgConfig::TESSERACT Threads::Threads)
+target_compile_options(ocrview PRIVATE -Wall -Wextra)
