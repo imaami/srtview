@@ -502,24 +502,37 @@ int main()
 	ocr::tess sys;
 	require(bool(sys), "system tessdata provides the ladder");
 	check(!sys.datapath().empty(), "a live engine names its models");
-	check(sys.lang() == "fin",
-	      "the ladder's first rung, fin, loads on the dev box");
+	check(sys.lang() == "fin" || sys.lang() == "eng",
+	      "the default ladder loads an available rung");
 
-	// The fallback, proven with a one-language shelf: tessdata
-	// holding only eng makes the nullptr ladder walk fin, miss,
-	// and land on eng.
+	// The ladder proven portably with shelves of symlinks: with
+	// both rungs present fin wins, with eng alone the walk falls
+	// through to it.  Each proof runs only where its models
+	// exist -- an eng-only install is a supported configuration,
+	// not a broken one.
 	{
 		namespace fs = std::filesystem;
+		fs::path const data(sys.datapath());
+		bool const hasEng = fs::exists(data / "eng.traineddata");
+		bool const hasFin = fs::exists(data / "fin.traineddata");
 		fs::path const shelf = fs::temp_directory_path()
 			/ ("srtview-ocr-shelf-"
 			   + std::to_string(getpid()));
 		fs::remove_all(shelf);
 		fs::create_directories(shelf);
 		std::error_code ec;
-		fs::create_symlink(
-			fs::path(sys.datapath()) / "eng.traineddata",
-			shelf / "eng.traineddata", ec);
-		if (!ec) {
+		if (hasEng)
+			fs::create_symlink(data / "eng.traineddata",
+			                   shelf / "eng.traineddata", ec);
+		if (hasEng && hasFin && !ec) {
+			fs::create_symlink(data / "fin.traineddata",
+			                   shelf / "fin.traineddata", ec);
+			ocr::tess both(nullptr, shelf.string().c_str());
+			check(bool(both) && both.lang() == "fin",
+			      "with both rungs shelved, fin wins");
+			fs::remove(shelf / "fin.traineddata", ec);
+		}
+		if (hasEng && !ec) {
 			ocr::tess fell(nullptr, shelf.string().c_str());
 			check(bool(fell) && fell.lang() == "eng",
 			      "an eng-only shelf lands the ladder on eng");
