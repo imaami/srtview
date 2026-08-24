@@ -1,14 +1,19 @@
 // ocr_test.cpp -- the tesseract containment vessel over synthetic
-// pixels.  Standard C++; no Qt, no FFmpeg, no fixture files -- the
+// pixels, and the scribe's mailbox over a gated fake backend.
+// Standard C++; no Qt, no FFmpeg, no fixture files -- the
 // recognition image is rendered from an embedded 5x7 bitmap font.
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
+#include <semaphore>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "ocr.hpp"
+#include "scribe.hpp"
 
 namespace {
 
@@ -160,11 +165,163 @@ void test_recognition(ocr::tess &eng)
 	check(r.conf > 0, "confidence populated");
 }
 
+// The mailbox's backend stand-in: performs by echoing the request
+// into one recognizable line.  entered is released as a job starts;
+// when gated, each job then waits for one gate release -- the tests
+// freeze the worker mid-job to build deterministic queue states.
+struct fake {
+	std::counting_semaphore<> entered{0};
+	std::counting_semaphore<> gate{0};
+	std::mutex                mtx;
+	std::vector<std::string>  log;   // perform order, by video
+	bool                      gated = false;
+
+	ocr::result perform(ocr::request const &r)
+	{
+		entered.release();
+		if (gated)
+			gate.acquire();
+		{
+			std::lock_guard const lk(mtx);
+			log.push_back(r.video);
+		}
+		ocr::result res;
+		res.lines.push_back({r.video + "@"
+		                     + std::to_string(r.ms),
+		                     0, 0, 1, 1, 100.0f});
+		res.conf = 100;
+		return res;
+	}
+};
+
+void poke_release(void *ctx)
+{
+	static_cast<std::counting_semaphore<> *>(ctx)->release();
+}
+
+ocr::request req(char const *video, std::int64_t ms = 0)
+{
+	ocr::request r;
+	r.video = video;
+	r.ms = ms;
+	return r;
+}
+
+void test_mailbox_smoke()
+{
+	fake f;
+	std::counting_semaphore<> poked{0};
+	ocr::scribe<fake> s(f, poke_release, &poked);
+	ocr::request const r = req("V", 1234);
+	ocr::ticket const t = s.post(r);
+	check(t != 0, "tickets start past zero");
+	poked.acquire();
+	std::vector<ocr::note> notes = s.drain();
+	check(notes.size() == 1, "one note per post");
+	check(notes[0].t == t && notes[0].r == r,
+	      "note echoes ticket and request");
+	check(notes[0].res.lines.size() == 1
+	      && notes[0].res.lines[0].text == "V@1234",
+	      "result carried through");
+	check(s.drain().empty(), "drain empties the box");
+}
+
+void test_mailbox_order()
+{
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	std::vector<ocr::note> notes;
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		s.post(req("A"));
+		f.entered.acquire();          // A live, frozen
+		s.post(req("E"));             // rest: E
+		s.post(req("C"));             // rest: E C
+		s.post(req("D"), true);       // rush: D
+		s.post(req("C"), true);       // twin hoists C to rush
+		f.gate.release(4);            // open all four jobs
+		for (int i = 0; i < 4; ++i)   // one poke per job
+			poked.acquire();
+		notes = s.drain();
+	}
+	check(f.log == std::vector<std::string>({"A", "D", "C", "E"}),
+	      "rush lane first, hoisted twin before the rest");
+	check(notes.size() == 5, "five notes for five tickets");
+	std::vector<ocr::ticket> ts;
+	for (ocr::note const &n : notes)
+		ts.push_back(n.t);
+	std::ranges::sort(ts);
+	check(std::ranges::adjacent_find(ts) == ts.end(),
+	      "every ticket its own note");
+	auto const of = [&notes](char const *v) {
+		return std::size_t(std::ranges::count_if(notes,
+			[v](ocr::note const &n) {
+				return n.r.video == v;
+			}));
+	};
+	check(of("C") == 2 && of("A") == 1 && of("D") == 1
+	      && of("E") == 1, "the coalesced job notified twice");
+}
+
+void test_mailbox_cancel()
+{
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	std::vector<ocr::note> notes;
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		ocr::ticket const ta = s.post(req("A"));
+		f.entered.acquire();              // A live, frozen
+		ocr::ticket const tb = s.post(req("B"));
+		s.post(req("C"));
+		check(s.cancel(tb), "queued ticket cancels");
+		check(!s.cancel(tb), "second cancel finds nothing");
+		check(!s.cancel(9999), "unknown ticket refused");
+		check(s.cancel(ta), "running ticket cancels");
+		f.gate.release(2);                // A (to nobody) + C
+		poked.acquire();                  // only C pokes
+		notes = s.drain();
+	}
+	check(f.log == std::vector<std::string>({"A", "C"}),
+	      "dropped job never performs, running one finishes");
+	check(notes.size() == 1 && notes[0].r.video == "C",
+	      "cancelled work delivers nothing");
+}
+
+void test_mailbox_teardown()
+{
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	std::vector<ocr::note> notes;
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		s.post(req("A"));
+		f.entered.acquire();          // A live, frozen
+		s.post(req("B"));
+		s.post(req("C"));
+		s.stop();                     // wind-down beats the gate
+		f.gate.release();             // A finishes and delivers
+		poked.acquire();
+		notes = s.drain();
+	}                                     // dtor joins promptly
+	check(f.log == std::vector<std::string>({"A"}),
+	      "stop drops the backlog after the live job");
+	check(notes.size() == 1 && notes[0].r.video == "A",
+	      "the live job still delivered");
+}
+
 } // namespace
 
 int main()
 {
 	test_lifecycle();
+	test_mailbox_smoke();
+	test_mailbox_order();
+	test_mailbox_cancel();
+	test_mailbox_teardown();
 
 	ocr::tess eng;
 	require(bool(eng), "system tessdata provides eng");
