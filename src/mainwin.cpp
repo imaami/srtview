@@ -704,14 +704,31 @@ void MainWin::rebuildSemantic()
 	std::vector<engine::SemanticEngine<Facts>::source> sources;
 	QCryptographicHash semanticCorpus(QCryptographicHash::Blake2b_256);
 	semanticCorpus.addData(QByteArrayView("semantic-corpus-v1"));
-	std::set<agenda::id> semanticSeen;
+	std::map<agenda::id, std::size_t> bySrt;
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		agenda::id const key = offerFacts(srt);
 		if (key && std::ranges::find(leaves, key) == leaves.end())
 			leaves.push_back(key);
-		if (!key || !semanticSeen.insert(key).second)
+		if (!key)
 			continue;
+		// This video's frames, whatever the transcript dedupe
+		// decides: slides belong to the video, not the srt.
+		auto const ft = m_frameText.find(it.id.toStdString());
+		if (auto const dup = bySrt.find(key);
+		    dup != bySrt.end()) {
+			// A transcript shared by two videos is one
+			// source, but each video keeps its own slides:
+			// the laggard's frames join the shared source.
+			if (ft == m_frameText.end())
+				continue;
+			auto &fr = sources[dup->second].frames;
+			fr.reserve(fr.size() + ft->second.size());
+			for (auto const &[at, text] : ft->second)
+				fr.push_back({at, text});
+			continue;
+		}
+		bySrt.emplace(key, sources.size());
 		exporter::transcript const &tx =
 			exporter::load(m_transcripts, srt);
 		engine::SemanticEngine<Facts>::source source;
@@ -735,14 +752,22 @@ void MainWin::rebuildSemantic()
 		// OCR notes.  Deliberately outside the corpus hash: new
 		// frames are new window identities inside the same
 		// corpus, not a new corpus.
-		if (auto const ft = m_frameText.find(it.id.toStdString());
-		    ft != m_frameText.end()) {
+		if (ft != m_frameText.end()) {
 			source.frames.reserve(ft->second.size());
 			for (auto const &[at, text] : ft->second)
 				source.frames.push_back({at, text});
 		}
 		sources.push_back(std::move(source));
 	}
+	// Merged frame sets sort once: by moment, ties by text, so
+	// coinciding slides from sibling videos order stably.
+	for (auto &s : sources)
+		std::ranges::sort(s.frames,
+			[](semantic::frame const &a,
+			   semantic::frame const &b) {
+				return a.at != b.at ? a.at < b.at
+				                    : a.text < b.text;
+			});
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
