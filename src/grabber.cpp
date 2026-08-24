@@ -106,12 +106,24 @@ void Grabber::enqueueImpl(QString const &path, QString const &id,
 	loadKnown(id);
 	replayPicks(path, id);
 	qint64 const ms = qint64(t * 1000.0 + 0.5);
+	bool fresh;
 	{
 		QMutexLocker const lock(&m_lock);
 		QSet<qint64> &known = m_known[id];
-		if (known.contains(ms))
-			return;
-		known.insert(ms);
+		fresh = !known.contains(ms);
+		if (fresh)
+			known.insert(ms);
+	}
+	if (!fresh) {
+		// A known hit is not re-grabbed, but the frame under
+		// inspection still deserves its rush: announced again,
+		// the scribe promotes a queued twin out of the rest
+		// lane or the archive answers on the spot.  Without
+		// this, a first-migration session parks the inspected
+		// frame behind the whole replay backlog.
+		if (rush && m_sink)
+			m_sink->pickReady(path, id, ms, true);
+		return;
 	}
 	Job j;
 	j.path = path;
