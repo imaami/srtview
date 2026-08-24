@@ -1,6 +1,8 @@
 // ocr.cpp -- see ocr.hpp.  The one place in the tree that includes
-// a tesseract header; every library quirk -- call ordering, malloc'd
-// text, the DPI guesser, unclamped rectangles -- is absorbed here.
+// a tesseract or leptonica header; every library quirk -- call
+// ordering, malloc'd text, the DPI guesser, unclamped rectangles,
+// both libraries' console chatter -- is absorbed here.
+#include <leptonica/allheaders.h>
 #include <tesseract/baseapi.h>
 #include <tesseract/resultiterator.h>
 
@@ -82,12 +84,21 @@ tess::tess(char const *lang, char const *tessdata)
 {
 	if (!lang)
 		lang = "eng";
+	// Leptonica's only call in the tree: real-world frames make
+	// it announce box-clip recoveries and such on stderr.
+	setMsgSeverity(L_SEVERITY_NONE);
 	if (m->api.Init(tessdata, lang, tesseract::OEM_LSTM_ONLY)) {
 		m->err = "no model for lang=";
 		m->err += lang;
 		m->err += " under ";
 		m->err += tessdata ? tessdata : "the default tessdata";
+		return;
 	}
+	// Tesseract's own chatter (diacritic counts, sliver-line
+	// complaints) rides its debug stream; route it to the bit
+	// bucket.  After Init on purpose -- a failed Init complains
+	// usefully.
+	m->api.SetVariable("debug_file", "/dev/null");
 }
 
 tess::~tess() = default;
