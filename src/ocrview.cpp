@@ -56,7 +56,9 @@ bool nums(std::string_view s, std::vector<std::int64_t> &out)
 		if (cut == std::string_view::npos)
 			break;
 		s.remove_prefix(cut + 1);
-	}
+		if (s.empty())
+			return false;         // a trailing comma promises
+	}                                     // a field it never gives
 	return !out.empty();
 }
 
