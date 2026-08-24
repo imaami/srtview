@@ -80,8 +80,8 @@ void Grabber::setVideoImpl(QString const &path, QString const &id)
 	}
 	m_path = path;
 	m_id = id;
-	if (loadKnown(id))
-		replayPicks(path, id);
+	loadKnown(id);
+	replayPicks(path, id);
 }
 
 void Grabber::enqueue(double t)
@@ -103,8 +103,8 @@ void Grabber::enqueueImpl(QString const &path, QString const &id,
 {
 	if (path.isEmpty() || id.isEmpty() || t < 0.0)
 		return;
-	if (loadKnown(id))
-		replayPicks(path, id);
+	loadKnown(id);
+	replayPicks(path, id);
 	qint64 const ms = qint64(t * 1000.0 + 0.5);
 	{
 		QMutexLocker const lock(&m_lock);
@@ -123,10 +123,12 @@ void Grabber::enqueueImpl(QString const &path, QString const &id,
 		startJob();
 }
 
-// The manifest replay: every pick of a freshly loaded video goes
-// to the sink once per session, deduped across trios.  Runs only
-// on the worker thread -- loadKnown's other caller, picksFor(),
-// can be on any thread and never replays.
+// The manifest replay: every pick of a video goes to the sink once
+// per session, deduped across trios, whenever the first
+// (path, id) pairing reaches the worker.  Replay state is its own
+// latch, not loadKnown's: picksFor() may have loaded the manifest
+// earlier from any thread, and that load must not swallow the
+// replay.
 void Grabber::replayPicks(QString const &path, QString const &id)
 {
 	if (!m_sink)
@@ -134,6 +136,9 @@ void Grabber::replayPicks(QString const &path, QString const &id)
 	PickMap picks;
 	{
 		QMutexLocker const lock(&m_lock);
+		if (m_replayed.contains(id))
+			return;
+		m_replayed.insert(id);
 		picks = m_picks.value(id);
 	}
 	QSet<qint64> seen;
@@ -342,16 +347,16 @@ void Grabber::drained()
 	}, Qt::QueuedConnection);
 }
 
-bool Grabber::loadKnown(QString const &id)
+void Grabber::loadKnown(QString const &id)
 {
 	QMutexLocker const lock(&m_lock);
 	if (m_known.contains(id))
-		return false;
+		return;
 	QDir().mkpath(dir(id));              // first touch owns the dir
 	QSet<qint64> &set = m_known[id];
 	QFile f(dir(id) + QStringLiteral("/picks.txt"));
 	if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-		return true;
+		return;
 	PickMap &picks = m_picks[id];
 	while (!f.atEnd()) {
 		QList<QByteArray> const col =
@@ -363,8 +368,6 @@ bool Grabber::loadKnown(QString const &id)
 		picks.insert(hit, {col[1].toLongLong(),
 		                   col[2].toLongLong()});
 	}
-
-	return true;
 }
 
 QString Grabber::dir(QString const &id) const

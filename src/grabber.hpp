@@ -115,16 +115,17 @@ private:
 	void finishJob(Job const &j, qint64 prev, qint64 next);
 	void abortJob();
 	void drained();
-	bool loadKnown(QString const &id);   // true on first touch
+	void loadKnown(QString const &id);
 	QString dir(QString const &id) const;
 
 	using PickMap = QHash<qint64, std::pair<qint64, qint64>>;
 
 	QThread                      m_thread;  // not a child: stays put
 	DecoderQ                     m_dec;
-	QMutex                       m_lock;    // the two maps below
+	QMutex                       m_lock;    // the maps below
 	QHash<QString, QSet<qint64>> m_known;   // grabbed or queued hits
 	QHash<QString, PickMap>      m_picks;   // finished hits only
+	QSet<QString>                m_replayed; // manifests sunk once
 	QList<Job>                   m_jobs;
 	QString                      m_path, m_id; // the followed video
 	QObject                     *m_ctx = nullptr;
