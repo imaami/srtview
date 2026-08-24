@@ -79,10 +79,14 @@ struct result {
 class tess
 {
 public:
-	// nullptr tessdata means the system default; nullptr lang
-	// means "eng".  A failed model load leaves the instance
-	// false with error() set, and read() reports it per call.
-	explicit tess(char const *lang = "eng",
+	// nullptr tessdata means the system default.  A named lang
+	// loads that language only; nullptr walks the default ladder
+	// -- fin first, the language this corpus reads best under,
+	// its English included, then eng, the model every install
+	// has -- and lang() names whichever loaded.  A failed load
+	// leaves the instance false with error() set, and read()
+	// reports it per call.
+	explicit tess(char const *lang = nullptr,
 	              char const *tessdata = nullptr);
 	~tess();
 
@@ -92,9 +96,11 @@ public:
 	explicit operator bool() const;
 	std::string_view error() const;
 
-	// The directory Init resolved the models from; empty while
-	// the engine is down.  Callers derive model identity from it.
+	// The directory Init resolved the models from, and the
+	// language it actually loaded; both empty while the engine
+	// is down.  Callers derive model identity from them.
 	std::string datapath() const;
+	std::string_view lang() const;
 
 	result read(view const &v, options const &o);
 

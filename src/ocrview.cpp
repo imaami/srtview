@@ -29,7 +29,7 @@ static_assert(std::size(kLay) == ocr::layout_count,
 struct args {
 	std::vector<std::int64_t> at;
 	char const  *video = nullptr;
-	char const  *lang = "eng";
+	char const  *lang = nullptr;  // default: the reader's ladder
 	char const  *tessdata = nullptr;
 	ocr::options opts;
 	int          scale = 2;
@@ -142,8 +142,9 @@ int main(int argc, char **argv)
 		             back.error().data());
 		return 1;
 	}
-	std::fprintf(stderr, "ocrview: tesseract %s, lang %s\n",
-	             ocr::tess::version(), a.lang);
+	std::fprintf(stderr, "ocrview: tesseract %s, lang %.*s\n",
+	             ocr::tess::version(),
+	             int(back.lang().size()), back.lang().data());
 
 	std::counting_semaphore<> poked{0};
 	ocr::scribe<ocr::lector> desk(back,

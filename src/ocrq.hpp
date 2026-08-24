@@ -81,30 +81,36 @@ private:
 	// slides and refuses moving noise in the phase-1 acceptance;
 	// 2x is safety margin for small screencast text.  Revisit
 	// with corpus evidence via ocrview before ingestion leans on
-	// this.
-	static constexpr char         kLang[] = "eng";
-	static constexpr ocr::layout  kLay    = ocr::layout::any;
-	static constexpr std::uint8_t kScale  = 2;
+	// this.  The language is no knob here: the lector walks the
+	// reader's default ladder, and the label below records what
+	// actually loaded.
+	static constexpr ocr::layout  kLay   = ocr::layout::any;
+	static constexpr std::uint8_t kScale = 2;
 
-	// The label the archive stamps slots with: the language plus
-	// the content identity of the traineddata that answered, so a
-	// swapped or upgraded model re-earns its slots exactly like a
-	// library upgrade does.  An unhashable model marks itself --
-	// nothing gets stored under it anyway, a downed engine only
-	// errs and errors are never cached.
+	// The label the archive stamps slots with: the language that
+	// actually loaded plus the content identity of its
+	// traineddata, so a swapped or upgraded model -- or the
+	// ladder resolving differently -- re-earns its slots exactly
+	// like a library upgrade does.  An unhashable model marks
+	// itself; a downed engine only errs and errors are never
+	// cached.
 	static std::string label_of(ocr::lector const &read)
 	{
 		QString dir = QString::fromStdString(read.datapath());
 		if (!dir.isEmpty() && !dir.endsWith(QLatin1Char('/')))
 			dir += QLatin1Char('/');
-		QFile f(dir + QLatin1String(kLang)
-		        + QStringLiteral(".traineddata"));
+		QString const lang = QString::fromUtf8(
+			read.lang().data(),
+			qsizetype(read.lang().size()));
+		QFile f(dir + lang + QStringLiteral(".traineddata"));
 		QCryptographicHash h(QCryptographicHash::Blake2b_256);
 		QByteArray tag;
-		if (!dir.isEmpty() && f.open(QIODevice::ReadOnly)
-		    && h.addData(&f))
+		if (!dir.isEmpty() && !lang.isEmpty()
+		    && f.open(QIODevice::ReadOnly) && h.addData(&f))
 			tag = h.result().left(8).toHex();
-		std::string out = kLang;
+		std::string out = read.lang().empty()
+			? std::string("down")
+			: std::string(read.lang());
 		out += ' ';
 		out += tag.isEmpty() ? "unhashed" : tag.constData();
 		return out;
@@ -145,8 +151,7 @@ private:
 	// joins first while everything it can touch still lives.
 	struct stack {
 		stack(std::string root, void (*pk)(void *), void *cx)
-			: read(kLang),
-			  back(std::move(root), label_of(read), read),
+			: back(std::move(root), label_of(read), read),
 			  desk(back, pk, cx) {}
 
 		ocr::lector                            read;

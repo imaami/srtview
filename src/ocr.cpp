@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,6 +34,12 @@ static_assert(std::size(kPsm) == layout_count,
 // SetSourceResolution when the view brings no hint: realistic for
 // screen content and above the library's estimate-and-warn floor.
 constexpr int kPpi = 96;
+
+// The default language ladder, tried in order when the caller
+// names none: fin covers this corpus -- its English included --
+// better than eng does, and eng is the model every install has.
+// The one authority; every nullptr-lang default inherits it.
+constexpr char const *kDefaultLangs[] = {"fin", "eng"};
 
 std::string_view trim(std::string_view s)
 {
@@ -77,28 +84,41 @@ double take_lines(tesseract::TessBaseAPI &api,
 struct tess::guts {
 	tesseract::TessBaseAPI api;
 	std::string            err;
+	std::string            lang;
 };
 
 tess::tess(char const *lang, char const *tessdata)
 	: m(std::make_unique<guts>())
 {
-	if (!lang)
-		lang = "eng";
 	// Leptonica's only call in the tree: real-world frames make
 	// it announce box-clip recoveries and such on stderr.
 	setMsgSeverity(L_SEVERITY_NONE);
-	if (m->api.Init(tessdata, lang, tesseract::OEM_LSTM_ONLY)) {
-		m->err = "no model for lang=";
-		m->err += lang;
-		m->err += " under ";
-		m->err += tessdata ? tessdata : "the default tessdata";
+	// A named language is a rung of one; Init re-tries cleanly
+	// after a miss, so the ladder is a plain walk.
+	char const *const named[] = {lang};
+	auto const ladder = lang
+		? std::span<char const *const>(named)
+		: std::span<char const *const>(kDefaultLangs);
+	for (char const *const l : ladder) {
+		if (m->api.Init(tessdata, l,
+		                tesseract::OEM_LSTM_ONLY) != 0)
+			continue;
+		m->lang = l;
+		// Tesseract's own chatter (diacritic counts,
+		// sliver-line complaints) rides its debug stream;
+		// route it to the bit bucket.  After Init on purpose
+		// -- a failed Init complains usefully.
+		m->api.SetVariable("debug_file", "/dev/null");
 		return;
 	}
-	// Tesseract's own chatter (diacritic counts, sliver-line
-	// complaints) rides its debug stream; route it to the bit
-	// bucket.  After Init on purpose -- a failed Init complains
-	// usefully.
-	m->api.SetVariable("debug_file", "/dev/null");
+	m->err = "no model for lang=";
+	for (char const *const l : ladder) {
+		if (l != ladder.front())
+			m->err += " or ";
+		m->err += l;
+	}
+	m->err += " under ";
+	m->err += tessdata ? tessdata : "the default tessdata";
 }
 
 tess::~tess() = default;
@@ -118,6 +138,11 @@ std::string_view tess::error() const
 std::string tess::datapath() const
 {
 	return *this ? m->api.GetDatapath() : std::string();
+}
+
+std::string_view tess::lang() const
+{
+	return m ? std::string_view(m->lang) : std::string_view();
 }
 
 char const *tess::version()

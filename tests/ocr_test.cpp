@@ -119,9 +119,15 @@ void test_lifecycle()
 	check(!bad, "bogus tessdata leaves the engine down");
 	check(!bad.error().empty(), "and says why");
 	check(bad.datapath().empty(), "a downed engine has no datapath");
+	check(bad.lang().empty(), "and no language");
 	ocr::result const r = bad.read(canvas(64, 64).view(), {});
 	check(!r.err.empty() && r.lines.empty(),
 	      "read on a down engine reports, not crashes");
+
+	ocr::tess lost(nullptr, "/nonexistent/tessdata");
+	check(!lost && lost.error().find("fin or eng")
+	      != std::string_view::npos,
+	      "an empty shelf names the whole ladder");
 }
 
 void test_reads(ocr::tess &eng)
@@ -493,11 +499,36 @@ int main()
 	test_mailbox_teardown();
 	test_archive();
 
-	ocr::tess eng;
-	require(bool(eng), "system tessdata provides eng");
-	check(!eng.datapath().empty(), "a live engine names its models");
-	test_reads(eng);
-	test_recognition(eng);
+	ocr::tess sys;
+	require(bool(sys), "system tessdata provides the ladder");
+	check(!sys.datapath().empty(), "a live engine names its models");
+	check(sys.lang() == "fin",
+	      "the ladder's first rung, fin, loads on the dev box");
+
+	// The fallback, proven with a one-language shelf: tessdata
+	// holding only eng makes the nullptr ladder walk fin, miss,
+	// and land on eng.
+	{
+		namespace fs = std::filesystem;
+		fs::path const shelf = fs::temp_directory_path()
+			/ ("srtview-ocr-shelf-"
+			   + std::to_string(getpid()));
+		fs::remove_all(shelf);
+		fs::create_directories(shelf);
+		std::error_code ec;
+		fs::create_symlink(
+			fs::path(sys.datapath()) / "eng.traineddata",
+			shelf / "eng.traineddata", ec);
+		if (!ec) {
+			ocr::tess fell(nullptr, shelf.string().c_str());
+			check(bool(fell) && fell.lang() == "eng",
+			      "an eng-only shelf lands the ladder on eng");
+		}
+		fs::remove_all(shelf);
+	}
+
+	test_reads(sys);
+	test_recognition(sys);
 
 	if (g_fail)
 		std::printf("%d FAILED\n", g_fail);

@@ -21,12 +21,14 @@ namespace ocr {
 class lector
 {
 public:
-	explicit lector(char const *lang = "eng",
+	// Defaults inherit the reader's language ladder (ocr.cpp).
+	explicit lector(char const *lang = nullptr,
 	                char const *tessdata = nullptr);
 
 	explicit operator bool() const { return bool(m_tess); }
 	std::string_view error() const { return m_tess.error(); }
 	std::string datapath() const { return m_tess.datapath(); }
+	std::string_view lang() const { return m_tess.lang(); }
 
 	result perform(request const &r);
 
