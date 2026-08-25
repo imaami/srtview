@@ -465,6 +465,83 @@ void test_archive()
 	fs::remove_all(rig);
 }
 
+void test_mailbox_plan()
+{
+	fake f;
+	std::counting_semaphore<> poked{0};
+	std::vector<ocr::note> notes;
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		ocr::feed a{req("A"), {1, 2}};
+		ocr::feed b{req("B"), {3}};
+		s.plan({a, b});
+		for (int i = 0; i < 3; ++i)
+			poked.acquire();
+		notes = s.drain();
+	}
+	check(notes.size() == 3, "the plan reads itself out");
+	bool zeros = !notes.empty();
+	for (ocr::note const &n : notes)
+		zeros = zeros && n.t == 0;
+	check(zeros, "planned notes carry ticket 0");
+	check(notes[0].r.video == "A" && notes[0].r.ms == 1
+	      && notes[2].r.video == "B" && notes[2].r.ms == 3,
+	      "feed order, moment by moment");
+}
+
+void test_mailbox_plan_yields()
+{
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	std::vector<ocr::note> notes;
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		ocr::feed a{req("A"), {1, 2}};
+		a.proto.id = "A";
+		ocr::feed b{req("B"), {9}};
+		b.proto.id = "B";
+		s.plan({a, b});
+		f.entered.acquire();          // A@1 live, frozen
+		s.post(req("R"), true);       // demand arrives
+		s.prefer("B");                // B's remainder first
+		f.gate.release(4);
+		for (int i = 0; i < 4; ++i)
+			poked.acquire();
+		notes = s.drain();
+	}
+	check(f.log == std::vector<std::string>({"A", "R", "B", "A"}),
+	      "demand outranks the plan, prefer reorders it");
+	std::size_t posted = 0;
+	for (ocr::note const &n : notes)
+		posted += n.t != 0;
+	check(notes.size() == 4 && posted == 1,
+	      "one posted note among the planned ones");
+}
+
+void test_mailbox_replan()
+{
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	std::vector<ocr::note> notes;
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		ocr::feed a{req("A"), {1, 2, 3}};
+		s.plan({a});
+		f.entered.acquire();          // A@1 live, frozen
+		check(!s.cancel(0), "the planned mark is not a ticket");
+		ocr::feed c{req("C"), {7}};
+		s.plan({c});                  // replaces A's remainder
+		f.gate.release(2);
+		poked.acquire();
+		poked.acquire();
+		notes = s.drain();
+	}
+	check(f.log == std::vector<std::string>({"A", "C"}),
+	      "a new plan replaces the old one's remainder");
+}
+
 void test_mailbox_teardown()
 {
 	fake f;
@@ -498,6 +575,9 @@ int main()
 	test_mailbox_order();
 	test_mailbox_cancel();
 	test_mailbox_late_cancel();
+	test_mailbox_plan();
+	test_mailbox_plan_yields();
+	test_mailbox_replan();
 	test_mailbox_teardown();
 	test_archive();
 

@@ -12,10 +12,13 @@
 #define SRTVIEW_SRC_SCRIBE_HPP_
 
 #include <condition_variable>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -23,6 +26,13 @@
 #include "ocr.hpp"
 
 namespace ocr {
+
+// One video's share of the corpus reading plan: the prototype
+// request, stamped with each listed moment in turn.
+struct feed {
+	request                   proto;  // its ms is ignored
+	std::vector<std::int64_t> times;
+};
 
 // poke fires on the worker thread after notes land; it must be
 // cheap and thread-safe, and calling drain() from inside it is
@@ -71,12 +81,49 @@ public:
 		return t;
 	}
 
+	// The corpus reads itself: whenever both lanes run dry the
+	// worker performs the plan's next moment -- posted work
+	// always goes first -- and the notes arrive under ticket 0,
+	// the planned reading's mark.  A new plan replaces the old
+	// (a corpus swap); prefer() moves one video's remainder to
+	// the front.
+	void plan(std::vector<feed> feeds)
+	{
+		{
+			std::lock_guard const lk(m_mtx);
+			m_plan.clear();
+			for (feed &f : feeds)
+				if (!f.proto.video.empty()
+				    && !f.times.empty())
+					m_plan.push_back(
+						{std::move(f), 0});
+		}
+		m_cv.notify_one();
+	}
+
+	void prefer(std::string const &id)
+	{
+		std::lock_guard const lk(m_mtx);
+		for (std::size_t i = 1; i < m_plan.size(); ++i) {
+			if (m_plan[i].f.proto.id != id)
+				continue;
+			lot moved = std::move(m_plan[i]);
+			m_plan.erase(m_plan.begin()
+			             + std::ptrdiff_t(i));
+			m_plan.push_front(std::move(moved));
+			return;
+		}
+	}
+
 	// Unhooks the ticket wherever it is: a queued job left
 	// ownerless is dropped, a running one delivers to nobody,
 	// and a finished note not yet drained is scrubbed -- after
-	// cancel(t), no note for t ever surfaces.
+	// cancel(t), no note for t ever surfaces.  Ticket 0 is the
+	// planned readings' mark, never cancellable.
 	bool cancel(ticket t)
 	{
+		if (!t)
+			return false;
 		std::lock_guard const lk(m_mtx);
 		if (m_live && std::erase(m_live->owners, t))
 			return true;
@@ -101,6 +148,28 @@ private:
 		request             r;
 		std::vector<ticket> owners;
 	};
+
+	// One consumed plan entry: the feed plus its cursor.
+	struct lot {
+		feed        f;
+		std::size_t at;
+	};
+
+	// Under the lock, both lanes empty: the plan's next moment
+	// as a job owned by ticket 0, husk feeds pruned on the way.
+	std::optional<job> pulled()
+	{
+		while (!m_plan.empty()) {
+			lot &l = m_plan.front();
+			if (l.at < l.f.times.size()) {
+				request r = l.f.proto;
+				r.ms = l.f.times[l.at++];
+				return job{std::move(r), {0}};
+			}
+			m_plan.pop_front();
+		}
+		return std::nullopt;
+	}
 
 	// Under the lock: attach t to an == twin anywhere it sits.
 	bool adopt(request const &r, bool rush, ticket t)
@@ -145,13 +214,20 @@ private:
 		std::unique_lock lk(m_mtx);
 		for (;;) {
 			bool const go = m_cv.wait(lk, st, [this] {
-				return !m_rush.empty() || !m_rest.empty();
+				return !m_rush.empty() || !m_rest.empty()
+				    || !m_plan.empty();
 			});
 			if (!go || st.stop_requested())
 				return;
-			auto &lane = m_rush.empty() ? m_rest : m_rush;
-			m_live.emplace(std::move(lane.front()));
-			lane.pop_front();
+			if (!m_rush.empty() || !m_rest.empty()) {
+				auto &lane = m_rush.empty() ? m_rest
+				                            : m_rush;
+				m_live.emplace(std::move(lane.front()));
+				lane.pop_front();
+			} else if (std::optional<job> j = pulled()) {
+				m_live.emplace(std::move(*j));
+			} else
+				continue;    // husks only: wait again
 			request const r = m_live->r;
 			lk.unlock();
 			result const res = m_b.perform(r);
@@ -177,6 +253,7 @@ private:
 	std::condition_variable_any m_cv;
 	std::deque<job>             m_rush;
 	std::deque<job>             m_rest;
+	std::deque<lot>             m_plan;
 	std::vector<note>           m_done;
 	std::optional<job>          m_live;
 	ticket                      m_last = 0;

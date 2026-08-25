@@ -77,7 +77,8 @@ struct result {
 	float             conf = 0;  // mean over lines, 0 when none
 };
 
-using ticket = std::uint64_t;    // 0 marks a refused post
+using ticket = std::uint64_t;    // 0 marks a refused post -- and,
+                                 // on a note, a planned reading
 
 // The unit of work: which video, which moment, how to look.  Pure
 // data -- the mailbox that queues it lives in scribe.hpp.  The
