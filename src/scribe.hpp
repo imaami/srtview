@@ -230,7 +230,17 @@ private:
 				continue;    // husks only: wait again
 			request const r = m_live->r;
 			lk.unlock();
-			result const res = m_b.perform(r);
+			// The worker never dies of a backend's exception:
+			// whatever escaped becomes an error note, and the
+			// error is never cached, so a later session tries
+			// again.
+			result res;
+			try {
+				res = m_b.perform(r);
+			} catch (...) {
+				res = {};
+				res.err = "backend exception";
+			}
 			lk.lock();
 			bool told = false;
 			for (ticket const t : m_live->owners) {

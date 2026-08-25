@@ -465,6 +465,31 @@ void test_archive()
 	fs::remove_all(rig);
 }
 
+// A backend that dies on the job.
+struct thrower {
+	ocr::result perform(ocr::request const &)
+	{
+		throw std::runtime_error("boom");
+	}
+};
+
+void test_mailbox_survives_throw()
+{
+	thrower f;
+	std::counting_semaphore<> poked{0};
+	ocr::scribe<thrower> s(f, poke_release, &poked);
+	s.post(req("V", 1));
+	poked.acquire();
+	std::vector<ocr::note> const notes = s.drain();
+	check(notes.size() == 1
+	      && notes[0].res.err == "backend exception",
+	      "a throwing backend becomes an error note");
+	s.post(req("W", 2));
+	poked.acquire();
+	check(s.drain().size() == 1,
+	      "and the worker lives to serve the next post");
+}
+
 void test_mailbox_plan()
 {
 	fake f;
@@ -575,6 +600,7 @@ int main()
 	test_mailbox_order();
 	test_mailbox_cancel();
 	test_mailbox_late_cancel();
+	test_mailbox_survives_throw();
 	test_mailbox_plan();
 	test_mailbox_plan_yields();
 	test_mailbox_replan();

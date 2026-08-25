@@ -8,7 +8,9 @@ extern "C" {
 
 #include <algorithm>
 #include <cstdlib>
+#include <new>
 #include <ranges>
+#include <stdexcept>
 #include <utility>
 
 #include "decoder.hpp"
@@ -20,6 +22,10 @@ namespace {
 // Forward targets within this window continue decoding instead of
 // seeking: bisection revisits neighborhoods constantly.
 constexpr std::int64_t k_near_ms = 3000;
+
+// The gray budget: admits 4K at full upscale and 8K at 2x, rejects
+// the absurd before a gigabyte gets allocated for it.
+constexpr std::size_t kGrayMaxPixels = std::size_t{512} << 20;
 
 std::int64_t to_ms(std::int64_t pts, AVRational tb)
 {
@@ -194,6 +200,15 @@ bool decoder::gray_at(std::int64_t ms, int scale, gray &out)
 	if (!decode_to(ms))
 		return false;
 	scale = gray_scale(scale);
+	// Budget before arithmetic: the product is taken in size_t
+	// from the unscaled dimensions, so nothing overflows on the
+	// way to the refusal.
+	std::size_t const px = std::size_t(m_have->width)
+	                     * std::size_t(m_have->height)
+	                     * std::size_t(scale) * std::size_t(scale);
+	if (m_have->width <= 0 || m_have->height <= 0
+	    || px > kGrayMaxPixels)
+		return false;
 	int const w = m_have->width * scale;
 	int const h = m_have->height * scale;
 	m_sws_gray = sws_getCachedContext(m_sws_gray,
@@ -205,7 +220,15 @@ bool decoder::gray_at(std::int64_t ms, int scale, gray &out)
 		return false;
 	out.width = w;
 	out.height = h;
-	out.px.resize(std::size_t(w) * std::size_t(h));
+	// An allocation the system refuses is a failed decode, not a
+	// dead worker.
+	try {
+		out.px.resize(px);
+	} catch (std::bad_alloc const &) {
+		return false;
+	} catch (std::length_error const &) {
+		return false;
+	}
 	std::uint8_t *dst[4] = {out.px.data()};
 	int const stride[4] = {w};
 	return sws_scale(m_sws_gray, m_have->data, m_have->linesize,
