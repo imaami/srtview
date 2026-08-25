@@ -133,24 +133,28 @@ private:
 	// ladder resolving differently -- re-earns its slots exactly
 	// like a library upgrade does.  An unhashable model marks
 	// itself; a downed engine only errs and errors are never
-	// cached.
-	static std::string label_of(ocr::lector const &read)
+	// cached.  Called lazily by the archive on the scribe's
+	// worker at first use: the model file is read and hashed off
+	// the UI thread, keeping this header's no-UI-IO claim true.
+	static std::string labelOf(void *ctx)
 	{
-		QString dir = QString::fromStdString(read.datapath());
+		auto const *read =
+			static_cast<ocr::lector const *>(ctx);
+		QString dir = QString::fromStdString(read->datapath());
 		if (!dir.isEmpty() && !dir.endsWith(QLatin1Char('/')))
 			dir += QLatin1Char('/');
 		QString const lang = QString::fromUtf8(
-			read.lang().data(),
-			qsizetype(read.lang().size()));
+			read->lang().data(),
+			qsizetype(read->lang().size()));
 		QFile f(dir + lang + QStringLiteral(".traineddata"));
 		QCryptographicHash h(QCryptographicHash::Blake2b_256);
 		QByteArray tag;
 		if (!dir.isEmpty() && !lang.isEmpty()
 		    && f.open(QIODevice::ReadOnly) && h.addData(&f))
 			tag = h.result().left(8).toHex();
-		std::string out = read.lang().empty()
+		std::string out = read->lang().empty()
 			? std::string("down")
-			: std::string(read.lang());
+			: std::string(read->lang());
 		out += ' ';
 		out += tag.isEmpty() ? "unhashed" : tag.constData();
 		return out;
@@ -191,7 +195,8 @@ private:
 	// joins first while everything it can touch still lives.
 	struct stack {
 		stack(std::string root, void (*pk)(void *), void *cx)
-			: back(std::move(root), label_of(read), read),
+			: back(std::move(root), &OcrQ::labelOf, &read,
+			       read),
 			  desk(back, pk, cx) {}
 
 		ocr::lector                            read;

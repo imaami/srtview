@@ -330,6 +330,11 @@ void test_mailbox_late_cancel()
 	check(!s.cancel(t), "and the ticket is truly gone");
 }
 
+std::string test_label(void *)
+{
+	return "eng";
+}
+
 // The archive's inner stand-in: counts performs, returns a can.
 struct probe {
 	ocr::result canned;
@@ -355,7 +360,7 @@ void test_archive()
 	inner.canned.lines.push_back({" spaced  text ",
 	                              1, 2, 3, 4, 100.0f});
 	inner.canned.conf = 95.625f;
-	ocr::archive<probe> arc(rig.string(), "eng", inner);
+	ocr::archive<probe> arc(rig.string(), test_label, nullptr, inner);
 
 	ocr::request r;
 	r.video = "/v.mp4";
@@ -382,7 +387,7 @@ void test_archive()
 	      "round-trip is exact");
 
 	probe quiet;
-	ocr::archive<probe> arc2(rig.string(), "eng", quiet);
+	ocr::archive<probe> arc2(rig.string(), test_label, nullptr, quiet);
 	r.ms = 100;
 	arc2.perform(r);
 	got = arc2.perform(r);
@@ -436,7 +441,7 @@ void test_archive()
 	check(inner.calls == 6, "an impossible box re-performs");
 
 	probe raw;
-	ocr::archive<probe> arc3(rig.string(), "eng", raw);
+	ocr::archive<probe> arc3(rig.string(), test_label, nullptr, raw);
 	ocr::request noid = r;
 	noid.id.clear();
 	arc3.perform(noid);
@@ -456,7 +461,7 @@ void test_archive()
 
 	probe failing;
 	failing.canned.err = "cannot decode";
-	ocr::archive<probe> arc4(rig.string(), "eng", failing);
+	ocr::archive<probe> arc4(rig.string(), test_label, nullptr, failing);
 	r.ms = 200;
 	arc4.perform(r);
 	arc4.perform(r);

@@ -73,16 +73,16 @@ template <class B> requires backend<B>
 class archive
 {
 public:
-	archive(std::string root, std::string label, B &inner)
+	// The label provider is called once, lazily, on the thread
+	// that performs -- it may do IO (the app hashes the model
+	// file there), which is exactly why it must not run at
+	// construction on the owner's thread.  perform() runs on one
+	// thread by contract (the scribe's worker), so the lazy
+	// build needs no lock.
+	archive(std::string root, std::string (*label)(void *),
+	        void *ctx, B &inner)
 		: m_b(inner), m_root(std::move(root)),
-		  m_stamp("tesseract ")
-	{
-		m_stamp += tess::version();
-		m_stamp += ' ';
-		m_stamp += label;
-		m_stamp += " pipe ";
-		m_stamp += std::to_string(pipeline_version);
-	}
+		  m_label(label), m_ctx(ctx) {}
 
 	result perform(request const &r)
 	{
@@ -116,12 +116,27 @@ private:
 		        + char('0' + scale) + ".txt");
 	}
 
+	// The stamp, built on first use from the provided label.
+	std::string const &stamp()
+	{
+		if (m_stamp.empty()) {
+			m_stamp = "tesseract ";
+			m_stamp += tess::version();
+			m_stamp += ' ';
+			m_stamp += m_label ? m_label(m_ctx)
+			                   : std::string("unlabeled");
+			m_stamp += " pipe ";
+			m_stamp += std::to_string(pipeline_version);
+		}
+		return m_stamp;
+	}
+
 	// Strict on purpose: a header from any other recognizer
 	// configuration, any malformed line, a torn tail, an
 	// implausibly large slot, or a span no recognizer could have
 	// emitted -- the store is world-editable state -- all fail
 	// into a miss.  The mean confidence is derived, never stored.
-	std::optional<result> load(std::filesystem::path const &p) const
+	std::optional<result> load(std::filesystem::path const &p)
 	{
 		constexpr std::size_t kSlotCap = std::size_t{1} << 20;
 		std::string all;
@@ -129,7 +144,7 @@ private:
 			return {};
 		std::string_view rest(all);
 		std::string_view line;
-		if (!detail::next_line(rest, line) || line != m_stamp)
+		if (!detail::next_line(rest, line) || line != stamp())
 			return {};
 		result out;
 		double sum = 0;
@@ -157,9 +172,9 @@ private:
 	}
 
 	void store(std::filesystem::path const &p,
-	           result const           &res) const
+	           result const           &res)
 	{
-		std::string text = m_stamp;
+		std::string text = stamp();
 		text += '\n';
 		for (span const &s : res.lines) {
 			text += std::to_string(s.x);
@@ -205,7 +220,9 @@ private:
 
 	B                    &m_b;
 	std::filesystem::path m_root;
-	std::string           m_stamp;
+	std::string         (*m_label)(void *);
+	void                 *m_ctx;
+	std::string           m_stamp;   // lazy; empty = not yet built
 };
 
 } // namespace ocr
