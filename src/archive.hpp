@@ -216,6 +216,8 @@ private:
 			return;
 		}
 		std::filesystem::rename(tmp, p, ec);
+		if (ec)
+			std::filesystem::remove(tmp, ec);
 	}
 
 	B                    &m_b;
