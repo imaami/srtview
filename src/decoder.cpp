@@ -193,7 +193,7 @@ bool decoder::gray_at(std::int64_t ms, int scale, gray &out)
 {
 	if (!decode_to(ms))
 		return false;
-	scale = std::clamp(scale, 1, gray_scale_max);
+	scale = gray_scale(scale);
 	int const w = m_have->width * scale;
 	int const h = m_have->height * scale;
 	m_sws_gray = sws_getCachedContext(m_sws_gray,

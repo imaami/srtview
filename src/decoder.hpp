@@ -51,6 +51,14 @@ struct frame {
 // OCR: text recognition wants x-heights the source may not give.
 inline constexpr int gray_scale_max = 4;
 
+// The one clamp: the cache key, the ROI math and the sws target
+// must all agree on the effective upscale, so they all ask here.
+inline constexpr int gray_scale(int scale)
+{
+	return scale < 1 ? 1 : scale > gray_scale_max ? gray_scale_max
+	                                              : scale;
+}
+
 struct gray {
 	std::vector<std::uint8_t> px;    // stride = width
 	int width = 0;

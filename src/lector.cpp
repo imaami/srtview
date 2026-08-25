@@ -30,8 +30,7 @@ result lector::perform(request const &r)
 		out.err = "cannot open video: " + r.video;
 		return out;
 	}
-	int const scale = std::clamp(int(r.scale), 1,
-	                             media::gray_scale_max);
+	int const scale = media::gray_scale(int(r.scale));
 	media::gray g;
 	if (!m_dec.gray_at(r.ms, scale, g)) {
 		out.err = "cannot decode frame at "

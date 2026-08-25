@@ -111,8 +111,7 @@ private:
 		constexpr char lay[] = "absl";
 		static_assert(sizeof lay - 1 == layout_count,
 		              "lay mirrors ocr::layout");
-		int const scale = std::clamp(int(r.scale), 1,
-		                             media::gray_scale_max);
+		int const scale = media::gray_scale(int(r.scale));
 		return m_root / r.id
 		     / (std::to_string(r.ms) + '.'
 		        + lay[std::size_t(r.opts.lay)]
