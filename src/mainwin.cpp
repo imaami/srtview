@@ -201,7 +201,7 @@ double zoomFactor(int steps)
 // semantic judgment -- the model weighs everything that passes.
 constexpr float kOcrConfFloor = 60.0f;
 
-// The settle debounce's ceiling: an hours-long corpus backfill
+// The settle debounce's ceiling: an hours-long corpus read-through
 // delivers notes continuously, and a pure debounce would defer the
 // frames' entry into the windows to its very end.  A minute of
 // uninterrupted arrivals forces the resnapshot anyway.
@@ -577,7 +577,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
-		m_grab.prefer(id);   // its backfill remainder first
+		m_ocr.prefer(id);    // its reading remainder first
 	}
 	// Two heat namespaces, warmed together: the srt leaf drives
 	// the summary pyramid, the video identity drives the semantic
@@ -697,21 +697,24 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_playlist << it;
 	}
 	rebuildSemantic();
-	// The corpus feeds the grabber: every cue start of every
-	// entry, ground truth grabbed and read with nobody at the
-	// controls.  Demand -- jumps, exports -- always outranks the
-	// backfill, showDoc prefers the shown video, and the segment
-	// reuse collapses cue clusters to cheap jobs.
-	QList<grab_feed> feeds;
+	// The corpus reads itself: every cue start of every entry
+	// goes to the OCR desk's plan, performed whenever demand runs
+	// dry, pixels in memory only -- touched frames alone earn
+	// PNGs through the grabber.  showDoc prefers the shown video.
+	QList<ocr_feed> feeds;
 	for (PlayItem const &it : m_playlist) {
 		if (it.id.isEmpty())
 			continue;
+		// Every entry's recorded picks replay whatever the user
+		// touched last session: identities cut from frame text
+		// must not depend on this session's mouse.
+		m_grab.greet(it.video, it.id);
 		QString const feedSrt = srtOf(it);
 		exporter::transcript const &tx =
 			exporter::load(m_transcripts, feedSrt);
 		if (tx.cues.empty())
 			continue;
-		grab_feed f;
+		ocr_feed f;
 		f.path = it.video;
 		f.id = it.id;
 		f.times.reserve(qsizetype(tx.cues.size()));
@@ -719,7 +722,7 @@ void MainWin::rebuildCorpus(bool fresh)
 			f.times << c.start;
 		feeds << f;
 	}
-	m_grab.backfill(feeds);
+	m_ocr.feed(feeds);
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
@@ -782,8 +785,16 @@ void MainWin::rebuildSemantic()
 		// corpus, not a new corpus.
 		if (ft != m_frameText.end()) {
 			source.frames.reserve(ft->second.size());
-			for (auto const &[at, text] : ft->second)
+			// Consecutive duplicates collapse: fifty cues
+			// under one slide read the same text, and the
+			// model should meet it once, at its first moment.
+			std::string const *last = nullptr;
+			for (auto const &[at, text] : ft->second) {
+				if (last && *last == text)
+					continue;
 				source.frames.push_back({at, text});
+				last = &text;
+			}
 		}
 		sources.push_back(std::move(source));
 	}

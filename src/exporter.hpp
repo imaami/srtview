@@ -5,10 +5,9 @@
 // videos, srts, frame cache): re-running only adds what is missing.
 // Hits whose frames are not yet grabbed are marked pending in the
 // digest and enqueued on the grabber; the caller re-runs on the
-// grabber's progress and idle signals until nothing is queued (the
-// corpus backfill rides the same worker, so progress ticks carry
-// the continuation), and the user's own prose lives outside the
-// generated files, which stay regenerable.
+// grabber's progress and idle signals until nothing is queued, and
+// the user's own prose lives outside the generated files, which
+// stay regenerable.
 #ifndef SRTVIEW_SRC_EXPORTER_HPP_
 #define SRTVIEW_SRC_EXPORTER_HPP_
 

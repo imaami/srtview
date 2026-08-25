@@ -9,6 +9,7 @@
 #ifndef SRTVIEW_SRC_LECTOR_HPP_
 #define SRTVIEW_SRC_LECTOR_HPP_
 
+#include <atomic>
 #include <string>
 #include <string_view>
 
@@ -31,9 +32,17 @@ public:
 
 	result perform(request const &r);
 
+	// The shutdown wave-off, callable from any thread: the next
+	// checkpoint inside perform() abandons the read with an
+	// error, which is never cached, so a later session finishes
+	// the thought.  There is no way back -- the lector dies with
+	// the stack that waved.
+	void wave() { m_bail.store(true); }
+
 private:
-	tess           m_tess;
-	media::decoder m_dec;
+	tess             m_tess;
+	media::decoder   m_dec;
+	std::atomic_bool m_bail{false};
 };
 
 } // namespace ocr

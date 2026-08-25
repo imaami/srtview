@@ -37,6 +37,13 @@ protected:
 	~ocr_listener() = default;
 };
 
+// One video's share of the corpus reading plan, Qt-side: cue
+// starts in seconds, converted at the boundary.
+struct ocr_feed {
+	QString       path, id;
+	QList<double> times;
+};
+
 class OcrQ : public pick_sink
 {
 public:
@@ -64,6 +71,37 @@ public:
 			m_s->desk.post(req(path, id, ms), rush);
 	}
 
+	// The corpus reads itself: handed to the scribe's plan, one
+	// reading at a time whenever demand runs dry, the pixels held
+	// in memory for exactly the duration of each read -- nothing
+	// on this path ever touches the disk but the text slots.
+	// Inert when the reader is off, so SRTVIEW_OCR=0 costs
+	// nothing at all.
+	void feed(QList<ocr_feed> const &feeds)
+	{
+		if (!m_s)
+			return;
+		std::vector<ocr::feed> plan;
+		plan.reserve(std::size_t(feeds.size()));
+		for (ocr_feed const &f : feeds) {
+			ocr::feed of;
+			of.proto = req(f.path, f.id, 0);
+			of.times.reserve(std::size_t(f.times.size()));
+			for (double const t : f.times)
+				of.times.push_back(
+					qint64(t * 1000.0 + 0.5));
+			plan.push_back(std::move(of));
+		}
+		m_s->desk.plan(std::move(plan));
+	}
+
+	// The shown video's remainder first.
+	void prefer(QString const &id)
+	{
+		if (m_s)
+			m_s->desk.prefer(id.toStdString());
+	}
+
 	std::vector<ocr::note> drain()
 	{
 		return m_s ? m_s->desk.drain()
@@ -72,8 +110,10 @@ public:
 
 	void stop()
 	{
-		if (m_s)
+		if (m_s) {
+			m_s->read.wave();    // abandon a read in flight
 			m_s->desk.stop();
+		}
 	}
 
 private:

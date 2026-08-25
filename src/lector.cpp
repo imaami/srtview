@@ -22,6 +22,10 @@ lector::lector(char const *lang, char const *tessdata)
 result lector::perform(request const &r)
 {
 	result out;
+	if (m_bail.load()) {
+		out.err = "waved off";
+		return out;
+	}
 	if (!m_tess) {
 		out.err.assign(m_tess.error());
 		return out;
@@ -35,6 +39,13 @@ result lector::perform(request const &r)
 	if (!m_dec.gray_at(r.ms, scale, g)) {
 		out.err = "cannot decode frame at "
 		        + std::to_string(r.ms) + "ms";
+		return out;
+	}
+
+	// Between the decode and the read: a shutdown that arrived
+	// during the seek walks away before paying for recognition.
+	if (m_bail.load()) {
+		out.err = "waved off";
 		return out;
 	}
 

@@ -23,9 +23,9 @@
 // or replayed from a video's manifest on first touch -- is also
 // announced to an optional pick_sink on the worker thread: the OCR
 // desk listens there, worker to worker, and the UI thread is not
-// in that loop.  A corpus backfill plan keeps the worker fed when
-// demand runs dry, so the whole corpus grabs and reads itself with
-// nobody at the controls; grabsIdle then means truly done.
+// in that loop.  Only touched frames earn PNGs: the corpus-wide
+// autonomous reading lives in the OCR scribe's plan, pixels in
+// memory for the duration of the read and never on this disk.
 #ifndef SRTVIEW_SRC_GRABBER_HPP_
 #define SRTVIEW_SRC_GRABBER_HPP_
 
@@ -45,8 +45,7 @@
 
 // Told about grab completion; implemented by the composition root
 // (which may be folding finished frames into an export).  grabsIdle
-// fires when all work -- demand and backfill alike -- is done;
-// grabProgress after each job while more of either remains.
+// fires when the queue drains, grabProgress after each mid-queue job.
 struct grab_listener {
 	virtual void grabsIdle() = 0;
 	virtual void grabProgress() {}
@@ -67,12 +66,6 @@ protected:
 	~pick_sink() = default;
 };
 
-// One video's share of the corpus backfill: the moments worth
-// grabbing without anyone asking, in feed order.
-struct grab_feed {
-	QString       path, id;
-	QList<double> times;
-};
 
 class Grabber : public QObject
 {
@@ -96,14 +89,12 @@ public:
 	// Backfill flavor: schedule a hit in any video (export).
 	void enqueue(QString const &path, QString const &id, double t);
 
-	// The corpus feeds itself: every listed moment gets grabbed
-	// -- and announced to the sink -- with nobody watching, one
-	// job at a time whenever the demand queue runs dry.  Jumps
-	// and exports always go first.  A new plan replaces the old
-	// (a corpus swap); prefer() moves one video's remainder to
-	// the front (the one being shown).
-	void backfill(QList<grab_feed> const &feeds);
-	void prefer(QString const &id);
+	// First-touch greeting for a corpus entry: load its manifest
+	// and replay the recorded picks to the sink, once a session.
+	// rebuildCorpus greets every entry, so identities derived
+	// from recorded frame text stay deterministic across sessions
+	// whatever the user touched last time.
+	void greet(QString const &path, QString const &id);
 
 	// The recorded picks of a hit; false while not yet grabbed.
 	// The path rides along because a first manifest touch through
@@ -125,20 +116,9 @@ private:
 		bool    rush = false;  // a followed-video jump's hit
 	};
 
-	// One consumed backfill feed: the public rows plus a cursor.
-	struct BackFeed {
-		grab_feed f;
-		qsizetype at = 0;
-	};
-
 	void setVideoImpl(QString const &path, QString const &id);
 	void enqueueImpl(QString const &path, QString const &id,
 	                 double t, bool rush);
-	bool addJob(QString const &path, QString const &id,
-	            double t, bool rush);
-	void backfillImpl(QList<grab_feed> const &feeds);
-	void preferImpl(QString const &id);
-	bool refill();
 	void replayPicks(QString const &path, QString const &id);
 	void shutdownImpl();
 	void startJob();
@@ -162,7 +142,6 @@ private:
 	QHash<QString, PickMap>      m_picks;   // finished hits only
 	QSet<QString>                m_replayed; // manifests sunk once
 	QList<Job>                   m_jobs;
-	QList<BackFeed>              m_backfill; // worker-owned plan
 	QString                      m_path, m_id; // the followed video
 	QObject                     *m_ctx = nullptr;
 	grab_listener               *m_listener = nullptr;

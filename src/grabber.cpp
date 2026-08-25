@@ -98,20 +98,21 @@ void Grabber::enqueue(QString const &path, QString const &id, double t)
 	}, Qt::QueuedConnection);
 }
 
+void Grabber::greet(QString const &path, QString const &id)
+{
+	QMetaObject::invokeMethod(this, [this, path, id] {
+		if (path.isEmpty() || id.isEmpty())
+			return;
+		loadKnown(id);
+		replayPicks(path, id);
+	}, Qt::QueuedConnection);
+}
+
 void Grabber::enqueueImpl(QString const &path, QString const &id,
                           double t, bool rush)
 {
-	if (addJob(path, id, t, rush) && m_jobs.size() == 1)
-		startJob();
-}
-
-// The shared tail of demand and backfill: dedupe, then a queued
-// job.  True only when a job was actually appended.
-bool Grabber::addJob(QString const &path, QString const &id,
-                     double t, bool rush)
-{
 	if (path.isEmpty() || id.isEmpty() || t < 0.0)
-		return false;
+		return;
 	loadKnown(id);
 	replayPicks(path, id);
 	qint64 const ms = qint64(t * 1000.0 + 0.5);
@@ -132,7 +133,7 @@ bool Grabber::addJob(QString const &path, QString const &id,
 		// frame behind the whole replay backlog.
 		if (rush && m_sink)
 			m_sink->pickReady(path, id, ms, true);
-		return false;
+		return;
 	}
 	Job j;
 	j.path = path;
@@ -140,62 +141,8 @@ bool Grabber::addJob(QString const &path, QString const &id,
 	j.hit = ms;
 	j.rush = rush;
 	m_jobs << j;
-	return true;
-}
-
-void Grabber::backfill(QList<grab_feed> const &feeds)
-{
-	QMetaObject::invokeMethod(this, [this, feeds] {
-		backfillImpl(feeds);
-	}, Qt::QueuedConnection);
-}
-
-void Grabber::prefer(QString const &id)
-{
-	QMetaObject::invokeMethod(this, [this, id] {
-		preferImpl(id);
-	}, Qt::QueuedConnection);
-}
-
-void Grabber::backfillImpl(QList<grab_feed> const &feeds)
-{
-	m_backfill.clear();
-	for (grab_feed const &f : feeds)
-		if (!f.path.isEmpty() && !f.id.isEmpty()
-		    && !f.times.isEmpty())
-			m_backfill << BackFeed{f, 0};
-	// An idle worker has nothing left to call drained(): kick
-	// the plan off here.  A busy one refills on its own drain.
-	if (m_jobs.isEmpty() && refill())
+	if (m_jobs.size() == 1)
 		startJob();
-}
-
-void Grabber::preferImpl(QString const &id)
-{
-	for (qsizetype i = 1; i < m_backfill.size(); ++i) {
-		if (m_backfill[i].f.id != id)
-			continue;
-		m_backfill.move(i, 0);
-		return;
-	}
-}
-
-// One backfill job when demand runs dry: the front feed's moments
-// walk through the same dedupe the demand path uses, and only an
-// actually-new hit becomes a job.  Cheap by design -- a known
-// moment costs a set lookup, an exhausted feed is dropped.
-bool Grabber::refill()
-{
-	while (!m_backfill.isEmpty()) {
-		BackFeed &f = m_backfill.first();
-		while (f.at < f.f.times.size()) {
-			double const t = f.f.times[f.at++];
-			if (addJob(f.f.path, f.f.id, t, false))
-				return true;
-		}
-		m_backfill.removeFirst();
-	}
-	return false;
 }
 
 // The manifest replay: every pick of a video goes to the sink once
@@ -256,9 +203,9 @@ QString Grabber::framePath(QString const &id, qint64 ms) const
 
 void Grabber::shutdown()
 {
-	// The wave-off first: the blocking call below waits for the
-	// running job, and a backfill keeps one running as the steady
-	// state -- the bail turns seconds of bisection into one probe.
+	// The wave-off first: the blocking call below waits for any
+	// running job, and the bail turns seconds of bisection into
+	// one probe's worth of goodbye.
 	m_bail.store(true);
 	if (QThread::currentThread() == thread()) {
 		shutdownImpl();
@@ -273,7 +220,6 @@ void Grabber::shutdown()
 void Grabber::shutdownImpl()
 {
 	m_jobs.clear();
-	m_backfill.clear();
 	m_dec.close();
 	m_bail.store(false);
 }
@@ -401,11 +347,7 @@ void Grabber::finishJob(Job const &j, qint64 prev, qint64 next)
 	}
 	m_strikes = 0;
 	m_jobs.removeFirst();
-	// Progress means "a job landed and more work remains" -- the
-	// backfill counts: during it the queue holds one job at a
-	// time, and the export continuation rides these ticks.
-	if (m_listener && m_ctx
-	    && (!m_jobs.isEmpty() || !m_backfill.isEmpty()))
+	if (m_listener && m_ctx && !m_jobs.isEmpty())
 		QMetaObject::invokeMethod(m_ctx, [l = m_listener] {
 			l->grabProgress();
 		}, Qt::QueuedConnection);
@@ -428,24 +370,15 @@ void Grabber::abortJob()
 	m_dec.close();                       // suspect file: fresh open
 	if (++m_strikes >= 3) {              // decoding is not working
 		// Clearing the queue must not poison its moments:
-		// un-know each so a jump or a later session retries.
-		// The offending video's backfill remainder leaves the
-		// plan -- one bad file must neither stall the corpus
-		// nor grind through its own every cue breaker-blind --
-		// and the strikes reset so the survivors get their
-		// own three chances.
+		// un-know each so a jump or a later session retries,
+		// and the strikes reset so fresh work gets its own
+		// three chances.
 		{
 			QMutexLocker const lock(&m_lock);
 			for (Job const &q : m_jobs)
 				m_known[q.id].remove(q.hit);
 		}
 		m_jobs.clear();
-		for (qsizetype i = 0; i < m_backfill.size(); ++i) {
-			if (m_backfill[i].f.id != j.id)
-				continue;
-			m_backfill.removeAt(i);
-			break;
-		}
 		m_strikes = 0;
 	} else if (!m_jobs.isEmpty())
 		startJob();
@@ -454,15 +387,7 @@ void Grabber::abortJob()
 
 void Grabber::drained()
 {
-	if (!m_jobs.isEmpty())
-		return;
-	// Demand ran dry: the backfill keeps the worker fed, and
-	// only a truly finished corpus reads as idle.
-	if (refill()) {
-		startJob();
-		return;
-	}
-	if (!m_listener || !m_ctx)
+	if (!m_listener || !m_ctx || !m_jobs.isEmpty())
 		return;
 	QMetaObject::invokeMethod(m_ctx, [l = m_listener] {
 		l->grabsIdle();
