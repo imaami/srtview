@@ -201,6 +201,12 @@ double zoomFactor(int steps)
 // semantic judgment -- the model weighs everything that passes.
 constexpr float kOcrConfFloor = 60.0f;
 
+// The settle debounce's ceiling: an hours-long corpus backfill
+// delivers notes continuously, and a pure debounce would defer the
+// frames' entry into the windows to its very end.  A minute of
+// uninterrupted arrivals forces the resnapshot anyway.
+constexpr qint64 kOcrSettleMaxMs = 60000;
+
 // Corpus-search diagnostics, SRTVIEW_DEBUG-gated like the mpv
 // clients' dbg().
 void dbgHop(QString const &msg)
@@ -571,6 +577,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
+		m_grab.prefer(id);   // its backfill remainder first
 	}
 	// Two heat namespaces, warmed together: the srt leaf drives
 	// the summary pyramid, the video identity drives the semantic
@@ -690,6 +697,29 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_playlist << it;
 	}
 	rebuildSemantic();
+	// The corpus feeds the grabber: every cue start of every
+	// entry, ground truth grabbed and read with nobody at the
+	// controls.  Demand -- jumps, exports -- always outranks the
+	// backfill, showDoc prefers the shown video, and the segment
+	// reuse collapses cue clusters to cheap jobs.
+	QList<grab_feed> feeds;
+	for (PlayItem const &it : m_playlist) {
+		if (it.id.isEmpty())
+			continue;
+		QString const feedSrt = srtOf(it);
+		exporter::transcript const &tx =
+			exporter::load(m_transcripts, feedSrt);
+		if (tx.cues.empty())
+			continue;
+		grab_feed f;
+		f.path = it.video;
+		f.id = it.id;
+		f.times.reserve(qsizetype(tx.cues.size()));
+		for (srt::cue const &c : tx.cues)
+			f.times << c.start;
+		feeds << f;
+	}
+	m_grab.backfill(feeds);
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
@@ -2679,9 +2709,17 @@ void MainWin::ocrReady()
 		if (slot == joined)
 			continue;
 		slot = std::move(joined);
+		if (!m_ocrDirty)
+			m_ocrFirstDirty.start();  // the epoch opens
 		m_ocrDirty = true;
 	}
-	if (m_ocrDirty)
+	if (!m_ocrDirty)
+		return;
+	// Quiet for five seconds, or a minute of continuous arrivals,
+	// whichever ends first: past the ceiling the running timer is
+	// left to fire instead of being pushed along.
+	if (m_ocrFirstDirty.elapsed() < kOcrSettleMaxMs
+	    || !m_ocrSettle.isActive())
 		m_ocrSettle.start();
 }
 

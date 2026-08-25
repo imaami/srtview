@@ -273,6 +273,7 @@ private:
 	QTimer                          m_tallyLag;  // debounced tally
 	QTimer                          m_ocrSettle; // debounced frame
 	                                             // resnapshot
+	QElapsedTimer                   m_ocrFirstDirty; // its ceiling
 	QTimer                          m_diveTick;  // topic scan pump
 	QTimer                          m_pump;      // harvest pump
 	std::vector<DiveScan>           m_diveScans; // staged scans

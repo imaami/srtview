@@ -23,7 +23,9 @@
 // or replayed from a video's manifest on first touch -- is also
 // announced to an optional pick_sink on the worker thread: the OCR
 // desk listens there, worker to worker, and the UI thread is not
-// in that loop.
+// in that loop.  A corpus backfill plan keeps the worker fed when
+// demand runs dry, so the whole corpus grabs and reads itself with
+// nobody at the controls; grabsIdle then means truly done.
 #ifndef SRTVIEW_SRC_GRABBER_HPP_
 #define SRTVIEW_SRC_GRABBER_HPP_
 
@@ -36,13 +38,15 @@
 #include <QString>
 #include <QThread>
 
+#include <atomic>
 #include <utility>
 
 #include "decoderq.hpp"
 
 // Told about grab completion; implemented by the composition root
 // (which may be folding finished frames into an export).  grabsIdle
-// fires when the queue drains, grabProgress after each mid-queue job.
+// fires when all work -- demand and backfill alike -- is done;
+// grabProgress after each job while more of either remains.
 struct grab_listener {
 	virtual void grabsIdle() = 0;
 	virtual void grabProgress() {}
@@ -61,6 +65,13 @@ struct pick_sink {
 
 protected:
 	~pick_sink() = default;
+};
+
+// One video's share of the corpus backfill: the moments worth
+// grabbing without anyone asking, in feed order.
+struct grab_feed {
+	QString       path, id;
+	QList<double> times;
 };
 
 class Grabber : public QObject
@@ -85,6 +96,15 @@ public:
 	// Backfill flavor: schedule a hit in any video (export).
 	void enqueue(QString const &path, QString const &id, double t);
 
+	// The corpus feeds itself: every listed moment gets grabbed
+	// -- and announced to the sink -- with nobody watching, one
+	// job at a time whenever the demand queue runs dry.  Jumps
+	// and exports always go first.  A new plan replaces the old
+	// (a corpus swap); prefer() moves one video's remainder to
+	// the front (the one being shown).
+	void backfill(QList<grab_feed> const &feeds);
+	void prefer(QString const &id);
+
 	// The recorded picks of a hit; false while not yet grabbed.
 	// The path rides along because a first manifest touch through
 	// this query must also schedule the replay, marshalled to the
@@ -105,9 +125,20 @@ private:
 		bool    rush = false;  // a followed-video jump's hit
 	};
 
+	// One consumed backfill feed: the public rows plus a cursor.
+	struct BackFeed {
+		grab_feed f;
+		qsizetype at = 0;
+	};
+
 	void setVideoImpl(QString const &path, QString const &id);
 	void enqueueImpl(QString const &path, QString const &id,
 	                 double t, bool rush);
+	bool addJob(QString const &path, QString const &id,
+	            double t, bool rush);
+	void backfillImpl(QList<grab_feed> const &feeds);
+	void preferImpl(QString const &id);
+	bool refill();
 	void replayPicks(QString const &path, QString const &id);
 	void shutdownImpl();
 	void startJob();
@@ -131,11 +162,15 @@ private:
 	QHash<QString, PickMap>      m_picks;   // finished hits only
 	QSet<QString>                m_replayed; // manifests sunk once
 	QList<Job>                   m_jobs;
+	QList<BackFeed>              m_backfill; // worker-owned plan
 	QString                      m_path, m_id; // the followed video
 	QObject                     *m_ctx = nullptr;
 	grab_listener               *m_listener = nullptr;
 	pick_sink                   *m_sink = nullptr;
 	unsigned                     m_strikes = 0;
+	std::atomic_bool             m_bail{false}; // shutdown waves a
+	                                            // busy job off
+	                                            // mid-bisection
 };
 
 #endif // SRTVIEW_SRC_GRABBER_HPP_
