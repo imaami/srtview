@@ -69,6 +69,21 @@ agenda::id hash8(std::string_view s)
 	return takeId(h);
 }
 
+// A semantic source is the (video, subtitle) pair: video-only
+// identity collapsed alternate transcripts of one video, subtitle-
+// only identity collapsed videos sharing one transcript -- both
+// shipped, both wrong in mirror image.  Built from the two
+// discovery identities, never from paths; an unresolvable video
+// falls back to the subtitle alone.
+agenda::id semanticSourceId(QString const &videoId,
+                            agenda::id subtitles)
+{
+	if (!subtitles || videoId.isEmpty())
+		return subtitles;
+	return hash8("semantic-source-v1\n" + videoId.toStdString()
+	             + '\n' + subtitles.hex());
+}
+
 // Pyramid-node identity from ordered children: two corpora sharing
 // a prefix of leaves share the prefix's summary files.  Children
 // are fixed-width raw ids, so no separator is needed.
@@ -580,12 +595,12 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_ocr.prefer(id);    // its reading remainder first
 	}
 	// Two heat namespaces, warmed together: the srt leaf drives
-	// the summary pyramid, the video identity drives the semantic
-	// windows, whose sources are video-addressed.
-	m_facts.heat(offerFacts(srt), kFocusHeat);
-	if (agenda::id const vid =
-		agenda::id::from_hex(id.toStdString()))
-		m_facts.heat(vid, kFocusHeat);
+	// the summary pyramid, the (video, subtitle) pair drives the
+	// semantic windows, whose sources are pair-addressed.
+	agenda::id const subtitles = offerFacts(srt);
+	m_facts.heat(subtitles, kFocusHeat);
+	if (agenda::id const src = semanticSourceId(id, subtitles))
+		m_facts.heat(src, kFocusHeat);
 
 	m_prefs.addRecentFile(video);
 	m_prefs.setLastDir(QFileInfo(video).absolutePath());
@@ -751,13 +766,14 @@ void MainWin::rebuildSemantic()
 			leaves.push_back(key);
 		if (!key)
 			continue;
-		// Semantic sources are video-addressed: two videos
-		// sharing one transcript are one facts leaf but two
-		// evidence sources, each with its own slides and title
-		// -- merged frames would speak under the wrong video's
-		// name, and evidence provenance is the model's spine.
-		std::string const sourceId = it.id.isEmpty()
-			? key.hex() : it.id.toStdString();
+		// Semantic sources are (video, subtitle)-addressed: two
+		// videos sharing one transcript are one facts leaf but
+		// two evidence sources, and one video with alternate
+		// transcripts is two sources as well -- provenance is
+		// the pair, and evidence provenance is the model's
+		// spine.
+		std::string const sourceId =
+			semanticSourceId(it.id, key).hex();
 		if (!semanticSeen.insert(sourceId).second)
 			continue;
 		auto const ft = m_frameText.find(it.id.toStdString());
@@ -1627,22 +1643,22 @@ void MainWin::queueTerms()
 	for (TermsWork const &w : m_termsWork)
 		staged.insert(w.id);
 	// The engine's windows, by the same source identity
-	// rebuildSemantic() cut them under -- the video's discovery
-	// id, the subtitle hash only for the unresolvable: one cut of
-	// the corpus serves extraction and terms, and the model sees
-	// the identical text for both.
+	// rebuildSemantic() cut them under -- the (video, subtitle)
+	// pair, the subtitle hash alone for the unresolvable: one cut
+	// of the corpus serves extraction and terms, and the model
+	// sees the identical text for both.
 	QHash<QString, qsizetype> bySource;
 	for (qsizetype i = 0; i < m_playlist.size(); ++i) {
 		PlayItem const &it = m_playlist[i];
-		QString source = it.id;
-		if (source.isEmpty()) {
-			if (QString const srt = srtOf(it); !srt.isEmpty())
-				source = QString::fromStdString(
-					m_disc.id_for_video(
-						srt.toStdString()));
-		}
-		if (!source.isEmpty())
-			bySource.insert(source, i);
+		QString const srt = srtOf(it);
+		if (srt.isEmpty())
+			continue;
+		agenda::id const subtitles = agenda::id::from_hex(
+			m_disc.id_for_video(srt.toStdString()));
+		if (agenda::id const source =
+			semanticSourceId(it.id, subtitles))
+			bySource.insert(QString::fromStdString(
+				source.hex()), i);
 	}
 	for (std::size_t at = 0; at < m_semantic.windows(); ++at) {
 		semantic::window const &w = m_semantic.window(at);
