@@ -11,14 +11,11 @@
 #ifndef SRTVIEW_SRC_SCRIBE_HPP_
 #define SRTVIEW_SRC_SCRIBE_HPP_
 
-#include <concepts>
 #include <condition_variable>
-#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
 #include <stop_token>
-#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -26,38 +23,6 @@
 #include "ocr.hpp"
 
 namespace ocr {
-
-using ticket = std::uint64_t;    // 0 marks a refused post
-
-// The unit of work: which video, which moment, how to look.  The
-// defaulted equality is work identity -- coalescing now, a cache
-// key later.  The ROI rides in source frame pixels; the backend
-// maps it through its own upscale.
-struct request {
-	std::string  video;      // path; posters resolve ids
-	std::string  id;         // discovery identity, poster-resolved;
-	                         // the cache key downstream, empty =
-	                         // uncacheable
-	std::int64_t ms = 0;     // frame time, decoder semantics
-	options      opts;
-	std::uint8_t scale = 2;  // decode upscale, backend clamps
-
-	friend bool operator==(request const &,
-	                       request const &) = default;
-};
-
-// One finished reading, echoing what was asked.
-struct note {
-	request r;
-	result  res;
-	ticket  t = 0;
-};
-
-// What the scribe asks of whoever actually reads frames.
-template <class B>
-concept backend = requires(B &b, request const &r) {
-	{ b.perform(r) } -> std::same_as<result>;
-};
 
 // poke fires on the worker thread after notes land; it must be
 // cheap and thread-safe, and calling drain() from inside it is

@@ -16,7 +16,6 @@
 #ifndef SRTVIEW_SRC_ARCHIVE_HPP_
 #define SRTVIEW_SRC_ARCHIVE_HPP_
 
-#include <algorithm>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -29,7 +28,6 @@
 
 #include "decoder.hpp"
 #include "ocr.hpp"
-#include "scribe.hpp"
 #include "slurp.hpp"
 
 namespace ocr {

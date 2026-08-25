@@ -14,7 +14,6 @@
 
 #include "decoder.hpp"
 #include "ocr.hpp"
-#include "scribe.hpp"
 
 namespace ocr {
 

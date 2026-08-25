@@ -10,6 +10,7 @@
 #ifndef SRTVIEW_SRC_OCR_HPP_
 #define SRTVIEW_SRC_OCR_HPP_
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -74,6 +75,41 @@ struct result {
 	std::vector<span> lines;     // reading order
 	std::string       err;       // empty on success
 	float             conf = 0;  // mean over lines, 0 when none
+};
+
+using ticket = std::uint64_t;    // 0 marks a refused post
+
+// The unit of work: which video, which moment, how to look.  Pure
+// data -- the mailbox that queues it lives in scribe.hpp.  The
+// defaulted equality is work identity: coalescing in the mailbox,
+// the cache key in the archive.  The ROI rides in source frame
+// pixels; the backend maps it through its own upscale.
+struct request {
+	std::string  video;      // path; posters resolve ids
+	std::string  id;         // discovery identity, poster-resolved;
+	                         // the cache key downstream, empty =
+	                         // uncacheable
+	std::int64_t ms = 0;     // frame time, decoder semantics
+	options      opts;
+	std::uint8_t scale = 2;  // decode upscale, backend clamps
+
+	friend bool operator==(request const &,
+	                       request const &) = default;
+};
+
+// One finished reading, echoing what was asked.
+struct note {
+	request r;
+	result  res;
+	ticket  t = 0;
+};
+
+// What a reading pipeline asks of whoever actually reads frames --
+// the lector in the app, the archive decorating any of them, a
+// fake in the tests.
+template <class B>
+concept backend = requires(B &b, request const &r) {
+	{ b.perform(r) } -> std::same_as<result>;
 };
 
 class tess
