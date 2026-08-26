@@ -32,6 +32,26 @@
 //                   history
 //   c / P           play / pause (srtjump muscle memory)
 //
+// File > Export search hits… exports every match of one regex
+// across the whole playlist.  A picker offers the live search
+// (preselected), every corpus topic by name, and the search
+// history; stored patterns match exactly as written, the live
+// search carries the bar's toggles.  The suggested filename
+// follows the chosen regex -- the topic's name, or a slug of the
+// pattern -- never the corpus, which only lends the entries their
+// playlist order.  The file is UTF-8 text, Unix newlines: line one
+// is the effective regex ((?i)-prefixed when the live search's
+// case toggle is off), then one entry line per match of five
+// tab-separated fields -- playlist index (0-based; a directly
+// opened video is the sole entry of its implicit playlist), cue
+// index within the video (0-based), cue start time ("14:59.063",
+// hours prepended when nonzero), the matched cue's block line in
+// the .srt file (its counter line, or the timecode line when the
+// counter is absent; 1-based and monotonic per video -- a video
+// whose transcript has no file to cite would carry 0 throughout),
+// and the matched text with every whitespace run squeezed to one
+// space and trimmed (possibly empty).
+//
 // Env: SRTVIEW_MPV_ARGS -- extra mpv arguments (split on whitespace)
 //      SRTVIEW_LLM      -- llama-server endpoint for the background
 //                          facts pipeline as [host][:port]; default

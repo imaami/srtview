@@ -297,8 +297,19 @@ transcript const &load(transcripts &cache, QString const &srtPath)
 	}
 	transcript t;
 	QByteArray const raw = f.readAll();
-	t.cues = srt::parse(srt::to_utf8({raw.constData(),
-	                                  size_t(raw.size())}));
+	// A line-aware sink: the hits export cites srt file lines, so
+	// each cue lands with its block's first visible line.
+	struct sink : srt::parser<sink> {
+		transcript *t;
+		void on_cue(double a, double b, std::string &&x, int at)
+		{
+			t->cues.push_back({a, b, std::move(x)});
+			t->cueLine.push_back(at);
+		}
+	};
+	sink s;
+	s.t = &t;
+	s.parse(srt::to_utf8({raw.constData(), size_t(raw.size())}));
 	if (t.cues.empty()) {
 		// Readable but not an SRT (yet): cache nothing, so a
 		// repaired file is re-read on the next touch.
@@ -361,6 +372,65 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 		++st.topics;
 	}
 	return st;
+}
+
+namespace {
+
+// Field five of a hits entry: whitespace runs -- any mix, Unicode
+// classification -- squeeze to one space, leading and trailing
+// runs vanish, even when nothing remains of the match.
+QString squeeze(QString const &s)
+{
+	QString out;
+	bool gap = false;
+	for (QChar const ch : s) {
+		if (ch.isSpace()) {
+			gap = !out.isEmpty();
+			continue;
+		}
+		if (gap)
+			out += QLatin1Char(' ');
+		gap = false;
+		out += ch;
+	}
+	return out;
+}
+
+} // namespace
+
+QByteArray hits(QString const &pattern, QRegularExpression const &re,
+                QStringList const &srts, transcripts &cache)
+{
+	QByteArray out = pattern.toUtf8();
+	out += '\n';
+	for (qsizetype v = 0; v < srts.size(); ++v) {
+		if (srts[v].isEmpty())
+			continue;
+		transcript const &tx = load(cache, srts[v]);
+		for (qsizetype j = 0; j < tx.lines.size(); ++j) {
+			auto m = re.globalMatch(tx.lines[j]);
+			while (m.hasNext()) {
+				QString const text =
+					m.next().captured(0);
+				std::string const ts =
+					fmt_time(tx.cues[std::size_t(j)]
+						.start, true);
+				out += QByteArray::number(v);
+				out += '\t';
+				out += QByteArray::number(j);
+				out += '\t';
+				out.append(ts.data(),
+				           qsizetype(ts.size()));
+				out += '\t';
+				out += QByteArray::number(
+					tx.cueLine[std::size_t(j)]);
+				out += '\t';
+				out += squeeze(text).toUtf8();
+				out += '\n';
+			}
+		}
+	}
+	return out;
 }
 
 } // namespace exporter

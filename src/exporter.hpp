@@ -11,8 +11,10 @@
 #ifndef SRTVIEW_SRC_EXPORTER_HPP_
 #define SRTVIEW_SRC_EXPORTER_HPP_
 
+#include <QByteArray>
 #include <QHash>
 #include <QList>
+#include <QRegularExpression>
 #include <QString>
 #include <QStringList>
 
@@ -34,15 +36,31 @@ struct source {
 // A parsed srt with its cue texts already rendered (tags consumed,
 // like the reading view).  One per srt file per session: the corpus
 // search and every export pass share the same copy, loaded on first
-// touch.
+// touch.  cueLine carries each cue block's first visible line in
+// the srt file (counter, or timecode when the counter is absent),
+// 1-based and strictly increasing -- the hits export cites it.
 struct transcript {
 	std::vector<srt::cue> cues;
 	QStringList           lines;
+	std::vector<int>      cueLine;
 };
 
 using transcripts = QHash<QString, transcript>;
 
 transcript const &load(transcripts &cache, QString const &srtPath);
+
+// The regex-locations export: line one carries the effective
+// pattern text; every match of @a re across every transcript makes
+// one entry line of five tab-separated fields -- playlist index,
+// cue index (both 0-based), cue start time ("14:59.063"), the
+// matched cue's 1-based block line in the srt file (monotonic per
+// video; a video whose transcript has no file to cite would carry
+// 0 throughout), and the matched text with every whitespace run
+// squeezed to one space and trimmed.  srts holds one transcript
+// path per playlist entry, in playlist order, empty for entries
+// without one.  UTF-8, Unix newlines, trailing newline included.
+QByteArray hits(QString const &pattern, QRegularExpression const &re,
+                QStringList const &srts, transcripts &cache);
 
 struct stats {
 	int topics = 0;              // topic digests written

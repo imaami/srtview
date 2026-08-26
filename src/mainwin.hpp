@@ -54,6 +54,10 @@ public:
 	PlaybackCtl     &playback() { return m_playback; }
 	SearchCtl       &search() { return m_search; }
 
+	// The dialogless hits export (File > Export search hits… asks
+	// for the path and calls this); public for the selftest.
+	bool exportHitsTo(QString const &path);
+
 protected:
 	bool eventFilter(QObject *obj, QEvent *ev) override;
 	void dragEnterEvent(QDragEnterEvent *ev) override;
@@ -221,6 +225,10 @@ private:
 	void rebuildSemantic();
 	void startExport();
 	void runExport(bool drained);
+	void exportHits();
+	bool writeHits(QString const &head,
+	               QRegularExpression const &re,
+	               QString const &path);
 	void writePlaylistVersion();
 	QString exportDir() const;
 	void applyStep(trail_step const &s, bool undo);

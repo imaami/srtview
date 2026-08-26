@@ -3,6 +3,7 @@
 #include "mainwin.hpp"
 
 #include <QApplication>
+#include <QFile>
 #include <QTimer>
 
 #include <cstdio>
@@ -127,6 +128,23 @@ void runSelftest(MainWin *w, QString const &video)
 		QString const shot = QStringLiteral("/tmp/srtview-shot2.png");
 		w->grab().save(shot);
 		log(QStringLiteral("screenshot %1").arg(shot));
+	});
+	// --- hits export: locations of a live pattern, to a file ------
+	QTimer::singleShot(11900, w, [w, log] {
+		w->search().setSearchText(QStringLiteral("[a-z]+"));
+		QString const out =
+			QStringLiteral("/tmp/srtview-hits.txt");
+		bool const ok = w->exportHitsTo(out);
+		QFile f(out);
+		QByteArray head, first;
+		if (f.open(QIODevice::ReadOnly)) {
+			head = f.readLine().trimmed();
+			first = f.readLine().trimmed();
+		}
+		log(QStringLiteral("hits ok=%1 head=[%2] first=[%3]")
+		    .arg(int(ok))
+		    .arg(QString::fromUtf8(head),
+		         QString::fromUtf8(first)));
 	});
 	QTimer::singleShot(12200, w, [w, log] {
 		log(QStringLiteral("done"));

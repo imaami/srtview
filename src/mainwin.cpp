@@ -3,6 +3,8 @@
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QCryptographicHash>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -10,12 +12,14 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QKeyEvent>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QVBoxLayout>
 #include <QTextDocumentFragment>
 
 #include <algorithm>
@@ -83,6 +87,33 @@ agenda::id semanticSourceId(QString const &videoId,
 		return subtitles;
 	return hash8("semantic-source-v1\n" + videoId.toStdString()
 	             + '\n' + subtitles.hex());
+}
+
+// A filename stem for a pattern nothing names: ASCII word runs
+// kept, everything between them folded to one underscore, capped
+// short -- "search" when nothing survives, so the suggested name
+// never degenerates to a bare suffix.
+QString patternStem(QString const &pat)
+{
+	QString out;
+	bool gap = false;
+	for (QChar const ch : pat) {
+		char16_t const u = ch.unicode();
+		bool const word = (u >= 'a' && u <= 'z')
+		               || (u >= 'A' && u <= 'Z')
+		               || (u >= '0' && u <= '9') || u == '-';
+		if (!word) {
+			gap = true;
+			continue;
+		}
+		if (gap && !out.isEmpty())
+			out += QLatin1Char('_');
+		gap = false;
+		out += ch;
+		if (out.size() >= 40)
+			break;
+	}
+	return out.isEmpty() ? QStringLiteral("search") : out;
 }
 
 // Pyramid-node identity from ordered children: two corpora sharing
@@ -299,6 +330,8 @@ MainWin::MainWin()
 	                this, [this] { openPlaylistDialog(); });
 	file->addAction(QStringLiteral("&Export frames"),
 	                this, [this] { startExport(); });
+	file->addAction(QStringLiteral("Export search &hits…"),
+	                this, [this] { exportHits(); });
 	file->addAction(QStringLiteral("&Close"), QKeySequence::Close,
 	                this, [this] { closeFile(); });
 	file->addSeparator();
@@ -2666,6 +2699,143 @@ void MainWin::rebuildVideosMenu()
 // when the digest is whole -- or when a drained queue made no
 // progress (mpv striking out), which ends the loop with an honest
 // "incomplete".
+// The hits export picker: the exported regex is whatever the user
+// says it is -- the live search by default, or any corpus topic or
+// history entry.  The regex alone decides the file's contents; the
+// corpus only lends the playlist order the entries index into, so
+// the suggested filename follows the regex (the topic's name, or a
+// slug of the pattern), never the corpus.  Stored patterns compile
+// bare, exactly as search, evidence, dives and the digest export
+// compile them -- their case semantics ride in the text; only the
+// live-search entry carries the bar's toggles, folded into the
+// (?i) prefix the file's first line keeps.
+void MainWin::exportHits()
+{
+	if (m_playlist.isEmpty()) {
+		statusBar()->showMessage(QStringLiteral(
+			"no playlist to search"), 3000);
+		return;
+	}
+	struct pick {
+		QString label, head, stem;
+		bool    live;
+	};
+	QList<pick> picks;
+	QString const raw = m_search.patternText();
+	QRegularExpression const bar = m_search.effectivePattern();
+	if (!bar.pattern().isEmpty()) {
+		QString head = bar.pattern();
+		if (bar.patternOptions().testFlag(
+			QRegularExpression::CaseInsensitiveOption))
+			head.prepend(QStringLiteral("(?i)"));
+		picks << pick{QStringLiteral("search:  ") + head,
+		              head, patternStem(head), true};
+	}
+	QStringList listed;
+	for (topics::topic const &t : m_corpus.topics) {
+		QString const pat = QString::fromStdString(
+			topics::expand(m_corpus, t));
+		if (pat.isEmpty())
+			continue;
+		picks << pick{QStringLiteral("topic %1:  %2").arg(
+				QString::fromStdString(t.name), pat),
+		              pat, QString::fromStdString(t.name),
+		              false};
+		listed << pat;
+	}
+	for (QString const &h : m_prefs.searchHistory()) {
+		if (h.isEmpty() || h == raw || listed.contains(h))
+			continue;
+		picks << pick{QStringLiteral("history:  ") + h, h,
+		              patternStem(h), false};
+		listed << h;
+	}
+	if (picks.isEmpty()) {
+		statusBar()->showMessage(QStringLiteral(
+			"no pattern to export"), 3000);
+		return;
+	}
+	QDialog dlg(this);
+	dlg.setWindowTitle(QStringLiteral("Export search hits"));
+	auto *const lay = new QVBoxLayout(&dlg);
+	auto *const list = new QListWidget(&dlg);
+	for (pick const &p : picks) {
+		QString label = p.label;
+		if (label.size() > 76)
+			label = label.left(75) + QChar(0x2026);
+		list->addItem(label);
+	}
+	list->setCurrentRow(0);
+	auto *const bb = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+	lay->addWidget(list);
+	lay->addWidget(bb);
+	connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	connect(list, &QListWidget::itemDoubleClicked,
+	        &dlg, [&dlg] { dlg.accept(); });
+	dlg.resize(640, 420);
+	if (dlg.exec() != QDialog::Accepted || list->currentRow() < 0)
+		return;
+	pick const &p = picks[list->currentRow()];
+	QRegularExpression const re =
+		p.live ? bar : QRegularExpression(p.head);
+	if (!re.isValid()) {
+		statusBar()->showMessage(QStringLiteral(
+			"invalid pattern: %1").arg(re.errorString()),
+			6000);
+		return;
+	}
+	QString const base = !m_corpusPath.isEmpty()
+		? m_corpusPath : m_playlist.front().video;
+	QString const path = QFileDialog::getSaveFileName(this,
+		QStringLiteral("Export search hits"),
+		QFileInfo(base).path() + QLatin1Char('/') + p.stem
+			+ QStringLiteral("-hits.txt"),
+		QStringLiteral("Text files (*.txt);;All files (*)"));
+	if (!path.isEmpty())
+		writeHits(p.head, re, path);
+}
+
+// The selftest's dialogless flavor: the live search, to a path.
+bool MainWin::exportHitsTo(QString const &path)
+{
+	QRegularExpression const re = m_search.effectivePattern();
+	if (re.pattern().isEmpty() || !re.isValid()
+	    || m_playlist.isEmpty())
+		return false;
+	// Line one reproduces the effective semantics: the case toggle
+	// travels as a pattern option, which only an inline (?i) can
+	// carry into a text file.
+	QString head = re.pattern();
+	if (re.patternOptions().testFlag(
+		QRegularExpression::CaseInsensitiveOption))
+		head.prepend(QStringLiteral("(?i)"));
+	return writeHits(head, re, path);
+}
+
+bool MainWin::writeHits(QString const &head,
+                        QRegularExpression const &re,
+                        QString const &path)
+{
+	QStringList srts;
+	for (PlayItem const &it : m_playlist)
+		srts << srtOf(it);
+	QByteArray const text =
+		exporter::hits(head, re, srts, m_transcripts);
+	QFile f(path);
+	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)
+	    || f.write(text) != text.size()) {
+		statusBar()->showMessage(QStringLiteral(
+			"hits export failed: %1").arg(path), 6000);
+		return false;
+	}
+	statusBar()->showMessage(QStringLiteral(
+		"search hits exported: %1 entries → %2")
+		.arg(int(text.count('\n')) - 1).arg(path), 6000);
+	return true;
+}
+
 void MainWin::startExport()
 {
 	if (m_playlist.isEmpty()) {
