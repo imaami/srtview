@@ -2730,13 +2730,16 @@ void MainWin::ocrReady()
 			if (s.conf >= kOcrConfFloor)
 				read.push_back(std::move(s));
 		}
-		if (read.empty())
+		// A successful read with nothing confident on it still
+		// lands, as an empty moment: the weave counts dropouts
+		// only over moments it can see, and a slide that leaves
+		// and returns must not bridge its absence into one
+		// region whose text then greets only the first showing.
+		auto const [slot, fresh] = m_frameText[n.r.id]
+			.try_emplace(double(n.r.ms) / 1000.0);
+		if (!fresh && slot->second == read)
 			continue;
-		std::vector<ocr::span> &slot =
-			m_frameText[n.r.id][double(n.r.ms) / 1000.0];
-		if (slot == read)
-			continue;
-		slot = std::move(read);
+		slot->second = std::move(read);
 		m_frameDirty.insert(n.r.id);
 		if (!m_ocrDirty)
 			m_ocrFirstDirty.start();  // the epoch opens
