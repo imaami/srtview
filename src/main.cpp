@@ -44,8 +44,9 @@
 //                          breathing room for the GPU
 //      SRTVIEW_OCR      -- 0 disables the frame-text reader; on by
 //                          default: every grabbed pick (inspected
-//                          frames first) is OCR'd once and cached
-//                          under $XDG_CACHE_HOME/srtview/ocr
+//                          frames first) and every cue moment of
+//                          the loaded corpus is OCR'd once and
+//                          cached under $XDG_CACHE_HOME/srtview/ocr
 //                          (~/.cache when unset)
 //      SRTVIEW_DEBUG    -- log IPC traffic, player health and facts
 //                          pipeline tasks to stderr; state flips are

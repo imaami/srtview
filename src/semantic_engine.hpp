@@ -526,7 +526,10 @@ void SemanticEngine<Backend>::cut(source const &s)
 		while (begin + take < at) {
 			std::size_t const add =
 				s.frames[begin + take].text.size() + 16;
-			if (bytes + add > detail::kFrameBytes)
+			// The first frame rides regardless: one oversized
+			// consensus line must shrink the window's frame
+			// budget, never empty its evidence entirely.
+			if (take && bytes + add > detail::kFrameBytes)
 				break;
 			bytes += add;
 			++take;

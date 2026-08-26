@@ -11,6 +11,7 @@
 #include <limits>
 #include <mutex>
 #include <semaphore>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unistd.h>

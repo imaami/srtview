@@ -207,6 +207,19 @@ int main()
 		check(feng.key("semantic-extract-v1", feng.window(1))
 		      == eng.key("semantic-extract-v1", eng.window(1)),
 		      "a frameless window keeps its identity");
+
+		// An oversized FIRST frame shrinks the budget instead
+		// of zeroing the window's evidence.
+		Engine beng(fback, mix);
+		Engine::source big = lecture("aaaaaaaaaaaaaaa2", 300);
+		big.frames.push_back({5.0, std::string(3000, 'y')});
+		big.frames.push_back({6.0, "starved neighbor"});
+		beng.reset("corpus-big", {big});
+		std::string const wb =
+			engine::window_body(beng.window(0));
+		check(wb.find(std::string(64, 'y')) != std::string::npos
+		      && wb.find("starved neighbor") == std::string::npos,
+		      "an oversized first frame still rides, alone");
 	}
 
 	// --- extraction lands, records show, pairs are judged ---------
