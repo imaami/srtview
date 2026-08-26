@@ -97,17 +97,20 @@ inline bool all_digits(std::string_view v)
 
 // One line per call; CRLF, LF and bare-CR (classic Mac) files all
 // occur in the wild per the reference.  Copyable: a copy is a peek.
+// line counts the lines handed out, 1-based after the first next().
 struct line_cursor {
 	std::string_view rest;
+	int              line = 0;
 
-	bool next(std::string_view &line)
+	bool next(std::string_view &out)
 	{
 		if (rest.empty())
 			return false;
 		std::size_t const n = rest.find_first_of("\r\n");
-		line = rest.substr(0, n);
+		out = rest.substr(0, n);
 		rest.remove_prefix(std::min(n, rest.size()));
 		drop_break();
+		++line;
 		return true;
 	}
 
@@ -238,15 +241,23 @@ public:
 private:
 	void step(std::string_view line, detail::line_cursor const &ahead)
 	{
+		// ahead has already counted the line being examined.
 		detail::stamp_pair ts;
 		if (detail::timecode_line(line, ts)) {
 			flush();
-			begin(ts);
+			// The block's visible first line: its counter when
+			// one sat directly above, else this timecode line.
+			begin(ts, counter_ && counter_ == ahead.line - 1
+			          ? counter_ : ahead.line);
 			return;
 		}
+		std::string_view const t = detail::trim(line);
+		// A digits-only line may be the next block's counter;
+		// remember where it sat so begin() can cite it.
+		if (detail::all_digits(t))
+			counter_ = ahead.line;
 		if (!open_)
 			return;                       // junk between blocks
-		std::string_view const t = detail::trim(line);
 		if (t.empty()) {
 			flush();
 			return;
@@ -267,10 +278,11 @@ private:
 		    && detail::timecode_line(next, ts);
 	}
 
-	void begin(detail::stamp_pair ts)
+	void begin(detail::stamp_pair ts, int at)
 	{
 		start_ = ts.a;
 		end_ = ts.b;
+		line_ = at;
 		open_ = true;
 	}
 
@@ -281,11 +293,23 @@ private:
 		text_ += t;
 	}
 
+	// Derivers declaring a fourth on_cue parameter also receive
+	// the file line number of the cue block's first visible line
+	// -- its counter line, or the timecode line when the counter
+	// is absent -- 1-based and strictly increasing across a file.
+	// The three-argument shape stays the contract for everyone
+	// else.
 	void flush()
 	{
 		if (!open_)
 			return;
-		this->impl().on_cue(start_, end_, std::move(text_));
+		if constexpr (requires(Derived &d, std::string s) {
+				d.on_cue(0.0, 0.0, std::move(s), 0); })
+			this->impl().on_cue(start_, end_,
+			                    std::move(text_), line_);
+		else
+			this->impl().on_cue(start_, end_,
+			                    std::move(text_));
 		text_.clear();
 		open_ = false;
 	}
@@ -293,6 +317,8 @@ private:
 	double      start_ = 0.0;
 	double      end_ = 0.0;
 	std::string text_;
+	int         line_ = 0;
+	int         counter_ = 0;
 	bool        open_ = false;
 };
 

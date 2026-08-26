@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -88,6 +89,45 @@ void testSink()
 	c.parse("1\n00:00:01,000 --> 00:00:02,000\na\n\n"
 	        "2\n00:00:03,000 --> 00:00:04,500\nb\n");
 	check(c.n == 2 && near(c.last, 4.5), "CRTP sink");
+}
+
+void testLineNumbers()
+{
+	// A deriver declaring the fourth on_cue parameter receives the
+	// file line of each cue block's first visible line: the
+	// counter when one sits directly above the timecode, else the
+	// timecode line itself.  Strictly increasing across a file.
+	struct lines : srt::parser<lines> {
+		std::vector<int> first;
+		void on_cue(double, double, std::string &&, int at)
+		{
+			first.push_back(at);
+		}
+	};
+	lines c;
+	c.parse("site banner junk\r\n"                 // 1
+	        "\r\n"                                 // 2
+	        "1\r\n"                                // 3
+	        "00:00:01,000 --> 00:00:02,000\r\n"    // 4
+	        "first cue, line one\r\n"              // 5
+	        "and line two\r\n"                     // 6
+	        "\r\n"                                 // 7
+	        "00:00:03,000 --> 00:00:04,000\r\n"    // 8
+	        "second cue\r\n"                       // 9
+	        "3\r\n"                                // 10 (no blank
+	        "00:00:05,000 --> 00:00:06,000\r\n"    // 11  above)
+	        "third cue\r\n");                      // 12
+	check(c.first == std::vector<int>{3, 8, 10},
+	      "blocks cite their counter or their timecode");
+	lines lf;
+	lf.parse("00:00:01,000 --> 00:00:02,000\nplain\n");
+	check(lf.first == std::vector<int>{1},
+	      "LF files count the same");
+	lines tl;
+	tl.parse("1\n00:00:01,000 --> 00:00:02,000\n\n"
+	         "2\n00:00:03,000 --> 00:00:04,000\nb\n");
+	check(tl.first == std::vector<int>{1, 4},
+	      "a textless cue still has its block line");
 }
 
 void testEncodings()
@@ -179,6 +219,7 @@ int main()
 {
 	testStructure();
 	testSink();
+	testLineNumbers();
 	testEncodings();
 	testMarkup();
 	std::printf("%s (%d failure%s)\n", g_fail ? "FAILED" : "PASSED",
