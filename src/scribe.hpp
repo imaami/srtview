@@ -54,12 +54,25 @@ public:
 	// jthread stops and joins; the interruptible wait wakes on
 	// the stop request, queued jobs are dropped, a running one
 	// finishes into the void.
-	~scribe() = default;
+	~scribe() { stop(); }
 
 	// Wind down ahead of destruction: the running job finishes
 	// and delivers, queued jobs are dropped, later posts are
-	// refused with ticket 0.  The destructor implies it.
-	void stop() { m_thr.request_stop(); }
+	// refused with ticket 0.  The destructor implies it.  The
+	// stop flag flips under the same mutex post() admits under:
+	// a bare request_stop() would let a racing post win its
+	// check, return a live ticket, and watch the worker exit
+	// without ever serving it.
+	void stop()
+	{
+		{
+			std::lock_guard const lk(m_mtx);
+			if (m_stopping)
+				return;
+			m_stopping = true;
+		}
+		m_thr.request_stop();
+	}
 
 	scribe(scribe const &) = delete;
 	scribe &operator=(scribe const &) = delete;
@@ -68,13 +81,15 @@ public:
 	// the new ticket instead of a second job; a rush post hoists
 	// a queued speculative twin into the rush lane.  Once the
 	// wind-down is requested the post is refused with ticket 0 --
-	// the jthread's stop state is the single source of truth.
+	// admission and the stop flag share one mutex, so a ticket is
+	// either accepted before the stop or refused, never accepted
+	// into a worker already told to leave.
 	ticket post(request r, bool rush = false)
 	{
 		ticket t;
 		{
 			std::lock_guard const lk(m_mtx);
-			if (m_thr.get_stop_token().stop_requested())
+			if (m_stopping)
 				return 0;
 			t = ++m_last;
 			if (!adopt(r, rush, t))
@@ -270,6 +285,7 @@ private:
 	std::deque<lot>             m_plan;
 	std::vector<note>           m_done;
 	std::optional<job>          m_live;
+	bool                        m_stopping = false;
 	ticket                      m_last = 0;
 	std::jthread                m_thr;  // last: starts after the
 	                                    // state above exists
