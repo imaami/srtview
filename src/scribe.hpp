@@ -38,12 +38,16 @@ struct feed {
 // cheap and thread-safe, and calling drain() from inside it is
 // fine -- no lock is held.  Function pointer plus context on
 // purpose: the Qt shim of a later phase wraps it into a queued
-// signal.  The backend and the poke context outlive the scribe.
+// signal.  The pointer type says noexcept, so a throwing callback
+// cannot even be wired: this is a C-shaped boundary, and errors
+// travel through the notes' err field, never by unwinding into
+// the worker.  The backend and the poke context outlive the
+// scribe.
 template <class B> requires backend<B>
 class scribe
 {
 public:
-	scribe(B &b, void (*poke)(void *), void *ctx)
+	scribe(B &b, void (*poke)(void *) noexcept, void *ctx)
 		: m_b(b), m_poke(poke), m_ctx(ctx),
 		  m_thr([this](std::stop_token st) { work(st); }) {}
 
@@ -257,7 +261,7 @@ private:
 	}
 
 	B                          &m_b;
-	void                      (*m_poke)(void *);
+	void                      (*m_poke)(void *) noexcept;
 	void                       *m_ctx;
 	std::mutex                  m_mtx;
 	std::condition_variable_any m_cv;

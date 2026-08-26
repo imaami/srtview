@@ -182,7 +182,7 @@ private:
 
 	// The scribe's poke, on its worker thread: bounce into the
 	// listener's thread as a queued call.
-	static void poke(void *self)
+	static void poke(void *self) noexcept
 	{
 		auto *const q = static_cast<OcrQ *>(self);
 		if (q->m_ctx && q->m_l)
@@ -194,7 +194,8 @@ private:
 	// The whole pipeline or nothing; the scribe last, so it
 	// joins first while everything it can touch still lives.
 	struct stack {
-		stack(std::string root, void (*pk)(void *), void *cx)
+		stack(std::string root, void (*pk)(void *) noexcept,
+		      void *cx)
 			: back(std::move(root), &OcrQ::labelOf, &read,
 			       read),
 			  desk(back, pk, cx) {}

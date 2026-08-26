@@ -150,7 +150,7 @@ int main(int argc, char **argv)
 
 	std::counting_semaphore<> poked{0};
 	ocr::scribe<ocr::lector> desk(back,
-		[](void *ctx) {
+		[](void *ctx) noexcept {
 			static_cast<std::counting_semaphore<> *>(ctx)
 				->release();
 		}, &poked);

@@ -222,7 +222,7 @@ struct fake {
 	}
 };
 
-void poke_release(void *ctx)
+void poke_release(void *ctx) noexcept
 {
 	static_cast<std::counting_semaphore<> *>(ctx)->release();
 }
