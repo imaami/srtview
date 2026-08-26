@@ -104,8 +104,9 @@ public:
 
 	std::vector<ocr::note> drain()
 	{
-		return m_s ? m_s->desk.drain()
-		           : std::vector<ocr::note>();
+		if (!m_s)
+			return {};
+		return m_s->desk.drain();
 	}
 
 	void stop()
