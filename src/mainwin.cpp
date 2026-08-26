@@ -814,7 +814,8 @@ void MainWin::rebuildSemantic()
 				regs = ocr::weave(ft->second);
 			source.frames.reserve(regs.size());
 			for (ocr::region const &g : regs)
-				source.frames.push_back({g.t0, g.consensus});
+				source.frames.push_back(
+					{g.t0, g.consensus, g.t1});
 		}
 		sources.push_back(std::move(source));
 	}

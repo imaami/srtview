@@ -506,35 +506,36 @@ void SemanticEngine<Backend>::cut(source const &s)
 		first = next > first ? next : last;
 	}
 
-	// Frames partition across the windows by start time: window i
-	// owns [its first cue's start, window i+1's first cue's start),
-	// a stray before the first or past the last lands in the
-	// nearest window, and the per-window clip keeps the earliest
-	// frames.  Identities are computed only after the frames are
-	// attached: frame text keys (unlike the title -- see the
-	// accessor comment).
-	std::size_t at = 0;
+	// Frames attach by interval overlap: window i takes every
+	// frame whose [at, until] stretch crosses its own cue range,
+	// so a slide read across a window boundary greets both sides
+	// -- the temporal region carries, the point observation never
+	// could.  A stray before the first window or past the last
+	// lands in the nearest one, and the per-window clip keeps the
+	// earliest frames.  Identities are computed only after the
+	// frames are attached: frame text keys (unlike the title --
+	// see the accessor comment).
 	for (std::size_t i = 0; i < ws.size(); ++i) {
-		std::size_t const begin = at;
-		while (at < s.frames.size()
-		       && (i + 1 == ws.size()
-		           || s.frames[at].at
-		              < ws[i + 1].cues.front().start))
-			++at;
-		std::size_t take = 0;
+		double const from = ws[i].cues.front().start;
+		double const thru = ws[i].cues.back().end;
 		std::size_t bytes = 0;
-		while (begin + take < at) {
-			std::size_t const add =
-				s.frames[begin + take].text.size() + 16;
+		for (semantic::frame const &f : s.frames) {
+			double const end = std::max(f.at, f.until);
+			bool const stray =
+				(i == 0 && end < from)
+				|| (i + 1 == ws.size() && f.at > thru);
+			if (!stray && (end < from || f.at > thru))
+				continue;
+			std::size_t const add = f.text.size() + 16;
 			// The first frame rides regardless: one oversized
 			// consensus line must shrink the window's frame
 			// budget, never empty its evidence entirely.
-			if (take && bytes + add > detail::kFrameBytes)
+			if (!ws[i].frames.empty()
+			    && bytes + add > detail::kFrameBytes)
 				break;
 			bytes += add;
-			++take;
+			ws[i].frames.push_back(f);
 		}
-		ws[i].frames = std::span(s.frames).subspan(begin, take);
 	}
 
 	for (semantic::window const &w : ws) {

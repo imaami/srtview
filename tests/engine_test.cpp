@@ -220,6 +220,21 @@ int main()
 		check(wb.find(std::string(64, 'y')) != std::string::npos
 		      && wb.find("starved neighbor") == std::string::npos,
 		      "an oversized first frame still rides, alone");
+
+		// A region spanning a window boundary greets both sides:
+		// the temporal extent carries where a point observation
+		// landed only in the earlier window.
+		double const seam = eng.window(1).cues.front().start;
+		Engine seng(fback, mix);
+		Engine::source sp = lecture("aaaaaaaaaaaaaaa3", 300);
+		sp.frames.push_back({seam - 10.0, "astride the seam",
+		                     seam + 10.0});
+		seng.reset("corpus-span", {sp});
+		check(engine::window_body(seng.window(0))
+		          .find("astride the seam") != std::string::npos
+		      && engine::window_body(seng.window(1))
+		          .find("astride the seam") != std::string::npos,
+		      "a spanning region greets both windows");
 	}
 
 	// --- extraction lands, records show, pairs are judged ---------

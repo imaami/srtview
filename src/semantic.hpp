@@ -52,19 +52,24 @@ struct cue {
 // a terminal) -- OCR output, never model output.  The written
 // spelling of spoken terms, carried beside the cues.
 struct frame {
-	double      at = 0.0;
+	double      at = 0.0;   // first sighting, seconds
 	std::string text;
+	double      until = 0;  // last sighting (a woven region's
+	                        // t1); anything before at means the
+	                        // one moment alone
 };
 
 // One contiguous run of a source's cues, numbers ascending, as
-// presented to extraction, with the frame text read inside its
-// span.  A view: the cues, frames and names belong to the source,
-// which outlives every window cut from it.
+// presented to extraction, with the frame text visible inside its
+// span.  The cues and names are views into the source, which
+// outlives every window cut from it; the frames are the window's
+// own selection -- a region spanning a window boundary belongs to
+// both sides, which no contiguous view can carry.
 struct window {
-	std::string_view       source; // stable discovery identity
-	std::string_view       title;  // human-readable video/source path
-	std::span<cue const>   cues;
-	std::span<frame const> frames;
+	std::string_view     source; // stable discovery identity
+	std::string_view     title;  // human-readable video/source path
+	std::span<cue const> cues;
+	std::vector<frame>   frames;
 };
 
 // Consecutive cited cues collapse into one span.  quote is exact
