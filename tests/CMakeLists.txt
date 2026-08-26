@@ -19,6 +19,17 @@ target_compile_options(topics_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME topics_tests COMMAND topics_tests)
 
+# The rx regex algebra is standard C++; no Qt -- std::regex is the
+# second engine its portable-subset claim is checked against.
+add_executable(rx_tests
+	rx_test.cpp
+	${CMAKE_SOURCE_DIR}/src/rx.cpp
+)
+target_include_directories(rx_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(rx_tests PRIVATE -Wall -Wextra)
+
+add_test(NAME rx_tests COMMAND rx_tests)
+
 # The fundo undo-tree core is plain C; its test links no C++ either.
 add_executable(fundo_tests
 	fundo_test.c
