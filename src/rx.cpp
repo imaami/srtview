@@ -490,7 +490,7 @@ void thread_in(std::vector<std::string_view> const &seed,
 	std::ranges::reverse(hits);
 	hits.push_back({n, m});
 	std::size_t pi = 0, pj = 0;
-	for (auto const [i, j] : hits) {
+	for (auto const &[i, j] : hits) {
 		std::size_t const ga = i - pi, gb = j - pj;
 		std::size_t const sub = std::min(ga, gb);
 		for (std::size_t k = 0; k < sub; ++k)
