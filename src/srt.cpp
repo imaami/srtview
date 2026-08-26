@@ -209,7 +209,7 @@ std::vector<cue> parse(std::string_view utf8)
 {
 	collector c;
 	c.parse(utf8);
-	return std::move(c.cues);
+	return c.cues;
 }
 
 // ------------------------------------------------------------ markup --
