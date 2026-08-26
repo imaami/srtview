@@ -824,6 +824,15 @@ void MainWin::rebuildSemantic()
 	m_semantic.reset(takeId(semanticCorpus).hex(),
 	                 std::move(sources));
 	m_lexicon.clear();
+	// Each cut retires the last cut's term work: windows re-keyed
+	// by arriving frames leave their old ids behind, and a stale
+	// pre-frames reply harvesting late would adopt guessed
+	// spellings first -- the first-nonempty TermInfo fields would
+	// then pin them over the frame-anchored ones.  queueTerms()
+	// restages the current windows from scratch (offers dedupe
+	// against plan and cache, m_termsSeen persists), and the
+	// corpus() reset above already dropped the old asks.
+	m_termsWork.clear();
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
 	// Terms before focus, here and on the tick: whatever terms
