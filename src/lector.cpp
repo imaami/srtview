@@ -15,8 +15,23 @@ constexpr int kBasePpi = 96;
 } // namespace
 
 lector::lector(char const *lang, char const *tessdata)
-	: m_tess(lang, tessdata)
 {
+	if (lang)
+		m_lang.emplace(lang);
+	if (tessdata)
+		m_data.emplace(tessdata);
+}
+
+// The lazy model load: one calling thread by contract -- the
+// performing worker, or the harness's main -- so no lock and no
+// atomics guard it; wave() from elsewhere touches only the bail
+// flag and never this.
+tess &lector::engine()
+{
+	if (!m_tess)
+		m_tess.emplace(m_lang ? m_lang->c_str() : nullptr,
+		               m_data ? m_data->c_str() : nullptr);
+	return *m_tess;
 }
 
 result lector::perform(request const &r)
@@ -26,8 +41,9 @@ result lector::perform(request const &r)
 		out.err = "waved off";
 		return out;
 	}
-	if (!m_tess) {
-		out.err.assign(m_tess.error());
+	tess &t = engine();
+	if (!t) {
+		out.err.assign(t.error());
 		return out;
 	}
 	if (m_dec.path() != r.video && !m_dec.open(r.video)) {
@@ -75,8 +91,8 @@ result lector::perform(request const &r)
 		o.rw = int((x1 - x0) * scale);
 		o.rh = int((y1 - y0) * scale);
 	}
-	out = m_tess.read({g.px.data(), g.width, g.height, g.width,
-	                   kBasePpi * scale}, o);
+	out = t.read({g.px.data(), g.width, g.height, g.width,
+	              kBasePpi * scale}, o);
 	for (span &s : out.lines) {
 		int const x1 = (s.x + s.w + scale - 1) / scale;
 		int const y1 = (s.y + s.h + scale - 1) / scale;

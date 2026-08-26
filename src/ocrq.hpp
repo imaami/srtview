@@ -134,12 +134,12 @@ private:
 	// like a library upgrade does.  An unhashable model marks
 	// itself; a downed engine only errs and errors are never
 	// cached.  Called lazily by the archive on the scribe's
-	// worker at first use: the model file is read and hashed off
-	// the UI thread, keeping this header's no-UI-IO claim true.
+	// worker at first use: the model loads (lector builds its
+	// tess on demand) and the file is read and hashed off the UI
+	// thread, keeping this header's no-UI-IO claim true.
 	static std::string labelOf(void *ctx)
 	{
-		auto const *read =
-			static_cast<ocr::lector const *>(ctx);
+		auto *const read = static_cast<ocr::lector *>(ctx);
 		QString dir = QString::fromStdString(read->datapath());
 		if (!dir.isEmpty() && !dir.endsWith(QLatin1Char('/')))
 			dir += QLatin1Char('/');
