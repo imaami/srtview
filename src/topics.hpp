@@ -190,9 +190,12 @@ std::string cover_of(doc const &d, std::string const &pattern,
 
 // The tidied text of a machine-written pattern: the same branch set
 // with redundant full-span wrappers flattened and repeated branches
-// dropped -- (?i:(a|b|a)) becomes (?i:a|b).  Matching semantics are
-// preserved; structural doubt returns the input unchanged.  For
-// model output only: user-typed patterns are never rewritten.
+// dropped -- (?i:(a|b|a)) becomes (?i:a|b) -- and, when the exact
+// combination comes out shorter, the branches the rx subset
+// re-opens re-knit into one: (?i:word|words) leaves as
+// (?i:words?).  Matching semantics are preserved; structural doubt
+// returns the input unchanged.  For model output only: user-typed
+// patterns are never rewritten.
 std::string tidy(std::string const &pattern);
 
 // Canonical text form; parses back to an equal document.

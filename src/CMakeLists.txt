@@ -5,6 +5,7 @@ add_executable(srtview
 	searchbar.cpp
 	playback.cpp
 	prefs.cpp
+	rx.cpp
 	trail.cpp
 	grabber.cpp
 	decoder.cpp

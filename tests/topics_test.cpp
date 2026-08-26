@@ -369,17 +369,17 @@ void testExtend()
 	topics::doc d = r.value;
 
 	check(topics::extend(d, "term1", "(?i:cells|selles)")
-	      == "(?i:cells|sells|selles)"
+	      == "(?i:(?:cell|selle?)s)"
 	      && d.topics.size() == 2
 	      && d.topics[1].fragments
-	         == std::vector<std::string>{"(?i:cells|sells|selles)"},
-	      "novel branches append; covered ones subtract");
+	         == std::vector<std::string>{"(?i:(?:cell|selle?)s)"},
+	      "novel branches append and the grown whole re-knits");
 	check(topics::extend(d, "term1", "(?i:sells|selles)").empty()
 	      && d.topics[1].fragments
-	         == std::vector<std::string>{"(?i:cells|sells|selles)"},
-	      "a fully covered pattern extends nothing");
+	         == std::vector<std::string>{"(?i:(?:cell|selle?)s)"},
+	      "a knit fragment still covers each of its words");
 	check(topics::extend(d, "term1", "(?i:volt|watt)")
-	      == "(?i:cells|sells|selles|watt)",
+	      == "(?i:cells|selle?s|watt)",
 	      "the whole corpus subtracts, not just the target");
 	check(topics::extend(d, "term9", "(?i:x)").empty(),
 	      "unknown names refuse");
@@ -396,8 +396,8 @@ void testExtend()
 
 	auto cs = topics::parse("- term2\n  - Foo|Bar\n");
 	check(topics::extend(cs.value, "term2", "Baz|Foo")
-	      == "Foo|Bar|Baz",
-	      "case-sensitive contexts extend unwrapped");
+	      == "Ba[rz]|Foo",
+	      "case-sensitive contexts extend unwrapped and knit");
 
 	auto multi = topics::parse("- m\n  - a\n  - |b\n");
 	check(topics::extend(multi.value, "m", "c").empty(),
@@ -412,6 +412,24 @@ void testExtend()
 	auto const back = topics::parse(topics::write(d));
 	check(back.error.empty() && back.value == d,
 	      "extended documents round-trip through write");
+}
+
+void testWordKeys()
+{
+	// Coverage keys of decoded words re-escape metacharacters: the
+	// literal `foo\.com` must never cover the wildcard `foo.com`,
+	// or novel breadth silently narrows away.
+	auto r = topics::parse("- term1\n  - (?i:foo\\.com)\n");
+	check(r.error.empty(), "escaped-literal sketch parses");
+	topics::doc d = r.value;
+	check(topics::adopt_novel(d, "(?i:foo.com)", "focus")
+	      == "(?i:foo.com)",
+	      "a wildcard is not covered by its escaped literal");
+	check(topics::adopt_novel(d, "(?i:foo\\.com|bar)", "focus")
+	      == "(?i:bar)",
+	      "the escaped literal itself still covers");
+	check(topics::cover_of(d, "(?i:foo\\.com)", "term") == "term1",
+	      "cover_of matches the literal, not the wildcard");
 }
 
 void testCoverOf()
@@ -463,8 +481,30 @@ void testTidy()
 	check(tidy("[Ee]tsy-?d|[Ee]tsy-?[Dd]")
 	      == "[Ee]tsy-?d|[Ee]tsy-?[Dd]",
 	      "case-sensitive context keeps case-distinct twins");
-	check(tidy("(?i:[Ee]tsy-?d|[Ee]tsy-?[Dd])") == "(?i:[Ee]tsy-?d)",
-	      "the same twins collapse under an outer (?i:)");
+	check(tidy("(?i:[Ee]tsy-?d|[Ee]tsy-?[Dd])") == "(?i:etsy-?d)",
+	      "the same twins re-knit folded under an outer (?i:)");
+	check(tidy("(?i:word|words)") == "(?i:words?)",
+	      "a trailing-s pair knits to one optional");
+	check(tidy("(?i:analyse|analyze)") == "(?i:analy[sz]e)",
+	      "a one-letter split knits to a class");
+	check(tidy("(?i:stack frame|stack frames)")
+	      == "(?i:stack frames?)",
+	      "phrases knit like words");
+	check(tidy("(?i:words?|wordy)") == "(?i:word[sy]?)",
+	      "a prior knit re-opens and converges");
+	check(tidy("word|x+|words") == "words?|x+",
+	      "the knit splices at the first pooled branch");
+	check(tidy("(?i:word|\\d+|words)") == "(?i:words?|\\d+)",
+	      "opaque branches ride along unharmed");
+	std::string const knot = tidy("(?i:alpha|alphas|beta|betas)");
+	check(knot == "(?i:alphas?|betas?)" && tidy(knot) == knot,
+	      "a sole-branch knit sheds its wrapper and holds fixed");
+	std::string const tie = tidy("(?i:x\\ y|[Ee]tsy-?d)");
+	check(tidy(tie) == tie,
+	      "tidy is its own fixed point on knit-vs-list ties");
+	check(tidy("(?i:\\^|a|b|c)") == "(?i:[\\^abc])"
+	      && tidy("(?i:[\\^abc]|d)") == "(?i:[\\^abcd])",
+	      "a leading caret class re-opens and converges");
 	check(tidy("(?i:(ab)|x\\1)") == "(?i:(ab)|x\\1)",
 	      "backreferences make the whole pattern doubt");
 	check(tidy("(?i:(a)|(?1))") == "(?i:(a)|(?1))",
@@ -553,6 +593,7 @@ int main()
 	testNormalKey();
 	testAdoptNovel();
 	testExtend();
+	testWordKeys();
 	testCoverOf();
 	testTidy();
 	testClassCanon();

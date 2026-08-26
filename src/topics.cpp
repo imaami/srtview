@@ -1,11 +1,12 @@
 // topics.cpp -- see topics.hpp for the format.
-#include "topics.hpp"
-
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
 #include <utility>
+
+#include "rx.hpp"
+#include "topics.hpp"
 
 namespace topics {
 
@@ -728,6 +729,42 @@ struct part {
 	std::string key;  // comparison key
 };
 
+// The decoded words of a branch the rx subset re-opens, as keys:
+// exactly the key a plain-literal branch of that word carries --
+// metacharacters re-escaped (kPlainEscape keeps those escapes, so
+// the literal word "foo.com" must never key equal to the wildcard
+// branch `foo.com`), plain escapes stripped as kPlainEscape strips
+// them, the fold tag applied under ci -- so a knit composite
+// covers its members however they are spelled, and only them.
+// Empty when the branch is opaque.
+std::vector<std::string> word_keys(part const &q, bool ci)
+{
+	auto const set = rx::unknit(q.text);
+	if (!set)
+		return {};
+	std::vector<std::string> out;
+	out.reserve(set->size());
+	for (std::string const &w : *set) {
+		std::string k;
+		k.reserve(w.size() + 1);
+		if (ci)
+			k += '\n';
+		for (char const c : w) {
+			if (c && std::strchr("^$.[]()*+?{}|\\", c))
+				k += '\\';
+			k += ci ? char(ascii_lower((unsigned char)c))
+			        : c;
+		}
+		out.push_back(std::move(k));
+	}
+	return out;
+}
+
+bool has(std::vector<std::string> const &keys, std::string const &k)
+{
+	return std::ranges::find(keys, k) != keys.end();
+}
+
 // Flattens a peeled pattern into top-level parts.  False on
 // structural doubt (empty branch, runaway nesting): the caller then
 // treats the whole pattern as one opaque part.
@@ -930,8 +967,10 @@ std::string normal_key(std::string_view pattern)
 namespace {
 
 // The union of every topic's expanded branch keys -- the covered
-// set adopt_novel() and extend() subtract against.  A doubtful
-// expansion contributes its whole-pattern key.
+// set adopt_novel() and extend() subtract against -- word keys
+// beside the branch keys, so a stored knit composite covers each
+// of its members.  A doubtful expansion contributes its
+// whole-pattern key.
 std::vector<std::string> corpus_keys(doc const &d)
 {
 	std::vector<std::string> covered;
@@ -939,28 +978,42 @@ std::vector<std::string> corpus_keys(doc const &d)
 		bool tci;
 		std::vector<part> tp;
 		std::string const ex = expand(d, t);
-		if (flatten_pattern(ex, tci, tp))
-			for (part &q : tp)
-				covered.push_back(std::move(q.key));
-		else
+		if (!flatten_pattern(ex, tci, tp)) {
 			covered.push_back(normal_key(ex));
+			continue;
+		}
+		for (part &q : tp) {
+			for (std::string &w : word_keys(q, tci))
+				covered.push_back(std::move(w));
+			covered.push_back(std::move(q.key));
+		}
 	}
 	return covered;
 }
 
-// Branches of parts whose key the covered set lacks, joined in
-// original order -- survivors keep their text, repeats within the
-// pattern itself collapse.  Empty when nothing novel remains.
-std::string novel_body(std::vector<part> &parts,
+// Branches of parts the covered set lacks, joined in original
+// order -- survivors keep their text, repeats within the pattern
+// itself collapse.  A part is covered by its branch key or by
+// every one of its decoded words; a re-opened composite arriving
+// where only its members are stored still subtracts.  Empty when
+// nothing novel remains.
+std::string novel_body(std::vector<part> &parts, bool ci,
                        std::vector<std::string> const &covered)
 {
 	std::string body;
 	std::vector<std::string> kept;
+	auto const known = [&covered, &kept](std::string const &k) {
+		return has(covered, k) || has(kept, k);
+	};
 	for (part &q : parts) {
-		if (std::ranges::find(covered, q.key) != covered.end() ||
-		    std::ranges::find(kept, q.key) != kept.end())
+		std::vector<std::string> words = word_keys(q, ci);
+		if (known(q.key)
+		    || (!words.empty()
+		        && std::ranges::all_of(words, known)))
 			continue;
 		kept.push_back(std::move(q.key));
+		for (std::string &w : words)
+			kept.push_back(std::move(w));
 		if (!body.empty())
 			body += '|';
 		body += q.text;
@@ -980,11 +1033,14 @@ std::string adopt_novel(doc &d, std::string const &pattern,
 		// key-level duplicate refusal still applies.
 		return adopt(d, pattern, stem) ? pattern : std::string();
 
-	std::string body = novel_body(parts, corpus_keys(d));
+	std::string body = novel_body(parts, ci, corpus_keys(d));
 	if (body.empty())
 		return {};
-	std::string rebuilt = ci ? "(?i:" + body + ")"
-	                         : std::move(body);
+	// Re-tidied on the way in: novel_body can split a knit back
+	// into its words, and a stored pattern must never regress to
+	// the list form.
+	std::string rebuilt = tidy(ci ? "(?i:" + body + ")"
+	                              : std::move(body));
 	return adopt(d, rebuilt, stem) ? rebuilt : std::string();
 }
 
@@ -1034,15 +1090,17 @@ std::string extend(doc &d, std::string_view name,
 	bool ci = false;
 	std::vector<part> parts;
 	flatten_pattern(pattern, ci, parts);
-	std::string const body = novel_body(parts, corpus_keys(d));
+	std::string const body = novel_body(parts, ci, corpus_keys(d));
 	if (body.empty())
 		return {};
 	// One wrap covers the grown alternation; the peel flag is
-	// spent -- ci == tci already pinned the case context.
+	// spent -- ci == tci already pinned the case context.  The
+	// grown whole re-tidies: the new words re-knit with the ones
+	// already there, so a fragment converges instead of listing.
 	bool spent = false;
 	std::string const inner{peel(target->fragments[0], spent)};
-	target->fragments[0] = ci ? "(?i:" + inner + "|" + body + ")"
-	                          : inner + "|" + body;
+	target->fragments[0] = tidy(ci ? "(?i:" + inner + "|" + body + ")"
+	                               : inner + "|" + body);
 	return target->fragments[0];
 }
 
@@ -1065,9 +1123,21 @@ std::string cover_of(doc const &d, std::string const &pattern,
 		std::vector<part> tp;
 		if (!flatten_pattern(expand(d, t), tci, tp))
 			continue;
-		auto const covers = [&tp](part const &q) {
-			return std::ranges::find(tp, q.key, &part::key)
-			       != tp.end();
+		std::vector<std::string> tkeys;
+		for (part &q : tp) {
+			for (std::string &w : word_keys(q, tci))
+				tkeys.push_back(std::move(w));
+			tkeys.push_back(std::move(q.key));
+		}
+		auto const covers = [&tkeys, ci](part const &q) {
+			if (has(tkeys, q.key))
+				return true;
+			auto const words = word_keys(q, ci);
+			return !words.empty()
+			    && std::ranges::all_of(words,
+				[&tkeys](std::string const &w) {
+					return has(tkeys, w);
+				});
 		};
 		std::size_t const n = std::size_t(
 			std::ranges::count_if(parts, covers));
@@ -1085,23 +1155,83 @@ std::string tidy(std::string const &pattern)
 	std::vector<part> parts;
 	if (!flatten_pattern(pattern, ci, parts))
 		return pattern;
-	std::string body;
+	// The deduped list, today as always.  Folded keys decide
+	// repeats only under an outer (?i:), where the wrapper covers
+	// the case difference; in a case-sensitive context the [Xx]
+	// idiom's promotion would let "[Ee]tsy-?d" swallow
+	// "[Ee]tsy-?[Dd]" and narrow what the pattern matches.
+	std::string legacy;
 	std::vector<std::string> seen;
-	for (part &q : parts) {
-		// Folded keys decide repeats only under an outer (?i:),
-		// where the wrapper covers the case difference; in a
-		// case-sensitive context the [Xx] idiom's promotion
-		// would let "[Ee]tsy-?d" swallow "[Ee]tsy-?[Dd]" and
-		// narrow what the pattern matches.
+	for (part const &q : parts) {
 		std::string const &k = ci ? q.key : q.text;
 		if (std::ranges::find(seen, k) != seen.end())
 			continue;
 		seen.push_back(k);
-		if (!body.empty())
-			body += '|';
-		body += q.text;
+		if (!legacy.empty())
+			legacy += '|';
+		legacy += q.text;
 	}
-	return ci ? "(?i:" + body + ")" : body;
+	// Branches the rx subset re-opens -- plain literals and prior
+	// knits alike -- pool into one exact re-knit spliced back at
+	// the first such branch's position: word|words leaves as
+	// words?, never as the list it arrived as.  Pooling unions
+	// match sets exactly, so the narrowing the key dedupe above
+	// must avoid cannot happen here; under an outer (?i:) the
+	// pooled words fold to lowercase first, the wrapper covering
+	// the difference.  The knit must pay for itself: when the
+	// combination comes out no shorter than the list (a|b against
+	// [ab], a hand-canonical class shape re-opened), the list
+	// stands, and a pattern already in its shortest form passes
+	// through byte-identical.
+	std::vector<std::string> body;
+	std::vector<std::string> words;
+	std::size_t at = 0;
+	seen.clear();
+	for (part &q : parts) {
+		if (auto set = rx::unknit(q.text)) {
+			if (words.empty())
+				at = body.size();
+			for (std::string &w : *set) {
+				if (ci)
+					for (char &c : w)
+						c = char(ascii_lower(
+							(unsigned char)c));
+				words.push_back(std::move(w));
+			}
+			continue;
+		}
+		std::string const &k = ci ? q.key : q.text;
+		if (std::ranges::find(seen, k) != seen.end())
+			continue;
+		seen.push_back(k);
+		body.push_back(std::move(q.text));
+	}
+	if (words.empty())
+		return ci ? "(?i:" + legacy + ")" : legacy;
+	std::string knitted = rx::knit(std::move(words));
+	if (knitted.empty())
+		// Nothing but the empty word: an alternation cannot
+		// carry an empty branch, so the list stands.
+		return ci ? "(?i:" + legacy + ")" : legacy;
+	if (body.empty()) {
+		// Alone in the body, knit's whole-span (?:...) wrapper
+		// is redundant -- the next tidy would peel it and emit
+		// a different byte form.  Strip it now, so tidy is its
+		// own fixed point.
+		bool spent = false;
+		knitted = std::string(peel(knitted, spent));
+	}
+	body.insert(body.begin() + std::ptrdiff_t(at),
+	            std::move(knitted));
+	std::string pooled;
+	for (std::string const &b : body) {
+		if (!pooled.empty())
+			pooled += '|';
+		pooled += b;
+	}
+	std::string const &out = pooled.size() < legacy.size()
+	                       ? pooled : legacy;
+	return ci ? "(?i:" + out + ")" : out;
 }
 
 std::vector<gloss_entry> parse_gloss(std::string_view text)

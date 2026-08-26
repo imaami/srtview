@@ -9,9 +9,11 @@ target_compile_options(srt_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME srt_tests COMMAND srt_tests)
 
-# The topics module is standard C++; no Qt here either.
+# The topics module is standard C++; no Qt here either.  It leans
+# on rx for pattern tidying.
 add_executable(topics_tests
 	topics_test.cpp
+	${CMAKE_SOURCE_DIR}/src/rx.cpp
 	${CMAKE_SOURCE_DIR}/src/topics.cpp
 )
 target_include_directories(topics_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
