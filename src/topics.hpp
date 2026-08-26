@@ -154,7 +154,10 @@ std::string normal_key(std::string_view pattern);
 // the pattern whose normal_key() a topic's expansion already has
 // are dropped, and the remainder -- rebuilt from the surviving
 // branches in original order, re-wrapped (?i:...) when the source
-// was -- is adopted under the stem like adopt().  Returns the
+// was -- is adopted under the stem like adopt().  Branches the rx
+// subset re-opens subtract word by word, keeping only uncovered
+// members, and the rebuilt pattern passes through tidy(), so the
+// stored text is the knit form, not the branch list.  Returns the
 // adopted text, empty when nothing novel remained or adoption was
 // refused.
 std::string adopt_novel(doc &d, std::string const &pattern,
@@ -167,8 +170,10 @@ bool stem_name(std::string_view name, std::string_view stem);
 
 // Extends a machine topic in place: branches of pattern whose
 // normal_key() no topic's expansion already covers append to the
-// named topic's single fragment as alternation, keeping its text
-// and (?i:) wrap.  Refused -- returning empty -- for unknown names,
+// named topic's single fragment as alternation, keeping its (?i:)
+// wrap; the grown whole passes through tidy(), so the stored
+// fragment re-knits rather than listing.  Refused -- returning
+// empty -- for unknown names,
 // multi-fragment or reference-carrying targets, a case context
 // differing from the pattern's, patterns adopt() would refuse, and
 // structural doubt on either side; empty also when nothing novel

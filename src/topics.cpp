@@ -729,14 +729,29 @@ struct part {
 	std::string key;  // comparison key
 };
 
-// The decoded words of a branch the rx subset re-opens, as keys:
-// exactly the key a plain-literal branch of that word carries --
-// metacharacters re-escaped (kPlainEscape keeps those escapes, so
-// the literal word "foo.com" must never key equal to the wildcard
-// branch `foo.com`), plain escapes stripped as kPlainEscape strips
-// them, the fold tag applied under ci -- so a knit composite
-// covers its members however they are spelled, and only them.
-// Empty when the branch is opaque.
+// One decoded word as a coverage key: exactly the key a plain-
+// literal branch of that word carries -- metacharacters
+// re-escaped (kPlainEscape keeps those escapes, so the literal
+// word "foo.com" must never key equal to the wildcard branch
+// `foo.com`), plain escapes stripped as kPlainEscape strips them,
+// the fold tag applied under ci.
+std::string word_key(std::string_view w, bool ci)
+{
+	std::string k;
+	k.reserve(w.size() + 1);
+	if (ci)
+		k += '\n';
+	for (char const c : w) {
+		if (c && std::strchr("^$.[]()*+?{}|\\", c))
+			k += '\\';
+		k += ci ? char(ascii_lower((unsigned char)c)) : c;
+	}
+	return k;
+}
+
+// The decoded words of a branch the rx subset re-opens, as keys --
+// so a knit composite covers its members however they are spelled,
+// and only them.  Empty when the branch is opaque.
 std::vector<std::string> word_keys(part const &q, bool ci)
 {
 	auto const set = rx::unknit(q.text);
@@ -744,20 +759,21 @@ std::vector<std::string> word_keys(part const &q, bool ci)
 		return {};
 	std::vector<std::string> out;
 	out.reserve(set->size());
-	for (std::string const &w : *set) {
-		std::string k;
-		k.reserve(w.size() + 1);
-		if (ci)
-			k += '\n';
-		for (char const c : w) {
-			if (c && std::strchr("^$.[]()*+?{}|\\", c))
-				k += '\\';
-			k += ci ? char(ascii_lower((unsigned char)c))
-			        : c;
-		}
-		out.push_back(std::move(k));
-	}
+	for (std::string const &w : *set)
+		out.push_back(word_key(w, ci));
 	return out;
+}
+
+// A decoded word with edge whitespace cannot ride a stored pattern
+// bare: the topic-file line strip would eat it on the next round
+// trip.  A branch carrying one stays in its escaped original form
+// instead of pooling into a knit.
+bool storable(std::vector<std::string> const &words)
+{
+	for (std::string const &w : words)
+		if (!w.empty() && (ws(w.front()) || ws(w.back())))
+			return false;
+	return true;
 }
 
 bool has(std::vector<std::string> const &keys, std::string const &k)
@@ -992,11 +1008,14 @@ std::vector<std::string> corpus_keys(doc const &d)
 }
 
 // Branches of parts the covered set lacks, joined in original
-// order -- survivors keep their text, repeats within the pattern
-// itself collapse.  A part is covered by its branch key or by
-// every one of its decoded words; a re-opened composite arriving
-// where only its members are stored still subtracts.  Empty when
-// nothing novel remains.
+// order -- repeats within the pattern itself collapse.  A branch
+// the rx subset re-opens subtracts word by word: only its
+// uncovered members survive, re-knit, so a composite overlapping
+// the corpus contributes exactly its novelty.  The empty word
+// cannot ride an alternation and founds nothing; it never
+// survives.  Opaque branches -- and decoded sets a stored line
+// could not carry -- keep their text whole.  Empty when nothing
+// novel remains.
 std::string novel_body(std::vector<part> &parts, bool ci,
                        std::vector<std::string> const &covered)
 {
@@ -1005,18 +1024,32 @@ std::string novel_body(std::vector<part> &parts, bool ci,
 	auto const known = [&covered, &kept](std::string const &k) {
 		return has(covered, k) || has(kept, k);
 	};
-	for (part &q : parts) {
-		std::vector<std::string> words = word_keys(q, ci);
-		if (known(q.key)
-		    || (!words.empty()
-		        && std::ranges::all_of(words, known)))
-			continue;
-		kept.push_back(std::move(q.key));
-		for (std::string &w : words)
-			kept.push_back(std::move(w));
+	auto const append = [&body](std::string const &text) {
 		if (!body.empty())
 			body += '|';
-		body += q.text;
+		body += text;
+	};
+	for (part &q : parts) {
+		if (known(q.key))
+			continue;
+		auto set = rx::unknit(q.text);
+		if (set && storable(*set)) {
+			std::vector<std::string> novel;
+			for (std::string &w : *set) {
+				if (w.empty())
+					continue;
+				std::string k = word_key(w, ci);
+				if (known(k))
+					continue;
+				kept.push_back(std::move(k));
+				novel.push_back(std::move(w));
+			}
+			if (!novel.empty())
+				append(rx::knit(std::move(novel)));
+			continue;
+		}
+		kept.push_back(std::move(q.key));
+		append(q.text);
 	}
 	return body;
 }
@@ -1114,6 +1147,12 @@ std::string cover_of(doc const &d, std::string const &pattern,
 	// Keys carry the fold tag, so case contexts cannot cross-match;
 	// strict > keeps the earliest max -- doc order is the only
 	// tie-break two sessions share.
+	// Per-part word keys once, up front: they depend only on the
+	// part and the fold, never on the topic being scored.
+	std::vector<std::vector<std::string>> pw;
+	pw.reserve(parts.size());
+	for (part const &q : parts)
+		pw.push_back(word_keys(q, ci));
 	std::string best;
 	std::size_t most = 0;
 	for (topic const &t : d.topics) {
@@ -1129,18 +1168,16 @@ std::string cover_of(doc const &d, std::string const &pattern,
 				tkeys.push_back(std::move(w));
 			tkeys.push_back(std::move(q.key));
 		}
-		auto const covers = [&tkeys, ci](part const &q) {
-			if (has(tkeys, q.key))
-				return true;
-			auto const words = word_keys(q, ci);
-			return !words.empty()
-			    && std::ranges::all_of(words,
-				[&tkeys](std::string const &w) {
-					return has(tkeys, w);
-				});
-		};
-		std::size_t const n = std::size_t(
-			std::ranges::count_if(parts, covers));
+		std::size_t n = 0;
+		for (std::size_t i = 0; i < parts.size(); ++i) {
+			auto const in = [&tkeys](std::string const &w) {
+				return has(tkeys, w);
+			};
+			if (in(parts[i].key)
+			    || (!pw[i].empty()
+			        && std::ranges::all_of(pw[i], in)))
+				++n;
+		}
 		if (n > most) {
 			most = n;
 			best = t.name;
@@ -1188,7 +1225,8 @@ std::string tidy(std::string const &pattern)
 	std::size_t at = 0;
 	seen.clear();
 	for (part &q : parts) {
-		if (auto set = rx::unknit(q.text)) {
+		if (auto set = rx::unknit(q.text);
+		    set && storable(*set)) {
 			if (words.empty())
 				at = body.size();
 			for (std::string &w : *set) {

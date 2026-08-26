@@ -430,6 +430,20 @@ void testWordKeys()
 	      "the escaped literal itself still covers");
 	check(topics::cover_of(d, "(?i:foo\\.com)", "term") == "term1",
 	      "cover_of matches the literal, not the wildcard");
+
+	// Word-level subtraction inside one composite: a knit arriving
+	// where some members are stored contributes only its novelty.
+	auto p = topics::parse("- term1\n  - (?i:word)\n");
+	check(p.error.empty(), "partial-coverage sketch parses");
+	check(topics::adopt_novel(p.value, "(?i:words?)", "focus")
+	      == "(?i:words)",
+	      "a knit contributes only its uncovered members");
+	check(topics::adopt_novel(p.value, "(?i:words?|wordy)",
+	                          "focus") == "(?i:wordy)",
+	      "covered members subtract inside a mixed pattern");
+	check(topics::adopt_novel(p.value, "(?i:words?)",
+	                          "focus").empty(),
+	      "a fully re-covered knit adopts nothing");
 }
 
 void testCoverOf()
@@ -505,6 +519,9 @@ void testTidy()
 	check(tidy("(?i:\\^|a|b|c)") == "(?i:[\\^abc])"
 	      && tidy("(?i:[\\^abc]|d)") == "(?i:[\\^abcd])",
 	      "a leading caret class re-opens and converges");
+	check(tidy("\\ x|y") == "\\ x|y"
+	      && tidy("x\\ |y") == "x\\ |y",
+	      "escaped edge spaces never pool into a bare knit");
 	check(tidy("(?i:(ab)|x\\1)") == "(?i:(ab)|x\\1)",
 	      "backreferences make the whole pattern doubt");
 	check(tidy("(?i:(a)|(?1))") == "(?i:(a)|(?1))",
