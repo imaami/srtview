@@ -15,6 +15,7 @@ add_executable(srtview
 	lector.cpp
 	list.c
 	llm.c
+	loom.cpp
 	loop.c
 	ocr.cpp
 	agenda.cpp

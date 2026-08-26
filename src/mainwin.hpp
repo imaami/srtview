@@ -11,6 +11,7 @@
 #include "facts.hpp"
 #include "grabber.hpp"
 #include "knowledge.hpp"
+#include "loom.hpp"
 #include "mpvlink.hpp"
 #include "ocrq.hpp"
 #include "playback.hpp"
@@ -241,9 +242,17 @@ private:
 	void errState(QString const &s);
 
 	// Frame text folded from drained OCR notes: video discovery
-	// id -> seconds -> joined span text.  Snapshotted into the
-	// engine's sources on the debounced resnapshot.
-	std::map<std::string, std::map<double, std::string>> m_frameText;
+	// id -> seconds -> that reading's confident spans, boxes and
+	// all.  On the debounced resnapshot each video's moments weave
+	// into regions (loom.hpp) whose consensus lines enter the
+	// engine's sources.
+	std::map<std::string,
+	         std::map<double, std::vector<ocr::span>>> m_frameText;
+	// The weave, cached per video and re-run only for videos whose
+	// readings actually changed since the last snapshot -- tens of
+	// milliseconds per live-corpus video adds up across dozens.
+	std::map<std::string, std::vector<ocr::region>> m_regions;
+	std::set<std::string>           m_frameDirty;
 	bool                            m_ocrDirty = false;
 	Prefs                           m_prefs;
 	Trail                           m_trail;

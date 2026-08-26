@@ -69,6 +69,8 @@ struct span {
 	int   w = 0;
 	int   h = 0;
 	float conf = 0;      // tesseract line confidence, 0..100
+
+	friend bool operator==(span const &, span const &) = default;
 };
 
 struct result {

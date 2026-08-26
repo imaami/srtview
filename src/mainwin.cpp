@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "agenda.hpp"
+#include "loom.hpp"
 #include "palettefix.hpp"
 #include "srt.hpp"
 #include "timefmtq.hpp"
@@ -800,17 +801,20 @@ void MainWin::rebuildSemantic()
 		// frames are new window identities inside the same
 		// corpus, not a new corpus.
 		if (ft != m_frameText.end()) {
-			source.frames.reserve(ft->second.size());
-			// Consecutive duplicates collapse: fifty cues
-			// under one slide read the same text, and the
-			// model should meet it once, at its first moment.
-			std::string const *last = nullptr;
-			for (auto const &[at, text] : ft->second) {
-				if (last && *last == text)
-					continue;
-				source.frames.push_back({at, text});
-				last = &text;
-			}
+			// The moments weave into regions: one line per
+			// slide-stretch at its first sighting, majority
+			// text over every jittered reading -- the model
+			// meets each slide once, and a window's identity
+			// stops depending on which garbled variant a
+			// session happened to sample.  Re-woven only for
+			// videos whose readings changed since last time.
+			std::vector<ocr::region> &regs =
+				m_regions[ft->first];
+			if (m_frameDirty.erase(ft->first) || regs.empty())
+				regs = ocr::weave(ft->second);
+			source.frames.reserve(regs.size());
+			for (ocr::region const &g : regs)
+				source.frames.push_back({g.t0, g.consensus});
 		}
 		sources.push_back(std::move(source));
 	}
@@ -2711,7 +2715,7 @@ void MainWin::grabProgress()
 // the debounced resnapshot.
 void MainWin::ocrReady()
 {
-	for (ocr::note const &n : m_ocr.drain()) {
+	for (ocr::note &n : m_ocr.drain()) {
 		if (!n.res.err.empty()) {
 			dbgHop(QStringLiteral("ocr: %1ms %2")
 			       .arg(n.r.ms)
@@ -2721,21 +2725,19 @@ void MainWin::ocrReady()
 		dbgHop(QStringLiteral("ocr: %1ms %2 lines conf %3")
 		       .arg(n.r.ms).arg(n.res.lines.size())
 		       .arg(double(n.res.conf), 0, 'f', 1));
-		std::string joined;
-		for (ocr::span const &s : n.res.lines) {
-			if (s.conf < kOcrConfFloor)
-				continue;
-			if (!joined.empty())
-				joined += " | ";
-			joined += s.text;
+		std::vector<ocr::span> read;
+		for (ocr::span &s : n.res.lines) {
+			if (s.conf >= kOcrConfFloor)
+				read.push_back(std::move(s));
 		}
-		if (joined.empty())
+		if (read.empty())
 			continue;
-		std::string &slot =
+		std::vector<ocr::span> &slot =
 			m_frameText[n.r.id][double(n.r.ms) / 1000.0];
-		if (slot == joined)
+		if (slot == read)
 			continue;
-		slot = std::move(joined);
+		slot = std::move(read);
+		m_frameDirty.insert(n.r.id);
 		if (!m_ocrDirty)
 			m_ocrFirstDirty.start();  // the epoch opens
 		m_ocrDirty = true;
