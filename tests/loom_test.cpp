@@ -7,6 +7,7 @@
 #include "loom.hpp"
 
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <regex>
 #include <string>
@@ -146,6 +147,21 @@ void testGarbageFrame()
 	      "the real chain bridges over the noise");
 }
 
+void testExtremes()
+{
+	// The archive validates signs, not magnitudes: a corrupt slot
+	// can carry any positive coordinate, and sealing it must not
+	// overflow on the way to a midpoint.
+	int const big = std::numeric_limits<int>::max();
+	moments m;
+	m[1.0] = {sp("zzz", big, big, big, big)};
+	m[3.0] = {sp("zzz", big, big, big, big)};
+	auto const r = ocr::weave(m);
+	check(r.size() == 1 && r[0].x == big && r[0].h == big
+	      && r[0].jitter == 0,
+	      "INT_MAX boxes seal without overflow");
+}
+
 void testEmpty()
 {
 	check(ocr::weave({}).empty(), "no moments weave to nothing");
@@ -192,6 +208,7 @@ int main()
 	testScrolling();
 	testDropout();
 	testGarbageFrame();
+	testExtremes();
 	testEmpty();
 	testDeterminism();
 	std::printf("%s\n", g_fail ? "FAILURES" : "all ok");

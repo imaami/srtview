@@ -9,6 +9,7 @@
 // by a few percent, and an occasional unreadable frame drops a
 // sighting without ending the slide.
 #include <algorithm>
+#include <numeric>
 #include <tuple>
 #include <utility>
 
@@ -85,10 +86,13 @@ region seal(chain &&c)
 	r.t0 = c.t0;
 	r.t1 = c.t1;
 	r.sightings = c.texts.size();
-	r.x = (c.lox + c.hix) / 2;
-	r.y = (c.loy + c.hiy) / 2;
-	r.w = (c.low + c.hiw) / 2;
-	r.h = (c.loh + c.hih) / 2;
+	// std::midpoint, not (lo + hi) / 2: the archive admits any
+	// positive coordinate, and a corrupt slot at INT_MAX must not
+	// buy signed overflow here.
+	r.x = std::midpoint(c.lox, c.hix);
+	r.y = std::midpoint(c.loy, c.hiy);
+	r.w = std::midpoint(c.low, c.hiw);
+	r.h = std::midpoint(c.loh, c.hih);
 	r.jitter = std::max({c.hix - c.lox, c.hiy - c.loy,
 	                     c.hiw - c.low, c.hih - c.loh});
 	rx::weave w = rx::braid(c.texts);
