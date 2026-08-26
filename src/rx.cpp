@@ -307,8 +307,10 @@ bool cls(reader &r, std::vector<std::string> &opts)
 			    || std::size_t(hi - lo) >= 32)
 				return false;
 		}
-		for (char c = lo; c <= hi; ++c)
-			opts.push_back(std::string(1, c));
+		// int, not char: hi can be 0x7F, and a signed char
+		// wraps past it into a loop that never meets the cap.
+		for (int c = lo; c <= hi; ++c)
+			opts.push_back(std::string(1, char(c)));
 		if (opts.size() > kSetCap)
 			return false;
 	}

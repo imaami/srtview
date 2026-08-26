@@ -152,6 +152,11 @@ void testUnknit()
 	auto const cp = rx::unknit("h\xC3\xA4n");
 	check(cp && *cp == std::vector<std::string>{"h\xC3\xA4n"},
 	      "a whole codepoint still decodes");
+	auto const edge = rx::unknit(
+		rx::knit({"~", std::string(1, '\x7f')}));
+	check(edge && *edge == std::vector<std::string>{
+			"~", std::string(1, '\x7f')},
+	      "the highest ASCII class member round-trips");
 	std::string blow;
 	for (int i = 0; i < 7; ++i)
 		blow += "(?:aa|bb)";
