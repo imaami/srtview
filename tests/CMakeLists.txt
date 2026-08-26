@@ -32,6 +32,18 @@ target_compile_options(rx_tests PRIVATE -Wall -Wextra)
 
 add_test(NAME rx_tests COMMAND rx_tests)
 
+# The loom temporal weave is standard C++ over rx and the ocr
+# vocabulary header; no Qt, no tesseract, no FFmpeg.
+add_executable(loom_tests
+	loom_test.cpp
+	${CMAKE_SOURCE_DIR}/src/loom.cpp
+	${CMAKE_SOURCE_DIR}/src/rx.cpp
+)
+target_include_directories(loom_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(loom_tests PRIVATE -Wall -Wextra)
+
+add_test(NAME loom_tests COMMAND loom_tests)
+
 # The fundo undo-tree core is plain C; its test links no C++ either.
 add_executable(fundo_tests
 	fundo_test.c
