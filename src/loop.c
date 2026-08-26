@@ -16,8 +16,10 @@ loop_init (struct loop *loop)
 	int epfd = epoll_create1(EPOLL_CLOEXEC);
 	if (epfd < 0)
 		return errno;
-	*loop = (struct loop){ .epfd = epfd };
-	list_init(&loop->refs);
+	*loop = (struct loop){
+		.refs = list(&loop->refs),
+		.epfd = epfd,
+	};
 	return 0;
 }
 
