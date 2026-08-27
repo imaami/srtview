@@ -93,6 +93,14 @@ public:
 	// queued.
 	void corpus(std::vector<agenda::task> nodes);
 
+	// Retire superseded asks: every listed id still waiting parks
+	// for the session, so a re-cut's abandoned questions stop
+	// competing with the current generation for the model's lane.
+	// A task already on the wire finishes and lands harmlessly
+	// (artifacts are content-addressed); done and parked ids stay
+	// as they are.
+	void retire(std::vector<agenda::id> const &stale);
+
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
 	// The recipe a kind's artifacts are named under; immutable for

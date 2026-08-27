@@ -564,6 +564,14 @@ void Facts::corpus(std::vector<agenda::task> nodes)
 	advance();
 }
 
+void Facts::retire(std::vector<agenda::id> const &stale)
+{
+	std::lock_guard const lock(m_mtx);
+	for (agenda::id const id : stale)
+		if (m_plan.status(id) == agenda::plan::state::pending)
+			m_plan.fail(id);
+}
+
 void Facts::offer(agenda::task t, std::string const &snapshot)
 {
 	if (!t.id || snapshot.empty())

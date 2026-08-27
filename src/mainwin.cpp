@@ -855,6 +855,16 @@ void MainWin::rebuildSemantic()
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_facts.corpus(std::move(nodes));
+	// The outgoing cut's ask ids, gathered before the reset: the
+	// ones the new cut does not re-stage retire from the plan
+	// below -- corpus() only ever adds, so nothing else would stop
+	// an abandoned question from burning the model's lane.
+	std::set<agenda::id> stale;
+	for (std::size_t i = 0; i < m_semantic.windows(); ++i)
+		stale.insert(m_semantic.key("semantic-extract-v1",
+		                            m_semantic.window(i)));
+	for (TermsWork const &w : m_termsWork)
+		stale.insert(w.id);
 	m_semantic.reset(takeId(semanticCorpus).hex(),
 	                 std::move(sources));
 	m_lexicon.clear();
@@ -864,8 +874,7 @@ void MainWin::rebuildSemantic()
 	// spellings first -- the first-nonempty TermInfo fields would
 	// then pin them over the frame-anchored ones.  queueTerms()
 	// restages the current windows from scratch (offers dedupe
-	// against plan and cache, m_termsSeen persists), and the
-	// corpus() reset above already dropped the old asks.
+	// against plan and cache, m_termsSeen persists).
 	m_termsWork.clear();
 	// Harvest before staging, so last session's focus regexes sit
 	// in the corpus when the dive scans are drawn from it.
@@ -875,6 +884,15 @@ void MainWin::rebuildSemantic()
 	// asks; a partial band adopts what exists and converges as
 	// the rest answers.
 	queueTerms();
+	// What the new cut kept is not stale: identical windows carry
+	// identical ids, and parking one would block its own re-offer.
+	// Only the difference -- the truly abandoned asks -- retires.
+	for (std::size_t i = 0; i < m_semantic.windows(); ++i)
+		stale.erase(m_semantic.key("semantic-extract-v1",
+		                           m_semantic.window(i)));
+	for (TermsWork const &w : m_termsWork)
+		stale.erase(w.id);
+	m_facts.retire({stale.begin(), stale.end()});
 	harvestTerms();
 	harvestSpell();
 	stageMerge();
