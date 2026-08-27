@@ -236,7 +236,10 @@ private:
 				return !m_rush.empty() || !m_rest.empty()
 				    || !m_plan.empty();
 			});
-			if (!go || st.stop_requested())
+			// m_stopping guards the dequeue as well as the
+			// door: between the flag and the token there is a
+			// gap, and a queued job must not start inside it.
+			if (!go || m_stopping || st.stop_requested())
 				return;
 			if (!m_rush.empty() || !m_rest.empty()) {
 				auto &lane = m_rush.empty() ? m_rest
