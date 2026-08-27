@@ -572,6 +572,16 @@ void Facts::retire(std::vector<agenda::id> const &stale)
 			m_plan.fail(id);
 }
 
+void Facts::hold(bool on)
+{
+	std::lock_guard const lock(m_mtx);
+	if (m_hold == on)
+		return;
+	m_hold = on;
+	if (!on)
+		advance();
+}
+
 void Facts::offer(agenda::task t, std::string const &snapshot)
 {
 	if (!t.id || snapshot.empty())
@@ -853,6 +863,10 @@ void Facts::advance()
 {
 	static constexpr agenda::plan::fit_fn kFit[2] = {background, urgent};
 	for (std::size_t i = 0; i < 2; ++i) {
+		// The ground-truth hold gates only the background lane:
+		// a user's question answers even mid-read.
+		if (m_hold && i == 0)
+			continue;
 		lane &l = m_lane[i];
 		while (!m_down && !m_offline && m_llm && !l.task) {
 			agenda::id const next = m_plan.peek(kFit[i]);

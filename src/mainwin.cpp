@@ -739,6 +739,11 @@ void MainWin::seedGenerated()
 // itself on show.)
 void MainWin::rebuildCorpus(bool fresh)
 {
+	// Preemptive: the staging below would submit its first ask
+	// before the reading plan even exists.  The tail resolves the
+	// hold against the real reading() -- released at once when the
+	// reader is off or has nothing to do.
+	m_facts.hold(true);
 	if (fresh) {
 		m_dives.clear();
 		m_focusWork.clear();
@@ -809,6 +814,12 @@ void MainWin::rebuildCorpus(bool fresh)
 		feeds << f;
 	}
 	m_ocr.feed(feeds);
+	// Ground truth first in time: while the corpus reads itself,
+	// the background model lane waits -- no cycles burn on
+	// frameless windows the frames are about to re-key, and the
+	// read-through keeps the cores to itself.  Released from the
+	// OCR lifecycle below the moment the plan drains.
+	m_facts.hold(m_ocr.reading());
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
@@ -3015,6 +3026,13 @@ void MainWin::ocrReady()
 			m_ocrFirstDirty.start();  // the epoch opens
 		m_ocrDirty = true;
 	}
+	// The hold tracks the plan, but release waits for the re-cut:
+	// a dirty batch means a settle is coming, and the model must
+	// meet the frame-keyed windows, never the cut they retire.
+	// With nothing dirty (a textless or error-only read) this
+	// drain is the guaranteed release point.
+	if (!m_ocr.reading() && !m_ocrDirty)
+		m_facts.hold(false);
 	if (!m_ocrDirty)
 		return;
 	// Quiet for five seconds, or a minute of continuous arrivals,
@@ -3050,6 +3068,10 @@ void MainWin::ocrSettled()
 	dbgHop(QStringLiteral("ocr: corpus resnapshot, %1 framed "
 	                      "moments").arg(framed));
 	rebuildSemantic();
+	// Release only past the re-cut, and only when the plan really
+	// drained: a mid-read ceiling settle keeps the hold, so the
+	// model's first sight of the corpus is the frame-keyed cut.
+	m_facts.hold(m_ocr.reading());
 }
 
 void MainWin::runExport(bool drained)

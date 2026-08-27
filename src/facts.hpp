@@ -101,6 +101,13 @@ public:
 	// as they are.
 	void retire(std::vector<agenda::id> const &stale);
 
+	// The ground-truth hold: while on, the background lane submits
+	// nothing -- user questions still answer -- so the corpus can
+	// finish reading itself before the model spends hours on
+	// windows the arriving frames would only re-key.  Release
+	// advances at once; the toggle is idempotent.
+	void hold(bool on);
+
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
 	// The recipe a kind's artifacts are named under; immutable for
@@ -192,6 +199,7 @@ private:
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;
 	bool               m_down = false;
+	bool               m_hold = false;
 };
 
 #endif // SRTVIEW_SRC_FACTS_HPP_
