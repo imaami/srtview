@@ -250,13 +250,23 @@ void testBraidRefusal()
 {
 	rx::weave const w = rx::braid({"Outline: C to ASM",
 	                               "cmp dword ptr [rbp-8], 0"});
+	// The refusal names the seed as consensus, but its pattern
+	// covers the whole set: the contract is that every braided
+	// variant matches, and a bare seed would fail the rest.
 	check(w.consensus == "Outline: C to ASM"
-	      && w.pattern == "Outline: C to ASM",
-	      "unrelated strings refuse to braid");
+	      && matches(w.pattern, "Outline: C to ASM")
+	      && matches(w.pattern, "cmp dword ptr [rbp-8], 0"),
+	      "unrelated strings refuse to merge, not to match");
 	// The refusal pattern still matches its witness.
 	rx::weave const m = rx::braid({"a+b", "zzzzzzzz"});
-	check(matches(m.pattern, m.consensus),
+	check(matches(m.pattern, m.consensus)
+	      && matches(m.pattern, "a+b") && matches(m.pattern, "zzzzzzzz"),
 	      "refusal escapes its witness");
+	// Majority stays the consensus on the refusal path.
+	rx::weave const maj = rx::braid({"x", "ll", "ll"});
+	check(maj.consensus == "ll" && matches(maj.pattern, "x")
+	      && matches(maj.pattern, "ll"),
+	      "refusal keeps the majority and matches every variant");
 }
 
 void testBraidDeterminism()

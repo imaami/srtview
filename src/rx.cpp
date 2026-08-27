@@ -656,8 +656,17 @@ weave braid(std::vector<std::string> const &variants)
 	}
 	constexpr double kFloor = 0.8;
 	for (auto const &[t, n] : tally) {
-		if (t.size() > kBraidCap || alike(seed, t) < kFloor)
-			return {std::string(seed), esc(seed)};
+		if (t.size() <= kBraidCap && alike(seed, t) >= kFloor)
+			continue;
+		// The refusal is a pattern too, and every handed variant
+		// must still match it: the seed's pattern opens to the
+		// whole set rather than naming the seed alone, which the
+		// floor-rejected variants would fail.
+		std::vector<std::string> all;
+		all.reserve(tally.size());
+		for (auto const &[u, m] : tally)
+			all.push_back(std::string(u));
+		return {std::string(seed), knit(std::move(all))};
 	}
 	std::vector<std::string_view> const scp = codepoints(seed);
 	std::vector<spot> col(scp.size());

@@ -235,7 +235,7 @@ void mpv_link_base::resync(bool keepCurrent)
 			          .arg(mpvQuote(m_list[i].video)));
 	if (m_index > 0)
 		writeLine(QStringLiteral("playlist-move 0 %1")
-		          .arg(m_index + 1));
+		          .arg(m_index));
 }
 
 void mpv_link_base::dispatch()

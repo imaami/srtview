@@ -248,7 +248,15 @@ bool decoder::frame_at(std::int64_t ms, frame &out)
 		return false;
 	out.width = m_have->width;
 	out.height = m_have->height;
-	out.rgb.resize(std::size_t(3) * out.width * out.height);
+	// An allocation the system refuses is a failed decode, like
+	// gray_at()'s budget path, not a dead worker.
+	try {
+		out.rgb.resize(std::size_t(3) * out.width * out.height);
+	} catch (std::bad_alloc const &) {
+		return false;
+	} catch (std::length_error const &) {
+		return false;
+	}
 	std::uint8_t *dst[4] = {out.rgb.data()};
 	int const stride[4] = {3 * out.width};
 	return sws_scale(m_sws_full, m_have->data, m_have->linesize,
