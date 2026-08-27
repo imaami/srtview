@@ -628,6 +628,13 @@ double alike(std::string_view a, std::string_view b)
 	std::string const y = squeeze(b);
 	if (x.empty() && y.empty())
 		return 1.0;
+	// Past the alignment cap the quadratic table is refused, not
+	// filled: oversized lines compare by equality alone, so two
+	// identical walls of text still meet while different ones
+	// part -- and a corrupt slot cannot buy hours of LCS on
+	// whichever thread asked.
+	if (x.size() > kBraidCap || y.size() > kBraidCap)
+		return x == y ? 1.0 : 0.0;
 	return 2.0 * double(lcs_len(x, y))
 	     / double(x.size() + y.size());
 }

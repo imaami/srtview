@@ -37,6 +37,8 @@ std::optional<std::vector<std::string>> unknit(std::string_view pattern);
 // Whitespace-normalized similarity in [0, 1]: twice the longest
 // common subsequence over the summed lengths, runs of whitespace
 // squeezed to one space first.  1 is equality up to whitespace.
+// Strings past the internal alignment cap compare by equality
+// alone -- the quadratic table is never bought for them.
 double alike(std::string_view a, std::string_view b);
 
 // braid()'s result: the majority text and a pattern matching every

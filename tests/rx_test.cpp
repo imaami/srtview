@@ -197,6 +197,11 @@ void testAlike()
 	double const d = rx::alike("$Functions: Stack",
 	                           "$4Functions: Stack");
 	check(d > 0.9 && d < 1.0, "one garbage char barely dents");
+	// Past the alignment cap: equality alone, no quadratic table.
+	std::string const wall(4096, 'w');
+	check(rx::alike(wall, wall) == 1.0
+	      && rx::alike(wall, wall + "x") == 0.0,
+	      "oversized lines compare by equality alone");
 }
 
 void testBraidJitter()
