@@ -341,9 +341,13 @@ void SearchCtl::applyCursor(int position)
 
 QRegularExpression SearchCtl::pattern() const
 {
-	QString const raw = m_bar.pattern();
+	return effectivePattern(m_bar.pattern());
+}
+
+QRegularExpression SearchCtl::effectivePattern(QString const &text) const
+{
 	QRegularExpression re(m_bar.regexEnabled()
-		? raw : QRegularExpression::escape(raw));
+		? text : QRegularExpression::escape(text));
 	if (!m_bar.caseSensitive())
 		re.setPatternOptions(QRegularExpression::CaseInsensitiveOption);
 	return re;

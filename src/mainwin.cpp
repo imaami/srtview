@@ -2734,11 +2734,12 @@ void MainWin::rebuildVideosMenu()
 // history entry.  The regex alone decides the file's contents; the
 // corpus only lends the playlist order the entries index into, so
 // the suggested filename follows the regex (the topic's name, or a
-// slug of the pattern), never the corpus.  Stored patterns compile
+// slug of the pattern), never the corpus.  Topic patterns compile
 // bare, exactly as search, evidence, dives and the digest export
-// compile them -- their case semantics ride in the text; only the
-// live-search entry carries the bar's toggles, folded into the
-// (?i) prefix the file's first line keeps.
+// compile them -- their case semantics ride in the text.  The live
+// search and the history rows compile under the bar's toggles,
+// exactly as searching them would match, the toggles folded into
+// the (?i) prefix the file's first line keeps.
 void MainWin::exportHits()
 {
 	if (m_playlist.isEmpty()) {
@@ -2746,20 +2747,24 @@ void MainWin::exportHits()
 			"no playlist to search"), 3000);
 		return;
 	}
+	auto const headOf = [](QRegularExpression const &re) {
+		QString h = re.pattern();
+		if (re.patternOptions().testFlag(
+			QRegularExpression::CaseInsensitiveOption))
+			h.prepend(QStringLiteral("(?i)"));
+		return h;
+	};
 	struct pick {
-		QString label, head, stem;
-		bool    live;
+		QString            label, head, stem;
+		QRegularExpression re;
 	};
 	QList<pick> picks;
 	QString const raw = m_search.patternText();
 	QRegularExpression const bar = m_search.effectivePattern();
 	if (!bar.pattern().isEmpty()) {
-		QString head = bar.pattern();
-		if (bar.patternOptions().testFlag(
-			QRegularExpression::CaseInsensitiveOption))
-			head.prepend(QStringLiteral("(?i)"));
+		QString const head = headOf(bar);
 		picks << pick{QStringLiteral("search:  ") + head,
-		              head, patternStem(head), true};
+		              head, patternStem(head), bar};
 	}
 	QStringList listed;
 	for (topics::topic const &t : m_corpus.topics) {
@@ -2770,14 +2775,16 @@ void MainWin::exportHits()
 		picks << pick{QStringLiteral("topic %1:  %2").arg(
 				QString::fromStdString(t.name), pat),
 		              pat, QString::fromStdString(t.name),
-		              false};
+		              QRegularExpression(pat)};
 		listed << pat;
 	}
 	for (QString const &h : m_prefs.searchHistory()) {
 		if (h.isEmpty() || h == raw || listed.contains(h))
 			continue;
-		picks << pick{QStringLiteral("history:  ") + h, h,
-		              patternStem(h), false};
+		QRegularExpression const re =
+			m_search.effectivePattern(h);
+		picks << pick{QStringLiteral("history:  ") + h,
+		              headOf(re), patternStem(headOf(re)), re};
 		listed << h;
 	}
 	if (picks.isEmpty()) {
@@ -2808,11 +2815,9 @@ void MainWin::exportHits()
 	if (dlg.exec() != QDialog::Accepted || list->currentRow() < 0)
 		return;
 	pick const &p = picks[list->currentRow()];
-	QRegularExpression const re =
-		p.live ? bar : QRegularExpression(p.head);
-	if (!re.isValid()) {
+	if (!p.re.isValid()) {
 		statusBar()->showMessage(QStringLiteral(
-			"invalid pattern: %1").arg(re.errorString()),
+			"invalid pattern: %1").arg(p.re.errorString()),
 			6000);
 		return;
 	}
@@ -2824,7 +2829,7 @@ void MainWin::exportHits()
 			+ QStringLiteral("-hits.txt"),
 		QStringLiteral("Text files (*.txt);;All files (*)"));
 	if (!path.isEmpty())
-		writeHits(p.head, re, path);
+		writeHits(p.head, p.re, path);
 }
 
 // The selftest's dialogless flavor: the live search, to a path.

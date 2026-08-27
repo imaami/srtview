@@ -81,9 +81,14 @@ public:
 
 	// Status surfaces: the live pattern, the active match (1-based,
 	// 0 when the cursor is off-match), and the effective regex.
+	// The one-argument flavor compiles any text exactly as the bar
+	// would compile it right now -- regex and case toggles applied
+	// -- so a history entry exports the matches searching it would
+	// find.
 	QString patternText() const;
 	int matchIndex() const { return m_matchIdx; }
 	QRegularExpression effectivePattern() const { return pattern(); }
+	QRegularExpression effectivePattern(QString const &text) const;
 
 	QAction &nextAction() { return m_nextAct; }
 	QAction &prevAction() { return m_prevAct; }

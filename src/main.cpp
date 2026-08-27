@@ -35,8 +35,10 @@
 // File > Export search hits… exports every match of one regex
 // across the whole playlist.  A picker offers the live search
 // (preselected), every corpus topic by name, and the search
-// history; stored patterns match exactly as written, the live
-// search carries the bar's toggles.  The suggested filename
+// history; topic patterns match exactly as written, while the
+// live search and history entries compile under the bar's regex
+// and case toggles -- exactly what searching them would match.
+// The suggested filename
 // follows the chosen regex -- the topic's name, or a slug of the
 // pattern -- never the corpus, which only lends the entries their
 // playlist order.  The file is UTF-8 text, Unix newlines: line one
