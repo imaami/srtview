@@ -99,6 +99,13 @@ void testKnitUtf8()
 	check(matches(q, "sy\xC3\xB6") && matches(q, "sy\xC3\xB6t")
 	      && !matches(q, "sy"),
 	      "optional tail after a two-byte letter");
+	// A truncated lead byte shares its "codepoint" with a longer
+	// member: the grouping degenerates, and the emitter must fall
+	// back to a plain alternation instead of recursing forever.
+	std::string const d = rx::knit({"\xC3", "\xC3\xA4"});
+	check(matches(d, "\xC3") && matches(d, "\xC3\xA4")
+	      && !matches(d, "a"),
+	      "malformed bytes knit without recursing");
 }
 
 void testKnitDeterminism()

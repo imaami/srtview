@@ -142,11 +142,23 @@ std::string alt_groups(std::vector<std::string_view> const &s)
 			++j;
 		if (i)
 			out += '|';
-		if (j - i == 1)
+		if (j - i == 1) {
 			esc_to(out, s[i]);
-		else
+		} else if (i == 0 && j == s.size()) {
+			// Degenerate bytes can defeat the grouping: a
+			// truncated lead byte shares its one-byte "head"
+			// with a longer member, one group spans the whole
+			// set, and recursing on it unchanged would never
+			// end.  Escaped members joined plain stay exact.
+			for (std::size_t k = 0; k < j; ++k) {
+				if (k)
+					out += '|';
+				esc_to(out, s[k]);
+			}
+		} else {
 			out += emit({s.begin() + std::ptrdiff_t(i),
 			             s.begin() + std::ptrdiff_t(j)});
+		}
 		i = j;
 	}
 	out += ')';
