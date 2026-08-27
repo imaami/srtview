@@ -419,6 +419,13 @@ constexpr char ascii_lower(unsigned char c)
 // an ASCII alphanumeric is an escape sequence (\d, \1), never
 // touched.  Bytes past ASCII are literal UTF-8 continuation
 // material and shed the backslash too.
+// The one spelling of the metacharacter set: kPlainEscape keeps
+// these escaped and word_key() re-escapes them, and key equality
+// between a decoded word and a plain-literal branch holds only
+// while both read the same list.  (rx.cpp carries its own copy
+// for its own escaping.)
+constexpr std::string_view kMetaChars = "^$.[]()*+?{}|\\";
+
 constexpr auto kPlainEscape = [] {
 	std::array<bool, 256> t{};
 	for (std::size_t c = 0x20; c < 0x7f; ++c)
@@ -431,7 +438,7 @@ constexpr auto kPlainEscape = [] {
 		t[c] = false;
 	for (std::size_t c = 'a'; c <= 'z'; ++c)
 		t[c] = false;
-	for (char const c : std::string_view("^$.[]()*+?{}|\\"))
+	for (char const c : kMetaChars)
 		t[std::size_t((unsigned char)c)] = false;
 	return t;
 }();
@@ -742,7 +749,7 @@ std::string word_key(std::string_view w, bool ci)
 	if (ci)
 		k += '\n';
 	for (char const c : w) {
-		if (c && std::strchr("^$.[]()*+?{}|\\", c))
+		if (kMetaChars.find(c) != std::string_view::npos)
 			k += '\\';
 		k += ci ? char(ascii_lower((unsigned char)c)) : c;
 	}

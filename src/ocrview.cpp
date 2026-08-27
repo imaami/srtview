@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "decoder.hpp"
 #include "lector.hpp"
 #include "scribe.hpp"
 
