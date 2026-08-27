@@ -665,7 +665,7 @@ weave braid(std::vector<std::string> const &variants)
 		std::vector<std::string> all;
 		all.reserve(tally.size());
 		for (auto const &[u, m] : tally)
-			all.push_back(std::string(u));
+			all.emplace_back(u);
 		return {std::string(seed), knit(std::move(all))};
 	}
 	std::vector<std::string_view> const scp = codepoints(seed);
