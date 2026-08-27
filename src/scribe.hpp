@@ -11,6 +11,7 @@
 #ifndef SRTVIEW_SRC_SCRIBE_HPP_
 #define SRTVIEW_SRC_SCRIBE_HPP_
 
+#include <algorithm>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -160,6 +161,19 @@ public:
 		std::lock_guard const lk(m_mtx);
 		out.swap(m_done);
 		return out;
+	}
+
+	// Any thread: true while the reading plan still has moments to
+	// perform -- feeds on the bench, or a planned reading in the
+	// worker's hands right now.  Demand work never counts.
+	bool planning()
+	{
+		std::lock_guard const lk(m_mtx);
+		if (!m_plan.empty())
+			return true;
+		return m_live
+		    && std::ranges::find(m_live->owners, ticket(0))
+		       != m_live->owners.end();
 	}
 
 private:

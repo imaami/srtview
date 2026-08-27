@@ -102,6 +102,15 @@ public:
 			m_s->desk.prefer(id.toStdString());
 	}
 
+	// True while the corpus reading plan still has moments to
+	// perform.  The terms pipeline waits this out: windows cut
+	// before the frame story completes must not stage or adopt.
+	// With the reader off it is never true, so terms flow at once.
+	bool reading()
+	{
+		return m_s && m_s->desk.planning();
+	}
+
 	std::vector<ocr::note> drain()
 	{
 		return m_s ? m_s->desk.drain()

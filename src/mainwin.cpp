@@ -1684,6 +1684,13 @@ void MainWin::refreshKnowledge()
 // so cached replies stay mappable to their cue ranges.
 void MainWin::queueTerms()
 {
+	// Terms wait out the corpus reading itself: a window cut
+	// before the frame story completes would stage -- and its
+	// reply later adopt -- frameless guesses the re-cut cannot
+	// un-adopt, since the term directory has no per-window
+	// provenance.  With the reader off this is never true.
+	if (m_ocr.reading())
+		return;
 	// Staged ids as a set, built once: a per-window linear scan of
 	// m_termsWork would go quadratic as the corpus grows.
 	std::set<agenda::id> staged;
@@ -1737,6 +1744,11 @@ void MainWin::queueTerms()
 // re-asks it -- determinism bought with latency.
 void MainWin::harvestTerms()
 {
+	// The same wait as queueTerms(): a warm cached reply for a
+	// frameless window must not adopt while the corpus is still
+	// reading itself -- the startup cut is not the final cut.
+	if (m_ocr.reading())
+		return;
 	// Staging order, gaps skipped: the agenda answers windows in
 	// heat order, so waiting for a strict prefix starves adoption
 	// behind whichever window the scheduler felt like deferring --
