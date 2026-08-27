@@ -128,6 +128,14 @@ void testLineNumbers()
 	         "2\n00:00:03,000 --> 00:00:04,000\nb\n");
 	check(tl.first == std::vector<int>{1, 4},
 	      "a textless cue still has its block line");
+	// A reused sink starts clean: the first input ends on a
+	// counter sighting, and the second input's junk line 1 must
+	// not inherit it as a voucher.
+	lines again;
+	again.parse("1\n00:00:01,000 --> 00:00:02,000\na\n");
+	again.parse("junk\n00:00:03,000 --> 00:00:04,000\nb\n");
+	check(again.first == std::vector<int>{1, 2},
+	      "a reused sink forgets the last input's counter");
 }
 
 void testEncodings()

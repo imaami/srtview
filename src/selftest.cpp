@@ -135,6 +135,14 @@ void runSelftest(MainWin *w, QString const &video)
 		QString const out =
 			QStringLiteral("/tmp/srtview-hits.txt");
 		bool const ok = w->exportHitsTo(out);
+		if (!ok) {
+			// A failed export fails the run: a green exit
+			// must mean every exercised path worked.
+			log(QStringLiteral("hits export FAILED"));
+			w->close();
+			QApplication::exit(1);
+			return;
+		}
 		QFile f(out);
 		QByteArray head, first;
 		if (f.open(QIODevice::ReadOnly)) {

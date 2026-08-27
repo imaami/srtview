@@ -232,6 +232,10 @@ class parser : public crtp<Derived, parser>
 public:
 	void parse(std::string_view utf8)
 	{
+		// A fresh input, a fresh line count: a counter sighting
+		// left over from the previous parse must not vouch for
+		// the new input's early lines.
+		counter_ = 0;
 		detail::line_cursor lc{utf8};
 		for (std::string_view line; lc.next(line);)
 			step(line, lc);
