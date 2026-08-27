@@ -68,8 +68,14 @@ double take_lines(tesseract::TessBaseAPI &api,
 		if (text.empty())
 			continue;
 		int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
-		it->BoundingBox(tesseract::RIL_TEXTLINE,
-		                &x1, &y1, &x2, &y2);
+		// No box, no span: a failed or degenerate box would
+		// store coordinates the archive rejects on every later
+		// load, and the slot would re-earn itself each session,
+		// forever.  The skipped line's confidence skips with it.
+		if (!it->BoundingBox(tesseract::RIL_TEXTLINE,
+		                     &x1, &y1, &x2, &y2)
+		    || x1 < 0 || y1 < 0 || x2 <= x1 || y2 <= y1)
+			continue;
 		float const conf =
 			it->Confidence(tesseract::RIL_TEXTLINE);
 		sum += conf;
