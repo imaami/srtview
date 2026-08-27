@@ -857,6 +857,15 @@ static bool urgent(agenda::task const &t)
 	return t.what == agenda::kind::answer;
 }
 
+// The semantic chain -- extraction and the judgments that
+// consolidate it -- is what a user waits hours for on a slow
+// machine; summaries, dives and terms can follow it.
+static bool ground(agenda::task const &t)
+{
+	return t.what == agenda::kind::extract
+	    || t.what == agenda::kind::judge;
+}
+
 // m_mtx held.  Fills every free lane until nothing is ready for it;
 // a task whose submission fails parks and the loop moves on.
 void Facts::advance()
@@ -869,7 +878,14 @@ void Facts::advance()
 			continue;
 		lane &l = m_lane[i];
 		while (!m_down && !m_offline && m_llm && !l.task) {
-			agenda::id const next = m_plan.peek(kFit[i]);
+			// Ground truth leads the background lane: while
+			// any extraction or judgment is ready it runs
+			// before the rest, heat still ordering within
+			// each class.
+			agenda::id next = i == 0 ? m_plan.peek(ground)
+			                         : agenda::id{};
+			if (!next)
+				next = m_plan.peek(kFit[i]);
 			if (!next)
 				break;
 			m_plan.start(next);
