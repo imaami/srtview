@@ -272,6 +272,7 @@ MainWin::MainWin()
 	: m_view(&m_playback, &m_search, this)
 	, m_bar(&m_search, &m_view)
 	, m_know(this)
+	, m_cubes(this)
 	, m_link(&m_playback)
 	, m_facts(hash8)
 	, m_semantic(m_facts, hash8)
@@ -379,6 +380,42 @@ MainWin::MainWin()
 	QAction *ka = m_know.toggleViewAction();
 	ka->setText(QStringLiteral("&Knowledge\tCtrl+K"));
 	view->addAction(ka);
+	// The time-cube browser: the weave's clear signal, born live
+	// as resnapshots land.  Data stays in m_regions; the pane
+	// borrows it through the fetch below.  Double-click a region:
+	// switch to its video if needed and seek its first sighting,
+	// the knowledge-hit jump pattern.
+	addDockWidget(Qt::RightDockWidgetArea, &m_cubes);
+	m_cubes.hide();
+	QAction *ca = m_cubes.toggleViewAction();
+	ca->setText(QStringLiteral("Time &cubes"));
+	view->addAction(ca);
+	m_cubes.setFetch(
+		[](void *ctx, QString const &id)
+			-> std::span<ocr::region const> {
+			auto *const w = static_cast<MainWin *>(ctx);
+			auto const it =
+				w->m_regions.find(id.toStdString());
+			if (it == w->m_regions.end())
+				return {};
+			return {it->second.data(), it->second.size()};
+		}, this);
+	connect(&m_cubes.tree(), &QTreeWidget::itemActivated, this,
+	        [this](QTreeWidgetItem *it, int) {
+		if (!it->parent())
+			return;                    // video rows just fold
+		QString const video =
+			it->data(0, CubePane::kVideo).toString();
+		if (video.isEmpty())
+			return;
+		double const t =
+			it->data(0, CubePane::kTime).toDouble();
+		if (videoId(video) != m_trail.videoId()
+		    && !openPath(video,
+		                 it->data(0, CubePane::kSrt).toString()))
+			return;
+		m_playback.jumpTo(t, false);
+	});
 	auto *ks = new QShortcut(QKeySequence(
 		QStringLiteral("Ctrl+K")), this);
 	ks->setContext(Qt::ApplicationShortcut);
@@ -851,6 +888,24 @@ void MainWin::rebuildSemantic()
 					{g.t0, g.consensus, g.t1});
 		}
 		sources.push_back(std::move(source));
+	}
+	// The cube pane mirrors what the weave just produced: counts
+	// per video, children on demand from m_regions.
+	{
+		QList<CubeVideo> cv;
+		for (PlayItem const &it : m_playlist) {
+			CubeVideo v;
+			v.title = QFileInfo(it.video).fileName();
+			v.video = it.video;
+			v.srt = srtOf(it);
+			v.id = it.id;
+			auto const rg =
+				m_regions.find(it.id.toStdString());
+			v.cubes = rg == m_regions.end()
+				? 0 : int(rg->second.size());
+			cv << v;
+		}
+		m_cubes.setVideos(cv);
 	}
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;

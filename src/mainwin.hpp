@@ -6,6 +6,7 @@
 #define SRTVIEW_SRC_MAINWIN_HPP_
 
 #include "agenda.hpp"
+#include "cubepane.hpp"
 #include "discovery.hpp"
 #include "exporter.hpp"
 #include "facts.hpp"
@@ -57,6 +58,8 @@ public:
 	// The dialogless hits export (File > Export search hits… asks
 	// for the path and calls this); public for the selftest.
 	bool exportHitsTo(QString const &path);
+
+	CubePane &cubes() { return m_cubes; }
 
 protected:
 	bool eventFilter(QObject *obj, QEvent *ev) override;
@@ -275,6 +278,7 @@ private:
 	SrtEdit<PlaybackCtl, SearchCtl> m_view;
 	SearchBar<SearchCtl>            m_bar;
 	KnowledgePane                   m_know;
+	CubePane                        m_cubes;
 	MpvLink<PlaybackCtl>            m_link;
 	OcrQ                            m_ocr;   // before the grabber:
 	                                         // outlives its feeder

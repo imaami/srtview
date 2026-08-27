@@ -4,6 +4,7 @@ add_executable(srtview
 	srtedit.cpp
 	searchbar.cpp
 	playback.cpp
+	cubepane.cpp
 	prefs.cpp
 	rx.cpp
 	trail.cpp
