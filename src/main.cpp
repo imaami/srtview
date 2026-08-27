@@ -44,13 +44,18 @@
 // case toggle is off), then one entry line per match of five
 // tab-separated fields -- playlist index (0-based; a directly
 // opened video is the sole entry of its implicit playlist), cue
-// index within the video (0-based), cue start time ("14:59.063",
-// hours prepended when nonzero), the matched cue's block line in
-// the .srt file (its counter line, or the timecode line when the
-// counter is absent; 1-based and monotonic per video -- a video
-// whose transcript has no file to cite would carry 0 throughout),
-// and the matched text with every whitespace run squeezed to one
-// space and trimmed (possibly empty).
+// index within the video (0-based), cue start time, the matched
+// cue's block line in the .srt file (its counter line, or the
+// timecode line when the counter is absent; 1-based and monotonic
+// per video -- a video whose transcript has no file to cite would
+// carry 0 throughout), and the match with up to three context
+// words to the left and six to the right, ellipses marking a cue
+// that continues past the span, whitespace runs squeezed to one
+// space.  Every field but the last is right-justified to its
+// column's widest member: integers space-padded, timestamps
+// zero-extended to the latest stamp's colon count and then
+// space-padded (" 0:00:09.250" under "12:30:01.000" -- the
+// leftmost number never grows an octal-looking leading zero).
 //
 // Env: SRTVIEW_MPV_ARGS -- extra mpv arguments (split on whitespace)
 //      SRTVIEW_LLM      -- llama-server endpoint for the background

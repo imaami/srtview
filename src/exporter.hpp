@@ -52,13 +52,19 @@ transcript const &load(transcripts &cache, QString const &srtPath);
 // The regex-locations export: line one carries the effective
 // pattern text; every match of @a re across every transcript makes
 // one entry line of five tab-separated fields -- playlist index,
-// cue index (both 0-based), cue start time ("14:59.063"), the
-// matched cue's 1-based block line in the srt file (monotonic per
-// video; a video whose transcript has no file to cite would carry
-// 0 throughout), and the matched text with every whitespace run
-// squeezed to one space and trimmed.  srts holds one transcript
-// path per playlist entry, in playlist order, empty for entries
-// without one.  UTF-8, Unix newlines, trailing newline included.
+// cue index (both 0-based), cue start time, the matched cue's
+// 1-based block line in the srt file (monotonic per video; a video
+// whose transcript has no file to cite would carry 0 throughout),
+// and the match with up to three context words on the left and six
+// on the right, ellipses marking a cue that continues past the
+// span, whitespace runs squeezed to one space.  Every field but
+// the last is right-justified to its column's widest member:
+// integers space-padded, stamps zero-extended to the latest
+// stamp's colon count (" 0:00:09.250" under "12:30:01.000" --
+// the leftmost number stays unpadded, so no octal-looking zero)
+// then space-padded.  srts holds one transcript path per playlist
+// entry, in playlist order, empty for entries without one.
+// UTF-8, Unix newlines, trailing newline included.
 QByteArray hits(QString const &pattern, QRegularExpression const &re,
                 QStringList const &srts, transcripts &cache);
 

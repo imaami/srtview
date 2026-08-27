@@ -8,6 +8,9 @@
 #include <QSet>
 #include <QTextDocumentFragment>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <vector>
 
 #include "exporter.hpp"
@@ -376,9 +379,9 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 
 namespace {
 
-// Field five of a hits entry: whitespace runs -- any mix, Unicode
-// classification -- squeeze to one space, leading and trailing
-// runs vanish, even when nothing remains of the match.
+// The last field of a hits entry: whitespace runs -- any mix,
+// Unicode classification -- squeeze to one space, leading and
+// trailing runs vanish, even when nothing remains.
 QString squeeze(QString const &s)
 {
 	QString out;
@@ -396,13 +399,96 @@ QString squeeze(QString const &s)
 	return out;
 }
 
+// The context span around a match in its display line: up to three
+// whole words on the left, six on the right, and a word the match
+// cuts through rides free on its own side.  Ellipses mark the
+// sides where the cue continues past the span.
+QString spanOf(QString const &line, qsizetype s, qsizetype e)
+{
+	qsizetype a = s;
+	while (a > 0 && !line[a - 1].isSpace())
+		--a;
+	for (int w = 0; w < 3 && a > 0; ++w) {
+		qsizetype b = a;
+		while (b > 0 && line[b - 1].isSpace())
+			--b;
+		while (b > 0 && !line[b - 1].isSpace())
+			--b;
+		a = b;
+	}
+	qsizetype z = e;
+	qsizetype const n = line.size();
+	while (z < n && !line[z].isSpace())
+		++z;
+	for (int w = 0; w < 6 && z < n; ++w) {
+		qsizetype c = z;
+		while (c < n && line[c].isSpace())
+			++c;
+		while (c < n && !line[c].isSpace())
+			++c;
+		z = c;
+	}
+	auto const inked = [&line](qsizetype from, qsizetype to) {
+		for (qsizetype i = from; i < to; ++i)
+			if (!line[i].isSpace())
+				return true;
+		return false;
+	};
+	QString out = squeeze(line.mid(a, z - a));
+	if (inked(0, a))
+		out.prepend(QStringLiteral("… "));
+	if (inked(z, n))
+		out.append(QStringLiteral(" …"));
+	return out;
+}
+
+// fmt_time with the component count forced: every entry shows the
+// same number of colons as the latest stamp needs, the leftmost
+// number unpadded so no field ever grows an octal-looking leading
+// zero -- vertical alignment comes from space padding against the
+// widest stamp instead.
+std::string stampOf(double t, bool hours)
+{
+	long long ms = t > 0.0 ? std::llround(t * 1000.0) : 0;
+	long long const h = ms / 3600000;
+	ms %= 3600000;
+	long long const m = ms / 60000;
+	ms %= 60000;
+	long long const s = ms / 1000;
+	ms %= 1000;
+	char buf[48];
+	int const n = hours
+		? std::snprintf(buf, sizeof buf,
+		                "%lld:%02lld:%02lld.%03lld",
+		                h, m, s, ms)
+		: std::snprintf(buf, sizeof buf, "%lld:%02lld.%03lld",
+		                h * 60 + m, s, ms);
+	return {buf, std::size_t(n)};
+}
+
+QByteArray pad(QByteArray b, qsizetype w)
+{
+	qsizetype const need = w - b.size();
+	return need > 0 ? QByteArray(need, ' ') + b : b;
+}
+
 } // namespace
 
 QByteArray hits(QString const &pattern, QRegularExpression const &re,
                 QStringList const &srts, transcripts &cache)
 {
-	QByteArray out = pattern.toUtf8();
-	out += '\n';
+	// Pass one collects; the columns' widths come from their own
+	// longest members, so emission needs every entry first.
+	struct entry {
+		QString   text;
+		double    t = 0;
+		qsizetype v = 0, j = 0;
+		int       line = 0;
+	};
+	QList<entry> es;
+	double tmax = 0;
+	qsizetype vmax = 0, jmax = 0;
+	int lmax = 0;
 	for (qsizetype v = 0; v < srts.size(); ++v) {
 		if (srts[v].isEmpty())
 			continue;
@@ -410,25 +496,45 @@ QByteArray hits(QString const &pattern, QRegularExpression const &re,
 		for (qsizetype j = 0; j < tx.lines.size(); ++j) {
 			auto m = re.globalMatch(tx.lines[j]);
 			while (m.hasNext()) {
-				QString const text =
-					m.next().captured(0);
-				std::string const ts =
-					fmt_time(tx.cues[std::size_t(j)]
-						.start, true);
-				out += QByteArray::number(v);
-				out += '\t';
-				out += QByteArray::number(j);
-				out += '\t';
-				out.append(ts.data(),
-				           qsizetype(ts.size()));
-				out += '\t';
-				out += QByteArray::number(
-					tx.cueLine[std::size_t(j)]);
-				out += '\t';
-				out += squeeze(text).toUtf8();
-				out += '\n';
+				QRegularExpressionMatch const hit =
+					m.next();
+				entry e;
+				e.v = v;
+				e.j = j;
+				e.t = tx.cues[std::size_t(j)].start;
+				e.line = tx.cueLine[std::size_t(j)];
+				e.text = spanOf(tx.lines[j],
+				                hit.capturedStart(0),
+				                hit.capturedEnd(0));
+				tmax = std::max(tmax, e.t);
+				vmax = std::max(vmax, e.v);
+				jmax = std::max(jmax, e.j);
+				lmax = std::max(lmax, e.line);
+				es << e;
 			}
 		}
+	}
+	QByteArray out = pattern.toUtf8();
+	out += '\n';
+	bool const hours = tmax >= 3600.0;
+	qsizetype const tw =
+		qsizetype(stampOf(tmax, hours).size());
+	qsizetype const vw = QByteArray::number(vmax).size();
+	qsizetype const jw = QByteArray::number(jmax).size();
+	qsizetype const lw = QByteArray::number(lmax).size();
+	for (entry const &e : es) {
+		std::string const ts = stampOf(e.t, hours);
+		out += pad(QByteArray::number(e.v), vw);
+		out += '\t';
+		out += pad(QByteArray::number(e.j), jw);
+		out += '\t';
+		out += pad(QByteArray(ts.data(), qsizetype(ts.size())),
+		           tw);
+		out += '\t';
+		out += pad(QByteArray::number(e.line), lw);
+		out += '\t';
+		out += e.text.toUtf8();
+		out += '\n';
 	}
 	return out;
 }
