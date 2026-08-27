@@ -147,6 +147,19 @@ void testGarbageFrame()
 	      "the real chain bridges over the noise");
 }
 
+void testTimeGap()
+{
+	// The same box, the same text, an unsampled hour apart -- a
+	// replay's ends before the plan fills the middle: two regions,
+	// so no window between them inherits unobserved evidence.
+	moments m;
+	m[10.0] = {sp("Title Slide", 80, 40, 300, 24)};
+	m[3600.0] = {sp("Title Slide", 80, 40, 300, 24)};
+	auto const r = ocr::weave(m);
+	check(r.size() == 2 && r[0].t1 == 10.0 && r[1].t0 == 3600.0,
+	      "an unsampled gap parts the chain");
+}
+
 void testExtremes()
 {
 	// The archive validates signs, not magnitudes: a corrupt slot
@@ -208,6 +221,7 @@ int main()
 	testScrolling();
 	testDropout();
 	testGarbageFrame();
+	testTimeGap();
 	testExtremes();
 	testEmpty();
 	testDeterminism();

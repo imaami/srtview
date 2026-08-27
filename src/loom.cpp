@@ -36,6 +36,14 @@ constexpr int kSlackDiv = 10;
 // occasional frame OCR reads as noise.
 constexpr std::size_t kDropout = 1;
 
+// A chain may bridge sampled dropouts, never unsampled time: two
+// matching sightings an hour apart -- a manifest replay's ends
+// before the reading plan fills the middle -- must not become one
+// region whose whole stretch then enters every window in between
+// as evidence nobody observed.  Past this gap the slide is met
+// again as a new region, which its windows still receive.
+constexpr double kMaxGapSeconds = 30.0;
+
 struct chain {
 	std::vector<std::string> texts;
 	double      t0, t1;
@@ -112,8 +120,10 @@ std::vector<region> weave(
 		for (chain &c : open)
 			c.grew = false;
 		for (span const &s : spans) {
-			auto const takes = [&s](chain const &c) {
-				return !c.grew && fits(c, s)
+			auto const takes = [&s, at](chain const &c) {
+				return !c.grew
+				    && at - c.t1 <= kMaxGapSeconds
+				    && fits(c, s)
 				    && rx::alike(c.texts.front(), s.text)
 				       >= kAlikeFloor;
 			};
