@@ -550,6 +550,34 @@ void test_mailbox_plan_yields()
 	      "one posted note among the planned ones");
 }
 
+void test_mailbox_planning()
+{
+	// The quiescence probe the ground-truth hold hangs on: true
+	// while planned moments remain -- the final read in flight
+	// included -- and false by the time that read's note pokes.
+	// The final lot leaves the plan as its last moment is pulled;
+	// a husk lingering there would report a drained plan as still
+	// reading, and the release waiting on that poke would never
+	// come.
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		check(!s.planning(), "an empty desk is not planning");
+		ocr::feed a{req("A"), {1}};
+		a.proto.id = "A";
+		s.plan({a});
+		f.entered.acquire();          // the one read is live
+		check(s.planning(), "the read in flight still counts");
+		f.gate.release(1);
+		poked.acquire();              // its note has landed
+		check(!s.planning(),
+		      "the final note's poke finds the plan drained");
+		s.drain();
+	}
+}
+
 void test_mailbox_replan()
 {
 	fake f;
@@ -609,6 +637,7 @@ int main()
 	test_mailbox_survives_throw();
 	test_mailbox_plan();
 	test_mailbox_plan_yields();
+	test_mailbox_planning();
 	test_mailbox_replan();
 	test_mailbox_teardown();
 	test_archive();

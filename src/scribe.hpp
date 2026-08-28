@@ -190,6 +190,11 @@ private:
 
 	// Under the lock, both lanes empty: the plan's next moment
 	// as a job owned by ticket 0, husk feeds pruned on the way.
+	// A lot whose last moment is being pulled leaves with it:
+	// planning() reads m_plan between the final note's poke and
+	// the worker's next loop, and a lingering husk there would
+	// report a drained plan as still reading -- the release that
+	// callback was waiting for would never come.
 	std::optional<job> pulled()
 	{
 		while (!m_plan.empty()) {
@@ -197,6 +202,8 @@ private:
 			if (l.at < l.f.times.size()) {
 				request r = l.f.proto;
 				r.ms = l.f.times[l.at++];
+				if (l.at == l.f.times.size())
+					m_plan.pop_front();
 				return job{std::move(r), {0}};
 			}
 			m_plan.pop_front();
