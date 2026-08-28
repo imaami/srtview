@@ -3035,13 +3035,14 @@ void MainWin::ocrReady()
 			m_ocrFirstDirty.start();  // the epoch opens
 		m_ocrDirty = true;
 	}
-	// The hold tracks the plan, but release waits for the re-cut:
-	// a dirty batch means a settle is coming, and the model must
-	// meet the frame-keyed windows, never the cut they retire.
-	// With nothing dirty (a textless or error-only read) this
-	// drain is the guaranteed release point.
-	if (!m_ocr.reading() && !m_ocrDirty)
-		m_facts.hold(false);
+	// The hold's invariant point: held while the corpus is still
+	// reading or a settle is pending, released otherwise.  The
+	// drain above ran first, so a finished plan reads false here
+	// and a textless or error-only read releases right now; a
+	// dirty batch -- late demand picks included -- holds until
+	// the settle's re-cut, so the model only ever meets the
+	// frame-keyed windows.
+	m_facts.hold(m_ocr.reading() || m_ocrDirty);
 	if (!m_ocrDirty)
 		return;
 	// Quiet for five seconds, or a minute of continuous arrivals,

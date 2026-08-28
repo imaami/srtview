@@ -553,12 +553,12 @@ void test_mailbox_plan_yields()
 void test_mailbox_planning()
 {
 	// The quiescence probe the ground-truth hold hangs on: true
-	// while planned moments remain -- the final read in flight
-	// included -- and false by the time that read's note pokes.
-	// The final lot leaves the plan as its last moment is pulled;
-	// a husk lingering there would report a drained plan as still
-	// reading, and the release waiting on that poke would never
-	// come.
+	// through the plan's whole story -- moments on the bench, the
+	// read in flight, and the finished note not yet drained -- and
+	// false only once a drain has taken the last of it.  A
+	// drain-then-probe caller therefore can never release against
+	// notes whose folding is still queued, however fast a tiny or
+	// archive-warm plan finishes.
 	fake f;
 	f.gated = true;
 	std::counting_semaphore<> poked{0};
@@ -572,9 +572,11 @@ void test_mailbox_planning()
 		check(s.planning(), "the read in flight still counts");
 		f.gate.release(1);
 		poked.acquire();              // its note has landed
-		check(!s.planning(),
-		      "the final note's poke finds the plan drained");
+		check(s.planning(),
+		      "an undrained planned note still counts");
 		s.drain();
+		check(!s.planning(),
+		      "the drain takes the last of the story");
 	}
 }
 

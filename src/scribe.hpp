@@ -163,17 +163,26 @@ public:
 		return out;
 	}
 
-	// Any thread: true while the reading plan still has moments to
-	// perform -- feeds on the bench, or a planned reading in the
-	// worker's hands right now.  Demand work never counts.
+	// Any thread: true while the reading plan still has work in
+	// any stage -- feeds on the bench, a planned reading in the
+	// worker's hands, or a finished planned note not yet drained.
+	// The last leg matters: a tiny or archive-warm plan can finish
+	// entirely between the owner's feed and its next probe, and a
+	// release taken then would run against notes whose folding is
+	// still queued.  A drain-then-probe caller therefore sees
+	// false exactly when the plan's story has fully reached it.
+	// Demand work never counts.
 	bool planning()
 	{
 		std::lock_guard const lk(m_mtx);
 		if (!m_plan.empty())
 			return true;
-		return m_live
+		if (m_live
 		    && std::ranges::find(m_live->owners, ticket(0))
-		       != m_live->owners.end();
+		       != m_live->owners.end())
+			return true;
+		return std::ranges::find(m_done, ticket(0), &note::t)
+		    != m_done.end();
 	}
 
 private:
