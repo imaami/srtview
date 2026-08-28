@@ -853,14 +853,19 @@ void MainWin::rebuildCorpus(bool fresh)
 		feeds << f;
 	}
 	m_ocr.feed(feeds);
-	// Ground truth first in time: while the corpus reads itself,
-	// the frame-keyed semantic chain waits -- no cycles burn on
-	// frameless windows the frames are about to re-key -- while
-	// summaries, dives and the rest keep the model busy
-	// throughout.  Released from the OCR lifecycle the moment the
-	// plan drains into its re-cut.
-	m_facts.hold(m_ocr.reading());
+	// The cut is built and the old generation retired while the
+	// preemptive hold still stands -- resolving first would let a
+	// freed lane start a stale ask retire() can no longer park,
+	// exactly on the empty-plan path (reader off, or nothing to
+	// read) where the resolve releases.  Then ground truth first
+	// in time: while the corpus reads itself, the frame-keyed
+	// semantic chain waits -- no cycles burn on frameless windows
+	// the frames are about to re-key -- while summaries, dives
+	// and the rest keep the model busy throughout.  Released from
+	// the OCR lifecycle the moment the plan drains into its
+	// re-cut.
 	rebuildSemantic();
+	m_facts.hold(m_ocr.reading());
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
