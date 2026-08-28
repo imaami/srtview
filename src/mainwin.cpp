@@ -822,11 +822,15 @@ void MainWin::rebuildCorpus(bool fresh)
 			m_videosById.insert(it.id, it);
 		m_playlist << it;
 	}
-	rebuildSemantic();
 	// The corpus reads itself: every cue start of every entry
 	// goes to the OCR desk's plan, performed whenever demand runs
 	// dry, pixels in memory only -- touched frames alone earn
 	// PNGs through the grabber.  showDoc prefers the shown video.
+	// The plan installs BEFORE the first semantic cut below: the
+	// terms gates ask reading(), and a cut staged against an empty
+	// desk would see false and adopt cached frameless replies --
+	// artifacts of a reader-off session included -- that the
+	// frame-keyed cut can never un-adopt.
 	QList<ocr_feed> feeds;
 	for (PlayItem const &it : m_playlist) {
 		if (it.id.isEmpty())
@@ -856,6 +860,7 @@ void MainWin::rebuildCorpus(bool fresh)
 	// throughout.  Released from the OCR lifecycle the moment the
 	// plan drains into its re-cut.
 	m_facts.hold(m_ocr.reading());
+	rebuildSemantic();
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
@@ -1804,12 +1809,14 @@ void MainWin::refreshKnowledge()
 // so cached replies stay mappable to their cue ranges.
 void MainWin::queueTerms()
 {
-	// Terms wait out the corpus reading itself: a window cut
-	// before the frame story completes would stage -- and its
-	// reply later adopt -- frameless guesses the re-cut cannot
-	// un-adopt, since the term directory has no per-window
-	// provenance.  With the reader off this is never true.
-	if (m_ocr.reading())
+	// Terms wait out the corpus reading itself AND any pending
+	// settle: a window cut before the frame story completes would
+	// stage -- and its reply later adopt -- frameless guesses the
+	// re-cut cannot un-adopt, since the term directory has no
+	// per-window provenance, and the dirty-to-cut debounce is the
+	// same story one settle later.  With the reader off neither is
+	// ever true.
+	if (m_ocr.reading() || m_ocrDirty)
 		return;
 	// Staged ids as a set, built once: a per-window linear scan of
 	// m_termsWork would go quadratic as the corpus grows.
@@ -1866,8 +1873,9 @@ void MainWin::harvestTerms()
 {
 	// The same wait as queueTerms(): a warm cached reply for a
 	// frameless window must not adopt while the corpus is still
-	// reading itself -- the startup cut is not the final cut.
-	if (m_ocr.reading())
+	// reading itself or a settle is pending -- the standing cut
+	// is not the cut its reply will be judged against.
+	if (m_ocr.reading() || m_ocrDirty)
 		return;
 	// Staging order, gaps skipped: the agenda answers windows in
 	// heat order, so waiting for a strict prefix starves adoption
