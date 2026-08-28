@@ -84,10 +84,15 @@ void CubePane::fill(QTreeWidgetItem *top)
 void CubePane::setVideos(QList<CubeVideo> const &videos)
 {
 	// Survive the rebuild: which videos were open, and where the
-	// keyboard was.
+	// keyboard was -- down to the region row, by its time, since a
+	// resnapshot that degrades a selected region to its parent
+	// would break the survive-contract above.
 	QString cur;
-	if (QTreeWidgetItem const *c = m_tree.currentItem())
+	QVariant curT;
+	if (QTreeWidgetItem const *c = m_tree.currentItem()) {
 		cur = c->data(0, kId).toString();
+		curT = c->data(0, kTime);
+	}
 	QSet<QString> open;
 	for (int i = 0; i < m_tree.topLevelItemCount(); ++i) {
 		QTreeWidgetItem const *t = m_tree.topLevelItem(i);
@@ -104,18 +109,31 @@ void CubePane::setVideos(QList<CubeVideo> const &videos)
 		top->setData(0, kVideo, v.video);
 		top->setData(0, kSrt, v.srt);
 		top->setData(0, kId, v.id);
+		// The video-row selection restores whatever the count --
+		// a video whose cubes all dissolved keeps the keyboard.
+		bool const mine = !cur.isEmpty() && v.id == cur;
+		if (mine)
+			m_tree.setCurrentItem(top);
 		if (v.cubes <= 0)
 			continue;
 		if (open.contains(v.id)) {
 			fill(top);
 			top->setExpanded(true);
+			// A selected region survives by its time; one the
+			// weave dissolved falls back to its video row.
+			if (mine && curT.isValid())
+				for (int k = 0; k < top->childCount(); ++k)
+					if (top->child(k)->data(0, kTime)
+					    == curT) {
+						m_tree.setCurrentItem(
+							top->child(k));
+						break;
+					}
 		} else {
 			// The lazy placeholder: makes the row expandable,
 			// swept away by the first real fill.
 			new QTreeWidgetItem(top);
 		}
-		if (!cur.isEmpty() && v.id == cur)
-			m_tree.setCurrentItem(top);
 	}
 }
 
