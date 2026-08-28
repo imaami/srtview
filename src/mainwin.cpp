@@ -414,7 +414,16 @@ MainWin::MainWin()
 		    && !openPath(video,
 		                 it->data(0, CubePane::kSrt).toString()))
 			return;
-		m_playback.jumpTo(t, false);
+		// jumpTo() records only the pre-jump drift and leaves
+		// the destination to its caller (seekCue's own idiom):
+		// without this step a cube jump would vanish from the
+		// trail, skipped by undo and unreachable by redo.
+		if (!m_playback.jumpTo(t, false))
+			return;
+		trail_step jump;
+		jump.flags = trail_step::video;
+		jump.time = t;
+		m_trail.act(jump);
 	});
 	auto *ks = new QShortcut(QKeySequence(
 		QStringLiteral("Ctrl+K")), this);
