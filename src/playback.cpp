@@ -38,13 +38,6 @@ void PlaybackCtl::seekCue(int cue, bool forcePause, bool depart)
 		2000);
 }
 
-void PlaybackCtl::recordDeparture()
-{
-	double const before = m_link.lastTime();
-	if (before >= 0.0)
-		m_trail.driftTo(before);
-}
-
 bool PlaybackCtl::jumpTo(double t, bool forcePause, bool depart)
 {
 	QString err;

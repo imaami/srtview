@@ -48,7 +48,6 @@ public:
 	// still names the origin -- after the switch, mpv's lingering
 	// timestamp would be stamped into the wrong video.
 	bool jumpTo(double t, bool forcePause, bool depart = true);
-	void recordDeparture();
 
 	// Undo applier: return to a recorded position, pause untouched.
 	// False when mpv refused the seek and playback did not move.

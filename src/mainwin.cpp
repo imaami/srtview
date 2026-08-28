@@ -656,11 +656,23 @@ bool MainWin::visitVideo(QString const &video, QString const &srt,
 	switched = videoId(video) != m_trail.videoId();
 	if (!switched)
 		return true;
-	// The departure, under the origin's identity: after openPath
-	// the trail names the destination, and mpv's lingering
-	// timestamp would be stamped into the wrong video.
-	m_playback.recordDeparture();
-	return openPath(video, srt);
+	// The departure is captured now -- after openPath the trail
+	// names the destination, and mpv's lingering timestamp would
+	// be stamped into the wrong video -- but recorded only once
+	// the switch has succeeded: a refused open must not leave a
+	// stray crumb.  The explicit vid carries the origin across.
+	double const before = m_link.lastTime();
+	QString const origin = m_trail.videoId();
+	if (!openPath(video, srt))
+		return false;
+	if (before >= 0.0 && !origin.isEmpty()) {
+		trail_step gone;
+		gone.flags = trail_step::video;
+		gone.time = before;
+		gone.vid = origin;
+		m_trail.act(gone);
+	}
+	return true;
 }
 
 bool MainWin::showDoc(QString const &video, QString const &srt)
