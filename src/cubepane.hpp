@@ -33,11 +33,15 @@ struct CubeVideo {
 class CubePane : public QDockWidget
 {
 public:
-	// Item data roles; children carry all four, tops all but time.
+	// Item data roles; children carry all five, tops the first
+	// three.  Time alone is no identity -- every region first
+	// sighted in one frame shares its t0 -- so selection identity
+	// is (time, box).
 	static constexpr int kVideo = Qt::UserRole;
 	static constexpr int kSrt   = Qt::UserRole + 1;
 	static constexpr int kId    = Qt::UserRole + 2;
 	static constexpr int kTime  = Qt::UserRole + 3;
+	static constexpr int kBox   = Qt::UserRole + 4;
 
 	explicit CubePane(QWidget *parent);
 

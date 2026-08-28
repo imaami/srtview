@@ -1,4 +1,5 @@
 // cubepane.cpp -- see cubepane.hpp.
+#include <QRect>
 #include <QSet>
 
 #include "cubepane.hpp"
@@ -76,6 +77,7 @@ void CubePane::fill(QTreeWidgetItem *top)
 		kid->setData(0, kSrt, srt);
 		kid->setData(0, kId, id);
 		kid->setData(0, kTime, r.t0);
+		kid->setData(0, kBox, QRect(r.x, r.y, r.w, r.h));
 		kids << kid;
 	}
 	top->addChildren(kids);
@@ -88,10 +90,11 @@ void CubePane::setVideos(QList<CubeVideo> const &videos)
 	// resnapshot that degrades a selected region to its parent
 	// would break the survive-contract above.
 	QString cur;
-	QVariant curT;
+	QVariant curT, curBox;
 	if (QTreeWidgetItem const *c = m_tree.currentItem()) {
 		cur = c->data(0, kId).toString();
 		curT = c->data(0, kTime);
+		curBox = c->data(0, kBox);
 	}
 	QSet<QString> open;
 	for (int i = 0; i < m_tree.topLevelItemCount(); ++i) {
@@ -119,12 +122,16 @@ void CubePane::setVideos(QList<CubeVideo> const &videos)
 		if (open.contains(v.id)) {
 			fill(top);
 			top->setExpanded(true);
-			// A selected region survives by its time; one the
-			// weave dissolved falls back to its video row.
-			if (mine && curT.isValid())
+			// A selected region survives by (time, box) --
+			// t0 alone is shared by every region of one
+			// frame; one the weave dissolved falls back to
+			// its video row.
+			if (mine && curT.isValid() && curBox.isValid())
 				for (int k = 0; k < top->childCount(); ++k)
 					if (top->child(k)->data(0, kTime)
-					    == curT) {
+					    == curT
+					    && top->child(k)->data(0, kBox)
+					       == curBox) {
 						m_tree.setCurrentItem(
 							top->child(k));
 						break;
