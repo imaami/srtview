@@ -577,6 +577,18 @@ void test_mailbox_planning()
 		s.drain();
 		check(!s.planning(),
 		      "the drain takes the last of the story");
+		// A demand read: invisible while queued or live -- the
+		// user's ask is not the corpus reading itself -- but its
+		// finished note is unpublished news like any other.
+		s.post(req("D", 7), true);
+		f.entered.acquire();
+		check(!s.planning(), "live demand work never counts");
+		f.gate.release(1);
+		poked.acquire();
+		check(s.planning(),
+		      "an undrained demand note is still news");
+		s.drain();
+		check(!s.planning(), "drained, the world is quiet");
 	}
 }
 

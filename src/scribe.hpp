@@ -165,13 +165,16 @@ public:
 
 	// Any thread: true while the reading plan still has work in
 	// any stage -- feeds on the bench, a planned reading in the
-	// worker's hands, or a finished planned note not yet drained.
-	// The last leg matters: a tiny or archive-warm plan can finish
-	// entirely between the owner's feed and its next probe, and a
-	// release taken then would run against notes whose folding is
-	// still queued.  A drain-then-probe caller therefore sees
-	// false exactly when the plan's story has fully reached it.
-	// Demand work never counts.
+	// worker's hands, or ANY finished note not yet drained.  The
+	// last leg matters twice over: a tiny or archive-warm plan can
+	// finish entirely between the owner's feed and its next probe,
+	// and a late demand read's note is unpublished news just the
+	// same -- until drained, it may still change the owner's cut,
+	// and a probe taken in the poke-to-drain window must not call
+	// the world quiet.  A drain-then-probe caller therefore sees
+	// false exactly when every note has reached it.  Queued and
+	// live demand work still never counts: a read the user asked
+	// for is not the corpus reading itself.
 	bool planning()
 	{
 		std::lock_guard const lk(m_mtx);
@@ -181,8 +184,7 @@ public:
 		    && std::ranges::find(m_live->owners, ticket(0))
 		       != m_live->owners.end())
 			return true;
-		return std::ranges::find(m_done, ticket(0), &note::t)
-		    != m_done.end();
+		return !m_done.empty();
 	}
 
 private:
