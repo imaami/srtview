@@ -1,0 +1,139 @@
+--- DESIGN.md
++++ DESIGN.md
+@@ -26,8 +26,11 @@
+   dependency or it was a bug.
+ - **Rivalry is heat.**  If work *may* run, its place in line is
+-  its score -- kind rank first, user attention (heat) within the
+-  rank.  Ordering lives in `plan::score()`; nothing peeks twice.
++  its score -- a lexicographic key:
++  `{kKindRank[kind], heat - tier_step * tier + export_edge}`.
++  Priority inheritance propagates the whole key.  Kind rank is
++  therefore dominant by construction and heat moves work only within
++  that rank.  Ordering lives in `plan::score()`; nothing peeks twice.
+ - **Workers report.**  A worker owns its own state behind its own
+   lock, produces drainable events, and pokes.  No worker knows
+@@ -49,12 +52,15 @@
+ A witness is staged nowhere, executed never, and marked `done()`
+ by the one place that observes the fact.  The ground-truth
+-witness -- derived from (corpus identity, OCR recipe) -- means
+-"the corpus has been read and cut with its frames."  Every
++witness is
++`H("ground-v1", corpus identity, OCR recipe, ordered window ids)`.
++It means that those exact windows contain every planned OCR result
++drained before the cut.  Every
+ frame-sensitive kind (extract, judge, terms) carries it in
+ `deps`; frame-independent kinds (leaf, node, dive, probe, focus)
+ do not, which is the whole reason the model is never idle while
+-the corpus reads itself.  With the reader off, the witness is
+-marked at staging; a new cut is a new generation whose witness id
+-differs, so a witness, once done, is never *un*-done -- time in
+-the plan moves only forward.
++the corpus reads itself.
++
++The first changed OCR note calls `plan::supersede(active_witness)`,
++which parks its pending dependents and condemns its completion events
++without changing the witness's done state.  The following cut stages
++the successor generation.  Its witness is marked only after a
++drain-then-probe observes quiescence and those drained notes have been
++folded into that same cut; a ceiling cut while planning leaves its
++witness pending.  With the reader disabled, the witness is marked at
++staging.  A byte-identical cut reuses its witness.
+ 
+-**Generations.**  A cut of the corpus stages its tasks and
+-retires its predecessor's:
++**Generations.**  Evidence becoming dirty supersedes the active
++generation immediately.  A later cut stages its successor:
++the stale set is old-minus-new by id
+@@ -74,4 +80,10 @@
+ from a dead generation (epochs), never let an empty reply
+ masquerade as an artifact.
++Transient failures (e.g. network drops, rate limits) should be 
++handled via exponential backoff; `fail()` parking is reserved for 
++terminal faults. Furthermore, when `plan::supersede` condemns a 
++task, the executor should proactively abort any in-flight LLM requests 
++tied to that task to prevent token/thermal waste.
+ 
+ ## The workers
+@@ -89,12 +101,15 @@
+ the corpus, stage the generation, mark its witness.  That mark
+-is the only signal that ever crosses from the OCR world to the
+-model world, and it crosses inside the scheduler.
++Supersession and completion are the only signals that cross from the
++OCR world to the model world, and both cross inside the scheduler.
+ 
+ ## The harvest
+ 
+-Artifacts return to the corpus through harvesters: pure functions
+-from a landed artifact to a corpus mutation (adopt a topic, grow
+-a fragment, file a gloss), invoked from one dispatch keyed on
+-completions rather than five state machines polling `landed()`.
+-Every harvester is re-derivable: cache plus corpus reproduces the
+-same adoptions in the same order on any machine, any session --
+-determinism is what makes the cache a proof rather than a risk.
++Artifact availability and adoption admission are separate nodes.
++A landed artifact marks its artifact id done and pokes.  Each
++adoptable artifact has a local agenda action
++`H("adopt", artifact id, generation witness)` whose dependencies
++are the artifact id and every witness governing that adoption.
++The local lane takes ready actions and invokes one compile-time
++harvester table; cache hits complete artifacts, never bypass their
++adoption actions. Every harvester converts exact artifact bytes into
++immutable facts keyed by artifact id.  Completion is only a wakeup:
++the generated projection folds those facts by a canonical, corpus-derived 
++order, never callback order.  Sequential display identities are assigned
++after that ordering; incremental folds are allowed only when their
++merge is associative, commutative and idempotent.
+ 
+@@ -104,11 +119,13 @@
+-- **I1** No admission decision is made outside `plan::ready()`.
++- **I1** No dependency-admission decision is made outside
++  `plan::ready()`; lane compatibility is mechanical resource fit.
+ - **I2** No ordering decision is made outside `plan::score()`.
+ - **I3** A witness, once done, stays done; new facts mean new
+   witness ids, never reversals.
+-- **I4** No worker blocks, polls, or observes another worker; the
+-  only cross-domain signal is a witness mark.
+-- **I5** The model is never idle while any ready task exists.
+-- **I6** No frame-sensitive ask is ever submitted before its
+-  ground-truth witness is done.
++- **I4** No worker waits on, polls, or observes another worker; the
++  only cross-domain signals are witness supersession and completion.
++- **I5** While online and outside thermal pacing, a free compatible
++  lane claims the highest-scoring ready task before sleeping.
++- **I6** No frame-sensitive ask or adoption is ever started before
++  its ground-truth witness is done, and no superseded generation
++  may mutate the current projection.
+ - **I7** The UI thread owns lifetimes and drains events; it holds
+@@ -116,4 +133,5 @@
+-- **I8** Every artifact and every adoption is a deterministic
+-  function of (corpus, caches, recipes); a wiped cache changes
+-  cost, never outcome.
++- **I8** For a fixed base corpus, recipes and accepted artifact
++  bytes, the generated projection is byte-identical and independent
++  of completion order.  A cache wipe may change model output, but
++  never its identity, provenance or mechanical acceptance rules.
+ 
+@@ -128,10 +146,14 @@
+ 
+-1. **The witness.**  Frame-sensitive tasks gain the ground-truth
+-   witness in `deps`; the re-cut marks it done.  `Facts::hold()`,
++1. **The witness.**  Install the OCR plan before staging the first
++   semantic cut.  Frame-sensitive asks and local adoption actions
++   gain the ground-truth witness in `deps`; dirty evidence
++   supersedes the old generation and the quiescent re-cut marks
++   the successor done.  `Facts::hold()`,
+    its boolean, the `patient` fit and all four lifecycle call
+    sites are deleted; `queueTerms()` loses its quiescence gate.
+-2. **Rank into score.**  The ground-first double peek dissolves
+-   into `kKindBase` so ordering has one home.
+-3. **The harvest dispatch.**  The terms/spell/merge/focus/dive
+-   pollers become completion-driven harvesters under one
+-   dispatch.  (Overlaps the frozen structural round; last, and
++2. **Rank into score.**  Replace the scalar score and its inherited
++   effective value with the lexicographic key above, then delete
++   the ground-first double peek.
++3. **The harvest dispatch.**  The terms/spell/merge/focus/dive
++   pollers become one completion-poked dispatcher over ready local
++   agenda actions.  Harvesters emit keyed facts and the projection
++   folds them in canonical order.  (Overlaps the frozen structural round; last, and
+    only when its time comes.)
