@@ -36,11 +36,14 @@ CubePane::CubePane(QWidget *parent)
 	m_tree.setRootIsDecorated(true);
 	m_tree.setUniformRowHeights(true);
 	setWidget(&m_tree);
-	// Lazy fill on expand; the stub child vanishes for the real
-	// regions the first time a video opens.
+	// Lazy fill on expand -- but only while the placeholder still
+	// sits there (it carries no time data): a video refreshed and
+	// re-expanded by setVideos() has real children already, and
+	// filling again would double the work.
 	connect(&m_tree, &QTreeWidget::itemExpanded, this,
 	        [this](QTreeWidgetItem *it) {
-		if (!it->parent())
+		if (!it->parent() && it->childCount() == 1
+		    && !it->child(0)->data(0, kTime).isValid())
 			fill(it);
 	});
 }
@@ -58,8 +61,9 @@ void CubePane::fill(QTreeWidgetItem *top)
 	QString const id = top->data(0, kId).toString();
 	std::span<ocr::region const> const regs = m_fetch(m_ctx, id);
 	// Rebuild flat: the weave is deterministic and a region list
-	// only ever changes wholesale at a resnapshot.
-	top->takeChildren();
+	// only ever changes wholesale at a resnapshot.  takeChildren()
+	// detaches without deleting -- the old items are ours to free.
+	qDeleteAll(top->takeChildren());
 	QString const video = top->data(0, kVideo).toString();
 	QString const srt = top->data(0, kSrt).toString();
 	QList<QTreeWidgetItem *> kids;
