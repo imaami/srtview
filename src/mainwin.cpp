@@ -838,10 +838,11 @@ void MainWin::rebuildCorpus(bool fresh)
 	}
 	m_ocr.feed(feeds);
 	// Ground truth first in time: while the corpus reads itself,
-	// the background model lane waits -- no cycles burn on
-	// frameless windows the frames are about to re-key, and the
-	// read-through keeps the cores to itself.  Released from the
-	// OCR lifecycle below the moment the plan drains.
+	// the frame-keyed semantic chain waits -- no cycles burn on
+	// frameless windows the frames are about to re-key -- while
+	// summaries, dives and the rest keep the model busy
+	// throughout.  Released from the OCR lifecycle the moment the
+	// plan drains into its re-cut.
 	m_facts.hold(m_ocr.reading());
 	queueDives(fresh);
 	updateInfo();

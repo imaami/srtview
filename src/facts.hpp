@@ -101,11 +101,13 @@ public:
 	// as they are.
 	void retire(std::vector<agenda::id> const &stale);
 
-	// The ground-truth hold: while on, the background lane submits
-	// nothing -- user questions still answer -- so the corpus can
-	// finish reading itself before the model spends hours on
-	// windows the arriving frames would only re-key.  Release
-	// advances at once; the toggle is idempotent.
+	// The ground-truth hold: while on, the background lane runs
+	// only frame-independent work -- leaves, nodes, dives, probes,
+	// focus writes -- so the model stays busy with what the frames
+	// cannot change while the corpus finishes reading itself, and
+	// no cycles burn on extract/judge asks the re-cut would only
+	// retire.  User questions answer regardless.  Release advances
+	// at once; the toggle is idempotent.
 	void hold(bool on);
 
 	// The cache root; never changes after construction.
