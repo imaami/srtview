@@ -30,7 +30,7 @@ public:
 	            QStatusBar &status, Trail &trail, Grabber &grab,
 	            video_sync *sync);
 
-	void seekCue(int cue, bool forcePause);
+	void seekCue(int cue, bool forcePause, bool depart = true);
 	void setPause(bool on);
 	void togglePause();
 	void seekRel(double dt);
@@ -42,8 +42,13 @@ public:
 	// User-initiated jump: seeks and drops the pre-jump drift
 	// breadcrumb, but leaves recording the jump itself to the caller
 	// (which may fold it into a combined step).  False when mpv
-	// refused the seek and playback did not move.
-	bool jumpTo(double t, bool forcePause);
+	// refused the seek and playback did not move.  depart=false
+	// skips the drift breadcrumb: a caller that switched videos
+	// first must capture the departure itself, while the trail
+	// still names the origin -- after the switch, mpv's lingering
+	// timestamp would be stamped into the wrong video.
+	bool jumpTo(double t, bool forcePause, bool depart = true);
+	void recordDeparture();
 
 	// Undo applier: return to a recorded position, pause untouched.
 	// False when mpv refused the seek and playback did not move.

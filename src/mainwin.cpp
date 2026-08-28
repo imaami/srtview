@@ -410,15 +410,16 @@ MainWin::MainWin()
 			return;
 		double const t =
 			it->data(0, CubePane::kTime).toDouble();
-		if (videoId(video) != m_trail.videoId()
-		    && !openPath(video,
-		                 it->data(0, CubePane::kSrt).toString()))
+		bool switched;
+		if (!visitVideo(video,
+		                it->data(0, CubePane::kSrt).toString(),
+		                switched))
 			return;
 		// jumpTo() records only the pre-jump drift and leaves
 		// the destination to its caller (seekCue's own idiom):
 		// without this step a cube jump would vanish from the
 		// trail, skipped by undo and unreachable by redo.
-		if (!m_playback.jumpTo(t, false))
+		if (!m_playback.jumpTo(t, false, !switched))
 			return;
 		trail_step jump;
 		jump.flags = trail_step::video;
@@ -462,13 +463,13 @@ MainWin::MainWin()
 			return;
 		int const cue =
 			it->data(0, KnowledgePane::kCue).toInt();
-		if (videoId(video) != m_trail.videoId()
-		    && !openPath(video,
-		                 it->data(0, KnowledgePane::kSrt)
-		                   .toString()))
+		bool switched;
+		if (!visitVideo(video,
+		                it->data(0, KnowledgePane::kSrt)
+		                  .toString(), switched))
 			return;
 		m_view.showCue(cue);
-		m_playback.seekCue(cue, false);
+		m_playback.seekCue(cue, false, !switched);
 	});
 	connect(&m_know.question(), &QLineEdit::returnPressed,
 	        this, [this] { chatAsked(); });
@@ -649,6 +650,19 @@ void MainWin::mpvSwitched(int index)
 // One transcript truth per session: the view reads the same parse
 // the pipeline, tally, evidence and export consume, so none of them
 // can disagree about what the document says.
+bool MainWin::visitVideo(QString const &video, QString const &srt,
+                         bool &switched)
+{
+	switched = videoId(video) != m_trail.videoId();
+	if (!switched)
+		return true;
+	// The departure, under the origin's identity: after openPath
+	// the trail names the destination, and mpv's lingering
+	// timestamp would be stamped into the wrong video.
+	m_playback.recordDeparture();
+	return openPath(video, srt);
+}
+
 bool MainWin::showDoc(QString const &video, QString const &srt)
 {
 	exporter::transcript const &tx =

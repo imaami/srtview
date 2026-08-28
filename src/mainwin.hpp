@@ -165,6 +165,16 @@ private:
 	void recomputeTally();
 	void feedHeat();
 	bool showDoc(QString const &video, QString const &srt);
+	// The shared switch-then-seek preamble of the knowledge-hit
+	// and cube activations: when the target differs from the
+	// current video, the departure drift is recorded first --
+	// while the trail still names the origin -- and the path
+	// opened.  True when the target is current afterward;
+	// switched tells the caller's seek to skip its own departure
+	// capture, which would stamp the origin's lingering timestamp
+	// into the destination video.
+	bool visitVideo(QString const &video, QString const &srt,
+	                bool &switched);
 	void rebuildCorpus(bool fresh);
 	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
