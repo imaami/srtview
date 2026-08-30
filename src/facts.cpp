@@ -581,16 +581,6 @@ void Facts::retire(std::vector<agenda::id> const &stale)
 			m_plan.fail(id);
 }
 
-void Facts::hold(bool on)
-{
-	std::lock_guard const lock(m_mtx);
-	if (m_hold == on)
-		return;
-	m_hold = on;
-	if (!on)
-		advance();
-}
-
 void Facts::mark(agenda::id fact)
 {
 	if (!fact)
@@ -884,21 +874,6 @@ static bool ground(agenda::task const &t)
 	    || t.what == agenda::kind::judge;
 }
 
-// What the background lane may run while the corpus is still
-// reading itself: everything that depends on transcripts and
-// topics alone -- leaves, nodes, dives, probes, focus writes.
-// The frame-keyed asks wait for the cut they will actually be
-// about: extract and judge (the ground chain), and terms, whose
-// windows re-key with the frames just the same -- the startup cut
-// can stage terms before the reading plan exists, and the re-cut
-// retires those strays before they ever cost the model a token.
-// Everything else keeps the model busy with what it can use,
-// immediately and all the time.
-static bool patient(agenda::task const &t)
-{
-	return background(t) && !ground(t)
-	    && t.what != agenda::kind::terms;
-}
 
 // m_mtx held.  Fills every free lane until nothing is ready for it;
 // a task whose submission fails parks and the loop moves on.
@@ -908,18 +883,16 @@ void Facts::advance()
 	for (std::size_t i = 0; i < 2; ++i) {
 		lane &l = m_lane[i];
 		while (!m_down && !m_offline && m_llm && !l.task) {
-			// The background lane's policy: while the hold is
-			// on, frame-independent work only -- the hold
-			// reshapes the lane, never silences it.  Off the
-			// hold, ground truth leads: extraction and
-			// judgment run before the rest.  Heat still
+			// The background lane's policy: ground truth
+			// leads -- extraction and judgment run before the
+			// rest -- and the witness deps decide when a
+			// frame-sensitive ask is ready at all, so no
+			// executor state gates anything.  Heat still
 			// orders within each class, and the urgent lane
 			// answers questions regardless.
 			agenda::id next{};
 			if (i == 1)
 				next = m_plan.peek(urgent);
-			else if (m_hold)
-				next = m_plan.peek(patient);
 			else if (!(next = m_plan.peek(ground)))
 				next = m_plan.peek(kFit[i]);
 			if (!next)

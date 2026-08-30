@@ -774,11 +774,6 @@ void MainWin::seedGenerated()
 // itself on show.)
 void MainWin::rebuildCorpus(bool fresh)
 {
-	// Preemptive: the staging below would submit its first ask
-	// before the reading plan even exists.  The tail resolves the
-	// hold against the real reading() -- released at once when the
-	// reader is off or has nothing to do.
-	m_facts.hold(true);
 	if (fresh) {
 		m_dives.clear();
 		m_focusWork.clear();
@@ -853,19 +848,14 @@ void MainWin::rebuildCorpus(bool fresh)
 		feeds << f;
 	}
 	m_ocr.feed(feeds);
-	// The cut is built and the old generation retired while the
-	// preemptive hold still stands -- resolving first would let a
-	// freed lane start a stale ask retire() can no longer park,
-	// exactly on the empty-plan path (reader off, or nothing to
-	// read) where the resolve releases.  Then ground truth first
-	// in time: while the corpus reads itself, the frame-keyed
-	// semantic chain waits -- no cycles burn on frameless windows
-	// the frames are about to re-key -- while summaries, dives
-	// and the rest keep the model busy throughout.  Released from
-	// the OCR lifecycle the moment the plan drains into its
-	// re-cut.
+	// Ground truth first in time, by dependency alone: the cut
+	// below stages its frame-sensitive asks with its witness in
+	// their deps, marks it when nothing remains to read, and
+	// leaves it pending otherwise -- summaries, dives and the
+	// rest keep the model busy throughout the read, and the
+	// frame-keyed chain comes ready the moment the drain's own
+	// cut publishes.
 	rebuildSemantic();
-	m_facts.hold(m_ocr.reading());
 	queueDives(fresh);
 	updateInfo();
 	refreshKnowledge();
@@ -3089,14 +3079,6 @@ void MainWin::ocrReady()
 			m_ocrFirstDirty.start();  // the epoch opens
 		m_ocrDirty = true;
 	}
-	// The hold's invariant point: held while the corpus is still
-	// reading or a settle is pending, released otherwise.  The
-	// drain above ran first, so a finished plan reads false here
-	// and a textless or error-only read releases right now; a
-	// dirty batch -- late demand picks included -- holds until
-	// the settle's re-cut, so the model only ever meets the
-	// frame-keyed windows.
-	m_facts.hold(m_ocr.reading() || m_ocrDirty);
 	// A textless or error-only final drain publishes nothing new:
 	// the standing cut already contains every result, so its
 	// witness is marked here -- the one lifecycle point a settle
@@ -3138,10 +3120,6 @@ void MainWin::ocrSettled()
 	dbgHop(QStringLiteral("ocr: corpus resnapshot, %1 framed "
 	                      "moments").arg(framed));
 	rebuildSemantic();
-	// Release only past the re-cut, and only when the plan really
-	// drained: a mid-read ceiling settle keeps the hold, so the
-	// model's first sight of the corpus is the frame-keyed cut.
-	m_facts.hold(m_ocr.reading());
 }
 
 void MainWin::runExport(bool drained)

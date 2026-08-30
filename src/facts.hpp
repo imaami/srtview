@@ -101,15 +101,6 @@ public:
 	// as they are.
 	void retire(std::vector<agenda::id> const &stale);
 
-	// The ground-truth hold: while on, the background lane runs
-	// only frame-independent work -- leaves, nodes, dives, probes,
-	// focus writes -- so the model stays busy with what the frames
-	// cannot change while the corpus finishes reading itself, and
-	// no cycles burn on extract/judge asks the re-cut would only
-	// retire.  User questions answer regardless.  Release advances
-	// at once; the toggle is idempotent.
-	void hold(bool on);
-
 	// Mark a witnessed fact done: an id that stands for a fact
 	// about one cut rather than an artifact -- never staged, never
 	// executed, tombstoned into the plan so its dependents come
@@ -209,7 +200,6 @@ private:
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;
 	bool               m_down = false;
-	bool               m_hold = false;
 };
 
 #endif // SRTVIEW_SRC_FACTS_HPP_
