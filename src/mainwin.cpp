@@ -1005,6 +1005,14 @@ void MainWin::rebuildSemantic()
 	for (TermsWork const &w : m_termsWork)
 		stale.erase(w.id);
 	m_facts.retire({stale.begin(), stale.end()});
+	// Publication: a cut assembled while nothing remains to read
+	// is complete, and its ground witness is marked on the spot --
+	// the frame-sensitive asks staged above come ready in the same
+	// breath.  A cut published mid-read leaves its witness
+	// pending: its asks never run, and the drain's own cut
+	// supersedes them.
+	if (!m_ocr.reading())
+		m_facts.mark(m_semantic.witness());
 	harvestTerms();
 	harvestSpell();
 	stageMerge();
@@ -1862,6 +1870,12 @@ void MainWin::queueTerms()
 		       + "-" + std::to_string(w.cues.back().number);
 		t.what = agenda::kind::terms;
 		t.exported = false;
+		// Frame-sensitive like extract: the ask waits for the
+		// cut's ground witness (the harvest gate above already
+		// guards adoption -- that half stays until adoption
+		// writes per-cut projections).
+		if (agenda::id const wit = m_semantic.witness())
+			t.deps.push_back(wit);
 		m_facts.offer(std::move(t), engine::window_body(w));
 		m_termsWork.push_back({id, it.video, srtOf(it),
 		                       int(w.cues.front().number),
@@ -3083,6 +3097,12 @@ void MainWin::ocrReady()
 	// the settle's re-cut, so the model only ever meets the
 	// frame-keyed windows.
 	m_facts.hold(m_ocr.reading() || m_ocrDirty);
+	// A textless or error-only final drain publishes nothing new:
+	// the standing cut already contains every result, so its
+	// witness is marked here -- the one lifecycle point a settle
+	// never reaches.
+	if (!m_ocr.reading() && !m_ocrDirty)
+		m_facts.mark(m_semantic.witness());
 	if (!m_ocrDirty)
 		return;
 	// Quiet for five seconds, or a minute of continuous arrivals,

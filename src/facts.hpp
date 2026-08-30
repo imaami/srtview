@@ -110,6 +110,14 @@ public:
 	// at once; the toggle is idempotent.
 	void hold(bool on);
 
+	// Mark a witnessed fact done: an id that stands for a fact
+	// about one cut rather than an artifact -- never staged, never
+	// executed, tombstoned into the plan so its dependents come
+	// ready and the freed lanes advance.  Marking twice, or before
+	// any dependent exists, is harmless by plan::done()'s own
+	// contract.
+	void mark(agenda::id fact);
+
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
 	// The recipe a kind's artifacts are named under; immutable for

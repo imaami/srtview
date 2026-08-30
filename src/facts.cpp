@@ -591,6 +591,15 @@ void Facts::hold(bool on)
 		advance();
 }
 
+void Facts::mark(agenda::id fact)
+{
+	if (!fact)
+		return;
+	std::lock_guard const lock(m_mtx);
+	m_plan.done(fact);
+	advance();
+}
+
 void Facts::offer(agenda::task t, std::string const &snapshot)
 {
 	if (!t.id || snapshot.empty())

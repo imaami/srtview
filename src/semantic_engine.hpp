@@ -253,6 +253,13 @@ public:
 	// re-keys when its frames change.
 	// The terms pass asks over the same windows, so one cut serves
 	// both.
+	// The current cut's ground witness (also its catalog
+	// generation): frame-sensitive asks list it in deps, and the
+	// owner marks it done -- Facts::mark() -- when the cut it
+	// names is complete.  Null before the first reset or when the
+	// catalog is down.
+	agenda::id witness() const { return m_witness; }
+
 	std::size_t windows() const { return m_extract.size(); }
 	semantic::window const &window(std::size_t at) const
 	{
@@ -367,6 +374,7 @@ private:
 	Backend &m_back;
 	semantic::hash8_fn m_hash;
 	std::string m_corpus;
+	agenda::id m_witness{};
 	std::vector<source> m_sources;
 	// The corpus vocabulary and every cue's words in it, parallel
 	// to m_sources: tokenized once per load, not once per question.
@@ -444,7 +452,15 @@ void SemanticEngine<Backend>::reset(std::string corpus,
 		keyed += '\n';
 		keyed += w.id.hex();
 	}
-	std::string const key = m_hash(keyed).hex();
+	// The same hash is the cut's ground witness: an id standing
+	// for the fact "this exact cut contains every planned OCR
+	// result, drained and folded."  Frame-sensitive asks carry it
+	// in deps, and the owner marks it done at publication of a
+	// complete cut -- an incomplete cut's asks simply never come
+	// ready, and its successor's witness is a different id, so
+	// the mark, once made, never needs unmaking.
+	m_witness = m_hash(keyed);
+	std::string const key = m_witness.hex();
 	m_catalog = std::make_unique<semantic::catalog>(
 		m_back.dir() + "/semantic/catalog/" + key, m_hash, m_vocab,
 		std::move(order));
@@ -558,6 +574,11 @@ void SemanticEngine<Backend>::offer_extract(extract_work const &w)
 	t.exported = false;
 	t.note = std::string(w.source.source) + range;
 	detail::add_key(t.keys, w.source.source);
+	// Frame-sensitive: not ready until this cut's ground witness
+	// is marked done -- an incomplete cut's asks never run, and
+	// no executor-side state has to say so.
+	if (m_witness)
+		t.deps.push_back(m_witness);
 	std::string body = window_body(w.source);
 	if (w.attempt > 1)
 		body += "\n---\nATTEMPT " + std::to_string(w.attempt)
@@ -842,6 +863,9 @@ void SemanticEngine<Backend>::offer_judge(judge_work const &w)
 	t.tier = w.entity ? 0 : 1;
 	t.exported = false;
 	t.note = w.a.hex() + " ~ " + w.b.hex();
+	// Frame-sensitive like extract: gated on the cut's witness.
+	if (m_witness)
+		t.deps.push_back(m_witness);
 	if (!w.entity) {
 		for (semantic::evidence_span const &e : record_of(w.a)->evidence)
 			detail::add_key(t.keys, e.source);
