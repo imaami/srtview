@@ -865,14 +865,6 @@ static bool urgent(agenda::task const &t)
 	return t.what == agenda::kind::answer;
 }
 
-// The semantic chain -- extraction and the judgments that
-// consolidate it -- is what a user waits hours for on a slow
-// machine; summaries, dives and terms can follow it.
-static bool ground(agenda::task const &t)
-{
-	return t.what == agenda::kind::extract
-	    || t.what == agenda::kind::judge;
-}
 
 
 // m_mtx held.  Fills every free lane until nothing is ready for it;
@@ -883,18 +875,12 @@ void Facts::advance()
 	for (std::size_t i = 0; i < 2; ++i) {
 		lane &l = m_lane[i];
 		while (!m_down && !m_offline && m_llm && !l.task) {
-			// The background lane's policy: ground truth
-			// leads -- extraction and judgment run before the
-			// rest -- and the witness deps decide when a
-			// frame-sensitive ask is ready at all, so no
-			// executor state gates anything.  Heat still
-			// orders within each class, and the urgent lane
-			// answers questions regardless.
-			agenda::id next{};
-			if (i == 1)
-				next = m_plan.peek(urgent);
-			else if (!(next = m_plan.peek(ground)))
-				next = m_plan.peek(kFit[i]);
+			// No policy here at all: the witness deps decide
+			// when a frame-sensitive ask is ready, the plan's
+			// rank puts the semantic chain first among the
+			// ready, heat orders within each rank, and the
+			// urgent lane answers questions regardless.
+			agenda::id const next = m_plan.peek(kFit[i]);
 			if (!next)
 				break;
 			m_plan.start(next);

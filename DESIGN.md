@@ -185,21 +185,14 @@ a unit test cannot vouch for a boundary it does not own.
 
 ## From here to there
 
-Four atomic steps, each revertible alone:
+Steps 0-2 are landed: the catalog generation hash is the cut's
+ground witness, frame-sensitive asks gate on it in `deps`, the
+hold machinery is deleted, and the score is the lexicographic
+key.  The terms *adoption* gate remains with the last step:
 
-0. **Name the cut.**  Carry `{cut_key, epoch}` through tasks and
-   completion envelopes; separate base-corpus input from the
-   keyed projection so derived results stop feeding task
-   identity.
-1. **The witness.**  Candidate-cut assembly and atomic
-   publication; frame-sensitive asks *and adoptions* gain the
-   ground witness in `deps`.  Only then delete `Facts::hold()`,
-   its fits, its call sites, and the terms gates.
-2. **Rank into score.**  The scalar score and its inherited
-   effective value become the lexicographic key; the ground-first
-   double peek is deleted.
 3. **The projection fold.**  The terms/spell/merge/focus/dive
    pollers become one completion-poked dispatch over ready
-   adoption actions, folding keyed facts in canonical order.
-   (Overlaps the frozen structural round; last, and only when
-   its time comes.)
+   adoption actions, folding keyed facts in canonical order;
+   adoption writes per-cut projections and the remaining
+   adoption gates dissolve.  (Overlaps the frozen structural
+   round; last, and only when its time comes.)

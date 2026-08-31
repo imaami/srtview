@@ -34,6 +34,7 @@
 #define SRTVIEW_SRC_AGENDA_HPP_
 
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -218,11 +219,27 @@ private:
 
 	static constexpr std::size_t npos = std::size_t(-1);
 
+	// The lexicographic priority key: kind rank dominant by
+	// construction, the fine score -- bases, tiers, edges, heat --
+	// ordering within the rank.  Unbounded heat therefore
+	// reorders work only inside its class, never across, and
+	// inheritance lifts the whole key, so the blocker of ranked
+	// work runs with that rank.  fine is finite by construction
+	// (sums of constants and heat), so the defaulted ordering is
+	// total in practice.
+	struct rank_key {
+		int    rank = 0;
+		double fine = 0.0;
+		constexpr auto operator<=>(rank_key const &)
+			const = default;
+	};
+
 	std::size_t index_of(id which) const;
 	bool ready(entry const &e) const;
-	double score(task const &t) const;
-	bool lift(std::vector<double> &eff) const;
-	bool raise_deps(std::size_t at, std::vector<double> &eff) const;
+	rank_key score(task const &t) const;
+	bool lift(std::vector<rank_key> &eff) const;
+	bool raise_deps(std::size_t at,
+	                std::vector<rank_key> &eff) const;
 
 	// Tasks number in the thousands once every window, pair and
 	// question is one: entries append only and the index finds

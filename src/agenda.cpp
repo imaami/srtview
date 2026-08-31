@@ -17,7 +17,12 @@ namespace {
 // summaries and dives -- the index backbone outranks topic prose
 // but never starves the pyramid), tiers order within a kind, the
 // export edge floats a topic over its supportive components, and
-// heat (unbounded) moves everything across those bands.
+// heat (unbounded) moves everything within its rank.  The rank is
+// the dominant, lexicographic half of the key: the semantic chain
+// (extract, judge) outranks all other background work by
+// construction, however hot a summary burns, and an answer tops
+// even that -- policy the executor once expressed as a second
+// peek, now the score's own shape.
 // Evidence extraction sits between nodes and the lexical terms pass;
 // pair judgments sit between terms and dives -- a verdict is a
 // short call that reshapes the knowledge tree, a dive a long one
@@ -33,6 +38,10 @@ constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
                                  0.4, 0.42, 1.75, 1.4, 4.0};
 static_assert(std::size(kKindBase) == kind_count,
               "kKindBase mirrors agenda::kind");
+constexpr int    kKindRank[]  = {0, 0, 0, 0, 0, 0,
+                                 0, 0, 1, 1, 2};
+static_assert(std::size(kKindRank) == kind_count,
+              "kKindRank mirrors agenda::kind");
 constexpr double kTierStep    = 1.0 / 32.0;
 constexpr double kExportEdge  = 1.0 / 4.0;
 
@@ -238,12 +247,12 @@ bool plan::start (id which)
 
 id plan::peek (fit_fn fit) const
 {
-	std::vector<double> own(m_entries.size());
+	std::vector<rank_key> own(m_entries.size());
 	for (std::size_t i = 0; i < m_entries.size(); ++i)
 		own[i] = m_entries[i].s == state::pending
 		         ? score(m_entries[i].t)
-		         : 0.0;
-	std::vector<double> eff(own);
+		         : rank_key{};
+	std::vector<rank_key> eff(own);
 	for (std::size_t pass = 0; pass < kLiftCap && lift(eff); ++pass)
 		;
 
@@ -311,7 +320,7 @@ bool plan::ready (entry const &e) const
 		});
 }
 
-double plan::score (task const &t) const
+plan::rank_key plan::score (task const &t) const
 {
 	double s = kKindBase[std::size_t(t.what)]
 	         - kTierStep * t.tier
@@ -325,14 +334,14 @@ double plan::score (task const &t) const
 		}
 	}
 
-	return s;
+	return {kKindRank[std::size_t(t.what)], s};
 }
 
 // One relaxation pass of priority inheritance: every pending task
 // pulls each of its pending dependencies up to at least its own
 // effective score.  Blocked tasks relay what they inherited, so a
 // hot root reaches its deepest missing leaf within the pass cap.
-bool plan::lift (std::vector<double> &eff) const
+bool plan::lift (std::vector<rank_key> &eff) const
 {
 	bool changed = false;
 	for (std::size_t i = 0; i < m_entries.size(); ++i) {
@@ -344,8 +353,10 @@ bool plan::lift (std::vector<double> &eff) const
 	return changed;
 }
 
-bool plan::raise_deps (std::size_t at, std::vector<double> &eff) const
+bool plan::raise_deps (std::size_t at, std::vector<rank_key> &eff) const
 {
+	// The whole key travels: the blocker of ranked work runs with
+	// that rank, or the rank would starve behind its own inputs.
 	bool changed = false;
 	for (id const d : m_entries[at].t.deps) {
 		std::size_t const j = index_of(d);

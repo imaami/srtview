@@ -193,20 +193,22 @@ static void test_order_bands()
 	p.add({.id = tid("l2"), .what = agenda::kind::leaf});
 	check(p.peek([](agenda::task const &t) {
 		      return t.what != agenda::kind::answer;
-	      }) == tid("l1") && p.peek() == tid("a1"),
+	      }) == tid("e1") && p.peek() == tid("a1"),
 	      "a fit narrows the peek to one lane's candidates");
 	check(p.take() == tid("a1"),
 	      "an interactive grounded answer jumps the queue");
+	// The semantic chain is its own rank above all other
+	// background work: ground truth first, then the scalar bands.
+	check(p.take() == tid("e1"),
+	      "extraction leads: the top of the ground rank");
+	check(p.take() == tid("j1"),
+	      "verdicts with it: the ground rank drains before prose");
 	check(p.take() == tid("l1") && p.take() == tid("l2"),
 	      "leaves before nodes, stable by insertion");
 	check(p.take() == tid("n2") && p.take() == tid("n1"),
 	      "lower tier first within a kind");
-	check(p.take() == tid("e1"),
-	      "semantic extraction follows the summary backbone");
 	check(p.take() == tid("t1"),
 	      "terms between summaries and dives: the index backbone");
-	check(p.take() == tid("j1"),
-	      "verdicts before dives: short calls that reshape the tree");
 	check(p.take() == tid("d1"), "dives after nodes");
 	check(p.take() == tid("f1"), "focuses after dives");
 	check(p.take() == tid("p1"),
@@ -270,6 +272,36 @@ static void test_inheritance()
 	p.done(tid("mid"));
 	check(p.take() == tid("dive") && p.take() == tid("plain"),
 	      "the hot task itself runs once ready");
+}
+
+// The rank is dominant by construction: no heat, however
+// unbounded, moves work across it -- only within it -- and
+// inheritance lifts the whole key, so the blocker of ranked work
+// runs with that rank.
+static void test_rank()
+{
+	agenda::plan p;
+	p.add({.id = tid("sum"), .keys = {tid("sum")},
+	       .what = agenda::kind::leaf});
+	p.add({.id = tid("ex"), .what = agenda::kind::extract});
+	p.heat(tid("sum"), 1e6);
+	check(p.take() == tid("ex"),
+	      "a million degrees of heat never crosses the rank");
+	check(p.take() == tid("sum"), "the hot summary follows");
+
+	agenda::plan q;
+	q.add({.id = tid("blocker"), .what = agenda::kind::leaf});
+	q.add({.id = tid("judged"), .deps = {tid("blocker")},
+	       .what = agenda::kind::judge});
+	q.add({.id = tid("hotleaf"), .keys = {tid("h")},
+	       .what = agenda::kind::leaf});
+	q.heat(tid("h"), 1e6);
+	check(q.take() == tid("blocker"),
+	      "the blocker of ranked work inherits the rank whole");
+	q.done(tid("blocker"));
+	check(q.take() == tid("judged"),
+	      "the ranked task itself runs once unblocked");
+	check(q.take() == tid("hotleaf"), "heat's turn comes after");
 }
 
 // Regression, found live: the pyramid root sums every leaf's heat,
@@ -391,6 +423,7 @@ int main()
 	test_heat();
 	test_blend();
 	test_inheritance();
+	test_rank();
 	test_aggregate_feedback();
 	test_parking();
 	test_reset();
