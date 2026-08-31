@@ -57,6 +57,14 @@ public:
 	         topics::doc &corpus, exporter::transcripts &transcripts,
 	         refinery_host *host);
 
+	// Detaches the Facts poke under its mutex: no completion can
+	// hold a pointer to a dead refinery, however teardown and the
+	// model worker interleave.
+	~Refinery();
+
+	Refinery(Refinery const &) = delete;
+	Refinery &operator=(Refinery const &) = delete;
+
 	// A new corpus: fresh drops every machine's state; a re-adopt
 	// keeps adoption history and reseeds only the name stems.
 	void reset(bool fresh);

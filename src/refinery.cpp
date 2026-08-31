@@ -142,6 +142,16 @@ Refinery::Refinery(Facts &facts,
 	m_facts.setPoke(&Refinery::poke, this);
 }
 
+Refinery::~Refinery()
+{
+	// The set is the barrier: it returns only once no worker is
+	// inside the callback, and a call it beat to the lock queued
+	// onto m_diveTick, whose own destruction sweeps the queue.
+	// The owner destroys Facts after this object, so the reference
+	// is good for the detach.
+	m_facts.setPoke(nullptr, nullptr);
+}
+
 void Refinery::poke(void *self) noexcept
 {
 	auto *const r = static_cast<Refinery *>(self);
