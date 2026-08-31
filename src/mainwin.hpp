@@ -112,7 +112,6 @@ private:
 	// into the destination video.
 	bool visitVideo(QString const &video, QString const &srt,
 	                bool &switched);
-	bool adoptionHeld() override;
 	void refineryChanged() override;
 	void rebuildCorpus(bool fresh);
 	void identArrived();

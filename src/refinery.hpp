@@ -32,11 +32,6 @@
 
 // What the refinery needs to know of the UI, and nothing more.
 struct refinery_host {
-	// Adoption waits while the corpus is reading itself or a
-	// settle is pending: the term directory has no per-window
-	// provenance yet (per-cut projections are DESIGN.md's last
-	// step), so nothing frameless may adopt.
-	virtual bool adoptionHeld() = 0;
 	// Something the panes show has changed; called at most once
 	// per dispatch pass.
 	virtual void refineryChanged() = 0;
@@ -87,6 +82,19 @@ public:
 	// kicked (a re-cut or a user action changed other inputs).
 	void harvestChain(bool kick);
 
+	// One validated entry of a terms reply, and a reply's worth of
+	// them: immutable facts keyed by window id, folded -- never
+	// accumulated -- into the directory.
+	struct TermEntry {
+		QString     term, kind, shown;
+		QStringList kept;
+		std::string tidied;
+		bool        supported = false;
+	};
+	struct TermFact {
+		QList<TermEntry> entries;
+	};
+
 	// The pane's read-only views.
 	struct TermInfo {
 		QString term;
@@ -101,8 +109,9 @@ public:
 	{ return m_generated; }
 	std::set<std::string> const &harvested() const
 	{ return m_harvested; }
-	std::set<std::string> const &termsSeen() const
-	{ return m_termsSeen; }
+	// Whether a staged window's reply has been parsed into a fact.
+	bool answered(std::string const &hex) const
+	{ return m_termFacts.contains(QString::fromStdString(hex)); }
 	// Per-video terms progress: staged windows and answered ones.
 	struct TermsWork {
 		agenda::id id;
@@ -165,11 +174,6 @@ private:
 		std::vector<agenda::id> deps;
 	};
 
-	struct SpellWork {
-		QString    a, b, title;
-		agenda::id vote[3];
-	};
-
 	static void poke(void *self) noexcept;
 
 	void diveStep();
@@ -188,8 +192,14 @@ private:
 	void harvestFocus();
 	void harvestOne(QString const &file);
 	void queueTerms();
-	void harvestTerms();
-	bool harvestTermsOne(TermsWork const &w);
+	bool factOf(TermsWork const &w);
+	void adoptEntry(TermEntry const &e);
+	void refoldTerms();
+	void foldLine(QString const &line,
+	              QHash<QString, QString> const &stagedSet);
+	void diveSync(std::set<std::string> const &oldPats);
+	void dirHash();
+	int spellVerdict(QString const &a, QString const &b);
 	int corpusHits(QRegularExpression const &re, int cap);
 	QStringList termLines(QString const &term, int cap);
 	std::string expandOf(std::string const &name) const;
@@ -197,13 +207,7 @@ private:
 	void stageTopic(std::string const &name);
 	void indexSpellings(QStringList const &seen,
 	                    QString const &owner);
-	void stageSpellPair(QString const &a, QString const &b,
-	                    QString const &title);
-	void harvestSpell();
 	void tallySpellVote(agenda::id vote, int &same, int &diff);
-	void stageMerge();
-	void harvestMerge();
-	void foldLine(QString const &line);
 	void dropTopic(QString const &name);
 	bool mergeSpelling(QString const &owner, QString const &victim);
 	void feedLexicon();
@@ -226,12 +230,7 @@ private:
 	std::set<std::string>           m_generated;
 	std::set<std::string>           m_harvested;
 	std::vector<TermsWork>          m_termsWork;
-	std::set<std::string>           m_termsSeen;
-	std::vector<SpellWork>          m_spellWork;
-	std::set<QString>               m_spellSeen;
-	agenda::id                      m_mergeId;
-	QHash<QString, QString>         m_mergeSet;
-	std::set<std::string>           m_mergeSeen;
+	QHash<QString, TermFact>        m_termFacts;
 	std::set<std::string>           m_termTopics;
 	QHash<QString, TermInfo>        m_termInfo;
 	QHash<QString, QString>         m_termIndex;

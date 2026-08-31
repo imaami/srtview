@@ -160,13 +160,8 @@ void Refinery::reset(bool fresh)
 	m_generated.clear();
 	m_harvested.clear();
 	m_termsWork.clear();
-	m_termsSeen.clear();
+	m_termFacts.clear();
 	m_diveRetired.clear();
-	m_spellWork.clear();
-	m_spellSeen.clear();
-	m_mergeId = {};
-	m_mergeSet.clear();
-	m_mergeSeen.clear();
 	m_termTopics.clear();
 	m_termInfo.clear();
 	m_termIndex.clear();
@@ -671,10 +666,7 @@ void Refinery::harvestChain(bool kick)
 	       .arg(landed)
 	       .arg(kick ? QStringLiteral(", kicked") : QString()));
 	pumpProbes();
-	harvestTerms();
-	harvestSpell();
-	stageMerge();
-	harvestMerge();
+	refoldTerms();
 	harvestFocus();
 	feedLexicon();
 	m_host->refineryChanged();
@@ -686,15 +678,10 @@ void Refinery::harvestChain(bool kick)
 // so cached replies stay mappable to their cue ranges.
 void Refinery::queueTerms()
 {
-	// Terms wait out the corpus reading itself AND any pending
-	// settle: a window cut before the frame story completes would
-	// stage -- and its reply later adopt -- frameless guesses the
-	// re-cut cannot un-adopt, since the term directory has no
-	// per-window provenance, and the dirty-to-cut debounce is the
-	// same story one settle later.  With the reader off neither is
-	// ever true.
-	if (m_host->adoptionHeld())
-		return;
+	// No adoption gate remains: the witness gates the asks, so no
+	// facts can exist for an unread cut, and the fold reads facts
+	// only for the windows THIS cut staged -- a stale generation's
+	// replies exclude themselves by identity.
 	// Staged ids as a set, built once: a per-window linear scan of
 	// m_termsWork would go quadratic as the corpus grows.
 	std::set<agenda::id> staged;
@@ -746,61 +733,31 @@ void Refinery::queueTerms()
 	}
 }
 
-// Adoption in staging order, gaps skipped: each pass walks the
-// staged windows in order and adopts whatever has answered, so the
-// order is as stable as the answers allow without starving behind
-// a deferred or parked window.  Until a band completes, machine
-// topic names may shift between sessions; once it has, they
-// settle.  (The strict prefix-replay this walk once did is the
-// canonical-refold work of DESIGN.md's last step.)
-void Refinery::harvestTerms()
+// The facts stage: parse and validate one landed terms reply into
+// an immutable fact -- the mechanical gate unchanged (every cited
+// cue inside the window, every SEEN spelling on a cited line, an
+// entry failing either drops whole), plus the support floor's
+// corpus scan memoized per entry, since it depends on transcripts
+// alone.  A fact never invalidates: window ids are content-
+// addressed, so the same id always names the same text.
+bool Refinery::factOf(TermsWork const &w)
 {
-	// The same wait as queueTerms(): a warm cached reply for a
-	// frameless window must not adopt while the corpus is still
-	// reading itself or a settle is pending -- the standing cut
-	// is not the cut its reply will be judged against.
-	if (m_host->adoptionHeld())
-		return;
-	// Staging order, gaps skipped: the agenda answers windows in
-	// heat order, so waiting for a strict prefix starves adoption
-	// behind whichever window the scheduler felt like deferring --
-	// with a large corpus that meant a full band of finished
-	// replies and zero visible knowledge.  A skipped window adopts
-	// on a later tick or session; until the band completes,
-	// machine topic names may shift between sessions, and settle
-	// once it has.
-	for (TermsWork const &w : m_termsWork) {
-		if (m_termsSeen.contains(w.id.hex()))
-			continue;
-		if (harvestTermsOne(w))
-			m_termsSeen.insert(w.id.hex());
-	}
-}
-
-// Parse, validate and adopt one terms reply.  The gate is
-// mechanical: every cited cue must lie inside the window and every
-// SEEN spelling must occur on a cited line -- an entry failing
-// either drops whole, never kept diluted.  Survivors' spellings
-// are escaped literals joined into a case-folded union (the model
-// never writes regex here), then pass the same tidy/subtract gate
-// as every machine pattern -- one term, one topic: a known term
-// grows its owner's alternation, a fully covered one re-attaches
-// its directory entry to the covering term topic, and only a novel
-// term adopts a new termN.  The gloss waits as a proposal until a
-// human copies it into the sidecar.
-bool Refinery::harvestTermsOne(TermsWork const &w)
-{
+	QString const hex = QString::fromStdString(w.id.hex());
+	if (m_termFacts.contains(hex))
+		return true;
 	std::string const path = m_facts.locate(w.id,
 	                                        agenda::kind::terms);
 	if (path.empty())
 		return false;   // unanswered: QFile("") would gripe
-		                // ("No file name specified") every tick
 	QFile f(QString::fromStdString(path));
 	if (!f.open(QIODevice::ReadOnly))
 		return false;
 	QString const text = QString::fromUtf8(f.readAll());
-	if (text.startsWith(QStringLiteral("NONE")))
+	TermFact fact;
+	if (text.startsWith(QStringLiteral("NONE"))) {
+		m_termFacts.insert(hex, fact);
 		return true;
+	}
 	exporter::transcript const &tx =
 		exporter::load(m_transcripts, w.srt);
 	auto const line = [&](int cue) -> QString const * {
@@ -825,9 +782,9 @@ bool Refinery::harvestTermsOne(TermsWork const &w)
 			else if (l.startsWith(QStringLiteral("SEEN:"))) {
 				for (QString const &v : l.mid(5)
 				     .split(QLatin1Char('|')))
-					if (QString const t = v.trimmed();
-					    !t.isEmpty())
-						seen << t;
+					if (QString const s = v.trimmed();
+					    !s.isEmpty())
+						seen << s;
 			} else if (l.startsWith(QStringLiteral("CUES:"))) {
 				for (QString const &c : l.mid(5)
 				     .split(QLatin1Char(' '),
@@ -868,96 +825,75 @@ bool Refinery::harvestTermsOne(TermsWork const &w)
 			pat += QRegularExpression::escape(kept[i]);
 		}
 		pat += QLatin1Char(')');
-		std::string const tidied =
-			topics::tidy(pat.toStdString());
+		TermEntry e;
+		e.term = term;
+		e.kind = kind;
+		e.tidied = topics::tidy(pat.toStdString());
+		e.kept = kept;
 		// The row's title already IS the term: the gloss text
 		// never repeats it, an acronym's expansion just leads.
-		// Small models parrot MEANS: <term> verbatim -- an
-		// expansion that only restates the term is no expansion.
-		QString const shown = means.isEmpty()
+		e.shown = means.isEmpty()
 		    || !QString::compare(means, term, Qt::CaseInsensitive)
 			? gloss
 			: means + QStringLiteral(". ") + gloss;
-		QString const folded = term.toCaseFolded();
-		// The support floor: a novel term whose spellings AND
-		// corrected form together match the corpus fewer than
-		// twice is a one-off -- usually a transcription accident
-		// the model dutifully indexed ("Aled ask you French") --
-		// and founds nothing.  The TERM literal counts too: a
-		// window may spell "p-code" where the corpus says "P
-		// code", and the floor must measure the spoken term, not
-		// one window's orthography.  Known terms are exempt: a
-		// rare novel VARIANT of an established term still merges
-		// into its owner.
-		QString const support = QString::fromStdString(tidied)
-		                      + QLatin1Char('|')
-		                      + termMatcher(term).pattern();
-		if (!m_termIndex.contains(folded) &&
-		    corpusHits(QRegularExpression(support,
-		                                  QRegularExpression::CaseInsensitiveOption
-		                                  | QRegularExpression::UseUnicodePropertiesOption),
-		               2) < 2) {
-			dbgHop(QStringLiteral("terms: floored [%1]")
-			       .arg(term));
-			continue;
-		}
-		// One term, one topic: an entry whose term is known, or
-		// whose branches overlap an existing term topic at all
-		// (cover_of), grows that owner instead of founding a
-		// twin from the leftover.  Kind, casing and gloss keep
-		// the first non-empty word; a bare re-cover of a fresh
-		// owner is the reload re-attach.
-		QString own = m_termIndex.value(folded);
-		if (own.isEmpty())
-			own = QString::fromStdString(
-				topics::cover_of(m_corpus, tidied,
-				                 "term"));
-		if (!own.isEmpty()) {
-			bool const fresh = !m_termInfo.contains(own);
-			std::string const before =
-				expandOf(own.toStdString());
-			std::string const grown = topics::extend(
-				m_corpus, own.toStdString(), tidied);
-			TermInfo &info = m_termInfo[own];
-			if (info.term.isEmpty())
-				info.term = term;
-			if (info.kind.isEmpty())
-				info.kind = kind;
-			if (info.gloss.isEmpty())
-				info.gloss = shown;
-			if (!m_termIndex.contains(folded))
-				m_termIndex.insert(folded, own);
-			indexSpellings(kept, own);
-			if (!grown.empty()) {
-				dbgHop(QStringLiteral(
-					"terms: extended %1 [%2]")
-				       .arg(own,
-				            QString::fromStdString(grown)));
-				retireDive(diveId(before));
-				stageTopic(own.toStdString());
-			} else if (fresh) {
-				dbgHop(QStringLiteral(
-					"terms: attached %1 [%2]")
-				       .arg(own, term));
-			}
-			continue;
-		}
-		std::string const adopted = topics::adopt_novel(
-			m_corpus, tidied, "term");
-		if (adopted.empty())
-			continue;    // hand-covered whole: no twin, no title
-		QString const name = QString::fromStdString(
-			m_corpus.topics.back().name);
-		m_generated.insert(name.toStdString());
-		m_termTopics.insert(name.toStdString());
-		m_termInfo.insert(name, {term, kind, shown});
-		m_termIndex.insert(folded, name);
-		indexSpellings(kept, name);
-		dbgHop(QStringLiteral("terms: adopted %1 [%2]")
-		       .arg(name, QString::fromStdString(adopted)));
-		stageTopic(m_corpus.topics.back().name);
+		// The support floor's corpus half, memoized here: the
+		// scan depends on transcripts alone, never on the
+		// directory being folded.
+		QString const support =
+			QString::fromStdString(e.tidied)
+			+ QLatin1Char('|') + termMatcher(term).pattern();
+		e.supported = corpusHits(QRegularExpression(support,
+			QRegularExpression::CaseInsensitiveOption
+			| QRegularExpression::UseUnicodePropertiesOption),
+			2) >= 2;
+		fact.entries.push_back(std::move(e));
 	}
+	m_termFacts.insert(hex, std::move(fact));
 	return true;
+}
+
+// The fold's adoption of one fact entry -- the same one-term-one-
+// topic logic adoption always had, minus the dive side effects,
+// which diveSync() derives from the final directory instead.
+void Refinery::adoptEntry(TermEntry const &e)
+{
+	QString const folded = e.term.toCaseFolded();
+	// The support floor: a novel term below it founds nothing;
+	// known terms are exempt, so a rare variant still merges.
+	if (!m_termIndex.contains(folded) && !e.supported) {
+		dbgHop(QStringLiteral("terms: floored [%1]")
+		       .arg(e.term));
+		return;
+	}
+	QString own = m_termIndex.value(folded);
+	if (own.isEmpty())
+		own = QString::fromStdString(
+			topics::cover_of(m_corpus, e.tidied, "term"));
+	if (!own.isEmpty()) {
+		topics::extend(m_corpus, own.toStdString(), e.tidied);
+		TermInfo &info = m_termInfo[own];
+		if (info.term.isEmpty())
+			info.term = e.term;
+		if (info.kind.isEmpty())
+			info.kind = e.kind;
+		if (info.gloss.isEmpty())
+			info.gloss = e.shown;
+		if (!m_termIndex.contains(folded))
+			m_termIndex.insert(folded, own);
+		indexSpellings(e.kept, own);
+		return;
+	}
+	std::string const adopted = topics::adopt_novel(
+		m_corpus, e.tidied, "term");
+	if (adopted.empty())
+		return;         // hand-covered whole: no twin, no title
+	QString const name = QString::fromStdString(
+		m_corpus.topics.back().name);
+	m_generated.insert(name.toStdString());
+	m_termTopics.insert(name.toStdString());
+	m_termInfo.insert(name, {e.term, e.kind, e.shown});
+	m_termIndex.insert(folded, name);
+	indexSpellings(e.kept, name);
 }
 
 // Corpus-wide match count for a pattern, stopping at cap: the
@@ -1067,23 +1003,15 @@ QStringList Refinery::termLines(QString const &term, int cap)
 	return out;
 }
 
-// One nominated pair, anchor first: dedupe, then three vote asks
-// whose ids key on the exact evidence text.  Nominations come from
-// the model's own directory judgment -- the app never guesses
-// which spellings might belong together, it only verifies what the
-// model proposes, one binary question at a time.
-void Refinery::stageSpellPair(QString const &a, QString const &b,
-                             QString const &title)
+// The three-vote spelling verdict for one nominated pair, from
+// cache: +1 when two votes say SAME, -1 when two say DIFFERENT,
+// 0 while votes are missing -- and the missing ones are offered,
+// idempotently, so the verdict completes as replies land.  Vote
+// ids hash the evidence body alone (term strings and transcript
+// lines), never directory state, so a refolded directory replays
+// the same cached votes.
+int Refinery::spellVerdict(QString const &a, QString const &b)
 {
-	QString const fa = a.toCaseFolded();
-	QString const fb = b.toCaseFolded();
-	QString const pairKey = fa + QLatin1Char('\n') + fb;
-	if (m_spellSeen.contains(pairKey)
-	    || m_termIndex.value(fa) == m_termIndex.value(fb))
-		return;
-	for (SpellWork const &w : m_spellWork)
-		if (w.a == a && w.b == b)
-			return;
 	QString const la = termLines(a, 4).join(QLatin1Char('\n'));
 	QStringList raw = termLines(b, 4);
 	QString const lb = raw.join(QLatin1Char('\n'));
@@ -1091,7 +1019,7 @@ void Refinery::stageSpellPair(QString const &a, QString const &b,
 	for (QString &l : raw)
 		l.replace(rb, a);
 	QString const ls = raw.join(QLatin1Char('\n'));
-	SpellWork w{a, b, title, {}};
+	int same = 0, diff = 0;
 	for (int v = 0; v < 3; ++v) {
 		QString const body = QStringLiteral(
 			"TERM A (established): %1\n%2\n\n"
@@ -1103,51 +1031,21 @@ void Refinery::stageSpellPair(QString const &a, QString const &b,
 		QCryptographicHash h(QCryptographicHash::Blake2b_256);
 		h.addData(QByteArrayView("spell\n"));
 		h.addData(body.toUtf8());
-		w.vote[v] = takeId(h);
-		agenda::task t;
-		t.id = w.vote[v];
-		t.note = (a + QStringLiteral(" ~ ") + b
-		          + QStringLiteral(" #") + QString::number(v))
-		         .toStdString();
-		t.what = agenda::kind::spell;
-		t.exported = false;
-		m_facts.offer(std::move(t), body.toStdString());
-	}
-	m_spellWork.push_back(std::move(w));
-}
-
-// Tally the votes: two SAME fold the suspect into the anchor's
-// owner, two DIFFERENT settle the pair apart, and either outcome
-// retires it.  Folding shrinks the directory, which re-cuts the
-// candidate set and re-keys the judgment ask downstream.
-void Refinery::harvestSpell()
-{
-	for (std::size_t i = 0; i < m_spellWork.size();) {
-		SpellWork const &w = m_spellWork[i];
-		int same = 0, diff = 0;
-		for (agenda::id const v : w.vote)
-			tallySpellVote(v, same, diff);
-		if (same < 2 && diff < 2) {
-			++i;
-			continue;
+		agenda::id const vote = takeId(h);
+		int const before = same + diff;
+		tallySpellVote(vote, same, diff);
+		if (same + diff == before) {
+			agenda::task w;
+			w.id = vote;
+			w.note = (a + QStringLiteral(" ~ ") + b
+			          + QStringLiteral(" #")
+			          + QString::number(v)).toStdString();
+			w.what = agenda::kind::spell;
+			w.exported = false;
+			m_facts.offer(std::move(w), body.toStdString());
 		}
-		if (same >= 2) {
-			QString const owner =
-				m_termIndex.value(w.a.toCaseFolded());
-			if (!owner.isEmpty()
-			    && mergeSpelling(owner, w.b)) {
-				dbgHop(QStringLiteral(
-					"terms: sounded %1 <- %2")
-				       .arg(w.a, w.b));
-				if (!w.title.isEmpty())
-					m_termInfo[owner].term = w.title;
-			}
-		}
-		m_spellSeen.insert(w.a.toCaseFolded() + QLatin1Char('\n')
-		                   + w.b.toCaseFolded());
-		m_spellWork.erase(m_spellWork.begin()
-		                  + std::ptrdiff_t(i));
 	}
+	return same >= 2 ? 1 : diff >= 2 ? -1 : 0;
 }
 
 // One vote file: the last SAME/DIFFERENT word decides it; an
@@ -1171,106 +1069,143 @@ void Refinery::tallySpellVote(agenda::id vote, int &same, int &diff)
 	diff += last == QStringLiteral("DIFFERENT");
 }
 
-// The directory fold ask: the id keys on the folded, sorted term
-// list, so a changed directory stages a fresh judgment and a
-// stable one re-resolves its cached reply.
-void Refinery::stageMerge()
+// The projection fold: the term directory rebuilt from scratch as
+// a pure function of (the current cut's staged windows, the cached
+// artifacts, the non-term topic set).  Names, first-nonempty
+// fields and merge outcomes stop depending on arrival order --
+// and a stale generation's replies exclude themselves, because
+// the fold reads facts only for the windows this cut staged.
+void Refinery::refoldTerms()
 {
-	QStringList terms;
-	for (TermInfo const &i : m_termInfo)
-		if (!i.term.isEmpty())
-			terms << i.term;
-	if (terms.size() < 2)
-		return;
-	// Total order: equal-folded terms tiebreak on the exact
-	// string, or the id would drift between sessions and the
-	// cached judgment would never re-resolve.
-	std::ranges::sort(terms,
-		[](QString const &a, QString const &b) {
-			QString const fa = a.toCaseFolded();
-			QString const fb = b.toCaseFolded();
-			return fa != fb ? fa < fb : a < b;
-		});
-	QByteArray text;
-	for (QString const &t : terms) {
-		text += t.toUtf8();
-		text += '\n';
+	// Facts for whatever has landed; missing replies stay
+	// unanswered and simply leave gaps this fold.
+	bool changed = false;
+	for (TermsWork const &w : m_termsWork)
+		changed |= factOf(w);
+	// The outgoing directory's dive patterns, for the sync diff.
+	std::set<std::string> oldPats;
+	for (std::string const &n : m_termTopics)
+		oldPats.insert(expandOf(n));
+	// Tear down: machine term topics leave the corpus (a
+	// referenced one is load-bearing and stays, exactly
+	// dropTopic's guard), and the directory state clears.
+	std::set<std::string> keep;
+	for (topics::topic const *r : topics::components(m_corpus))
+		keep.insert(r->name);
+	std::erase_if(m_corpus.topics, [&](topics::topic const &tp) {
+		return m_termTopics.contains(tp.name)
+		    && !keep.contains(tp.name);
+	});
+	for (std::string const &n : m_termTopics)
+		m_generated.erase(n);
+	m_termTopics.clear();
+	m_termInfo.clear();
+	m_termIndex.clear();
+	// Replay in staging order: the one order every session
+	// shares.
+	for (TermsWork const &w : m_termsWork) {
+		auto const it = m_termFacts.constFind(
+			QString::fromStdString(w.id.hex()));
+		if (it == m_termFacts.constEnd())
+			continue;
+		for (TermEntry const &e : it->entries)
+			adoptEntry(e);
 	}
-	QCryptographicHash h(QCryptographicHash::Blake2b_256);
-	h.addData(QByteArrayView("merge\n"));
-	h.addData(text);
-	agenda::id const id = takeId(h);
-	if (id == m_mergeId)
-		return;
-	m_mergeId = id;
-	m_mergeSet.clear();
-	for (QString const &t : terms)
-		m_mergeSet.insert(t.toCaseFolded(), t);
-	agenda::task t;
-	t.id = id;
-	t.note = std::to_string(terms.size()) + " terms";
-	t.what = agenda::kind::merge;
-	t.exported = false;
-	m_facts.offer(std::move(t), text.toStdString());
+	// The merge/spell fixpoint, cache-hits only: each link's ask
+	// id hashes the sorted term titles -- never termN names -- so
+	// a deterministically folded directory replays the same chain.
+	// The missing link is offered and the fold stops there; the
+	// landing pokes the next pass.
+	agenda::id prev{};
+	for (int guard = 0; guard < 32; ++guard) {
+		QStringList terms;
+		for (TermInfo const &i : m_termInfo)
+			if (!i.term.isEmpty())
+				terms << i.term;
+		if (terms.size() < 2)
+			break;
+		// Total order: equal-folded terms tiebreak on the exact
+		// string, or the id would drift between sessions.
+		std::ranges::sort(terms,
+			[](QString const &a, QString const &b) {
+				QString const fa = a.toCaseFolded();
+				QString const fb = b.toCaseFolded();
+				return fa != fb ? fa < fb : a < b;
+			});
+		QByteArray text;
+		for (QString const &s : terms) {
+			text += s.toUtf8();
+			text += '\n';
+		}
+		QCryptographicHash h(QCryptographicHash::Blake2b_256);
+		h.addData(QByteArrayView("merge\n"));
+		h.addData(text);
+		agenda::id const id = takeId(h);
+		if (id == prev)
+			break;          // applied, nothing folded: stable
+		prev = id;
+		std::string const path = m_facts.locate(
+			id, agenda::kind::merge);
+		if (path.empty()) {
+			agenda::task ask;
+			ask.id = id;
+			ask.note = std::to_string(terms.size())
+			         + " terms";
+			ask.what = agenda::kind::merge;
+			ask.exported = false;
+			m_facts.offer(std::move(ask),
+			              text.toStdString());
+			break;
+		}
+		QFile f(QString::fromStdString(path));
+		if (!f.open(QIODevice::ReadOnly))
+			break;
+		QString const reply = QString::fromUtf8(f.readAll());
+		if (reply.startsWith(QStringLiteral("NONE")))
+			break;
+		QHash<QString, QString> stagedSet;
+		for (QString const &s : terms)
+			stagedSet.insert(s.toCaseFolded(), s);
+		for (QString const &l :
+		     reply.split(QLatin1Char('\n')))
+			foldLine(l, stagedSet);
+	}
+	diveSync(oldPats);
+	if (changed)
+		dirHash();
 }
 
-// Fold judgments arrive as MERGE lines over the current directory.
-// Folding shrinks the directory, which re-keys the next stageMerge
-// -- the cascade converges on a NONE and stops.  Replays are
-// idempotent: a folded twin no longer resolves.
-void Refinery::harvestMerge()
+// One judgment line against the staged set of the directory that
+// asked it.  MERGE lines are nominations: each member must survive
+// its three-vote spelling verdict before it folds.  DROP removes
+// the named everyday-vocabulary term wholesale.
+void Refinery::foldLine(QString const &line,
+                        QHash<QString, QString> const &stagedSet)
 {
-	if (!m_mergeId || m_mergeSeen.contains(m_mergeId.hex()))
-		return;
-	std::string const path = m_facts.locate(m_mergeId,
-	                                        agenda::kind::merge);
-	if (path.empty())
-		return;
-	QFile f(QString::fromStdString(path));
-	if (!f.open(QIODevice::ReadOnly))
-		return;
-	m_mergeSeen.insert(m_mergeId.hex());
-	QString const text = QString::fromUtf8(f.readAll());
-	if (text.startsWith(QStringLiteral("NONE")))
-		return;
-	for (QString const &l : text.split(QLatin1Char('\n')))
-		foldLine(l);
-}
-
-// One judgment line.  MERGE: the first listed name is the
-// corrected spelling and takes the title; any member already in
-// the index anchors the group it folds into.  DROP: the named
-// everyday-vocabulary term leaves the directory wholesale.
-void Refinery::foldLine(QString const &line)
-{
-	// The prompt demands names copied exactly from the staged
-	// list, so enforcement is exact membership: a hallucinated
-	// name -- which m_termIndex might still resolve through a
-	// SEEN alias -- rejects the whole line.
-	auto const staged = [this](QString const &t) {
-		return m_mergeSet.contains(t.toCaseFolded());
+	auto const staged = [&stagedSet](QString const &s) {
+		return stagedSet.contains(s.toCaseFolded());
 	};
 	if (line.startsWith(QStringLiteral("DROP:"))) {
-		QString const t = line.mid(5).trimmed();
-		if (!staged(t)) {
+		QString const s = line.mid(5).trimmed();
+		if (!staged(s)) {
 			dbgHop(QStringLiteral(
-				"terms: judgment rejected [%1]").arg(t));
+				"terms: judgment rejected [%1]").arg(s));
 			return;
 		}
-		QString const name = m_termIndex.value(t.toCaseFolded());
+		QString const name = m_termIndex.value(s.toCaseFolded());
 		if (name.isEmpty())
 			return;
 		dropTopic(name);
 		dbgHop(QStringLiteral("terms: dropped %1 [%2]")
-		       .arg(name, t));
+		       .arg(name, s));
 		return;
 	}
 	if (!line.startsWith(QStringLiteral("MERGE:")))
 		return;
 	QStringList parts;
 	for (QString const &p : line.mid(6).split(QLatin1Char('|')))
-		if (QString const t = p.trimmed(); !t.isEmpty())
-			parts << t;
+		if (QString const s = p.trimmed(); !s.isEmpty())
+			parts << s;
 	if (parts.size() < 2)
 		return;
 	for (QString const &p : parts)
@@ -1279,12 +1214,6 @@ void Refinery::foldLine(QString const &line)
 				"terms: judgment rejected [%1]").arg(p));
 			return;
 		}
-	// A MERGE line is a NOMINATION, not a fold: the open-list
-	// judgment is where a tiny model hallucinates, so each
-	// nominated member must survive its own three-vote spelling
-	// verdict before anything merges.  The anchor is the first
-	// member the index resolves; the nominated corrected spelling
-	// (staged casing) titles the group if a fold confirms.
 	QString anchor;
 	for (QString const &p : parts) {
 		if (!m_termIndex.value(p.toCaseFolded()).isEmpty()) {
@@ -1295,10 +1224,63 @@ void Refinery::foldLine(QString const &line)
 	if (anchor.isEmpty())
 		return;
 	QString const title =
-		m_mergeSet.value(parts.front().toCaseFolded());
-	for (QString const &p : parts)
-		if (p.toCaseFolded() != anchor.toCaseFolded())
-			stageSpellPair(anchor, p, title);
+		stagedSet.value(parts.front().toCaseFolded());
+	for (QString const &p : parts) {
+		if (p.toCaseFolded() == anchor.toCaseFolded())
+			continue;
+		if (spellVerdict(anchor, p) != 1)
+			continue;
+		QString const owner =
+			m_termIndex.value(anchor.toCaseFolded());
+		if (!owner.isEmpty() && mergeSpelling(owner, p)) {
+			dbgHop(QStringLiteral("terms: sounded %1 <- %2")
+			       .arg(anchor, p));
+			if (!title.isEmpty())
+				m_termInfo[owner].term = title;
+		}
+	}
+}
+
+// Dives derive from the FINAL directory, once per fold: patterns
+// the fold produced stage, patterns it dissolved retire -- and no
+// intermediate pattern ever touches the retired set, which is what
+// used to poison later folds.
+void Refinery::diveSync(std::set<std::string> const &oldPats)
+{
+	std::set<std::string> newPats;
+	for (std::string const &n : m_termTopics)
+		newPats.insert(expandOf(n));
+	for (std::string const &p : oldPats)
+		if (!newPats.contains(p) && !p.empty())
+			retireDive(diveId(p));
+	for (std::string const &p : newPats)
+		if (!oldPats.contains(p) && !p.empty())
+			stageDive(p, true, false);
+}
+
+// The fold's acceptance instrument: one line naming the directory
+// deterministically, so two sessions -- or two ask orders -- can
+// be diffed mechanically.
+void Refinery::dirHash()
+{
+	QStringList rows;
+	for (std::string const &n : m_termTopics) {
+		TermInfo const info =
+			m_termInfo.value(QString::fromStdString(n));
+		rows << QString::fromStdString(n) + QLatin1Char('\t')
+			+ info.term + QLatin1Char('\t') + info.kind
+			+ QLatin1Char('\t') + info.gloss
+			+ QLatin1Char('\t')
+			+ QString::fromStdString(expandOf(n));
+	}
+	rows.sort();
+	QCryptographicHash h(QCryptographicHash::Blake2b_256);
+	h.addData(QByteArrayView("dir\n"));
+	h.addData(rows.join(QLatin1Char('\n')).toUtf8());
+	dbgHop(QStringLiteral("refold: %1 topics, dir %2")
+	       .arg(rows.size())
+	       .arg(QString::fromLatin1(
+		h.result().left(8).toHex())));
 }
 
 // Remove one machine topic wholesale: corpus entry, directory
@@ -1326,7 +1308,7 @@ void Refinery::dropTopic(QString const &name)
 	m_termIndex.removeIf([&name](auto it) {
 		return it.value() == name;
 	});
-	retireDive(diveId(pat));
+	// Dives re-derive from the final directory in diveSync().
 }
 
 // Fold the topic owning one spelling into the group owner: its
@@ -1378,11 +1360,7 @@ bool Refinery::mergeSpelling(QString const &owner,
 	for (QString &v : m_termIndex)
 		if (v == name)
 			v = owner;
-	retireDive(diveId(vpat));
-	if (!grown.empty()) {
-		retireDive(diveId(opat));
-		stageTopic(owner.toStdString());
-	}
+	// Dives re-derive from the final directory in diveSync().
 	dbgHop(QStringLiteral("terms: merged %1 <- %2 [%3]")
 	       .arg(owner, name, spell));
 	return true;

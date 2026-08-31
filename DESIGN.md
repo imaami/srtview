@@ -185,17 +185,18 @@ a unit test cannot vouch for a boundary it does not own.
 
 ## From here to there
 
-Steps 0-2 are landed, and step 3's dispatch half with them: the
-catalog generation hash is the cut's ground witness,
-frame-sensitive asks gate on it in `deps`, the hold machinery is
-deleted, the score is the lexicographic key, and the harvest
-machines live in their own controller (`Refinery`), driven by
-completion pokes instead of a polling tick.  The terms *adoption*
-gate and the fold remain as the last step:
+Steps 0-3 are landed for the term directory: the catalog
+generation hash is the cut's ground witness, frame-sensitive asks
+gate on it in `deps`, the hold machinery is deleted, the score is
+the lexicographic key, the harvest machines live in `Refinery`
+driven by completion pokes, content identity replaced every path
+hash (a cache travels; the portability rig proves it), and the
+term directory is a projection folded from per-window facts in
+canonical order — no adoption gate remains.  What remains of the
+end state:
 
-3. **The projection fold.**  The terms/spell/merge/focus/dive
-   pollers become one completion-poked dispatch over ready
-   adoption actions, folding keyed facts in canonical order;
-   adoption writes per-cut projections and the remaining
-   adoption gates dissolve.  (Overlaps the frozen structural
-   round; last, and only when its time comes.)
+3b. **The focus fold.**  focusN/adhocN adoption is still
+    arrival-ordered and participates in the term fold's
+    subtraction; folding it closes the last order-dependence.
+    (Overlaps the frozen structural round; only when its time
+    comes.)

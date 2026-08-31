@@ -389,14 +389,8 @@ MainWin::MainWin()
 	repairMenuPalette(menuBar());
 }
 
-// refinery_host: adoption waits while the corpus is reading itself
-// or a settle is pending; the pane repaints when the refinery says
+// refinery_host: the pane repaints when the refinery says
 // something moved.
-bool MainWin::adoptionHeld()
-{
-	return m_ocr.reading() || m_ocrDirty;
-}
-
 void MainWin::refineryChanged()
 {
 	refreshKnowledge();
@@ -1148,7 +1142,7 @@ void MainWin::refreshKnowledge()
 	for (Refinery::TermsWork const &w : m_refine.termsWork()) {
 		auto &[d, n] = tw[w.video];
 		++n;
-		d += m_refine.termsSeen().contains(w.id.hex());
+		d += m_refine.answered(w.id.hex());
 	}
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
