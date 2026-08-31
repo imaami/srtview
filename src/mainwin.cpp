@@ -567,6 +567,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	// identity clears its target rather than keeping the previous
 	// video's -- and its worker feeds the OCR desk from there.
 	QString const id = videoId(video);
+	m_shownIdless = id.isEmpty();
 	m_grab.setVideo(video, id);
 	if (!id.isEmpty()) {
 		m_videosById.insert(id, {video, srt, id});
@@ -665,10 +666,16 @@ void MainWin::rebuildCorpus(bool fresh)
 		if (QString const srt = srtOf(it); !srt.isEmpty())
 			m_identWant.insert(srt);
 	}
-	for (QString const &p : m_identWant)
+	for (QString const &p : m_identWant) {
+		// The stale id must not satisfy the tail below: every
+		// post re-validates the file, and an edited one answers
+		// with its new bytes' identity -- the coherence half of
+		// content-as-identity.
+		m_fileIds.remove(p);
 		m_ident.post(p);
+	}
 	updateInfo();
-	identArrived();          // a fully known batch tails at once
+	identArrived();          // an empty want set tails at once
 }
 
 // One poke's worth of finished ids; the corpus tail fires when the
@@ -702,9 +709,13 @@ void MainWin::identifiedCorpus()
 	// versus-list: a video adopted while its hash was pending is
 	// shown but unstamped, and the departed video it displaced is
 	// still a listed member -- membership of the old id proves
-	// nothing about the document on screen.
+	// nothing about the document on screen.  An idless stamp
+	// re-runs even when the re-validated id matches the trail's:
+	// the grabber and the reader were cleared, not re-aimed, when
+	// the document was shown without one.
 	if (!m_shownVideo.isEmpty()
-	    && videoId(m_shownVideo) != m_trail.videoId())
+	    && (m_shownIdless
+	        || videoId(m_shownVideo) != m_trail.videoId()))
 		showDoc(m_shownVideo, m_shownSrt);
 	// The corpus reads itself: every cue start of every entry
 	// goes to the OCR desk's plan, performed whenever demand runs

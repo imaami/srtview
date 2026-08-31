@@ -47,39 +47,35 @@ void Ident::stop()
 
 void Ident::post(QString const &path)
 {
-	bool answered;
 	{
 		std::lock_guard const lk(m_mtx);
 		if (m_stopping || path.isEmpty())
 			return;
-		answered = m_known.contains(path);
-		if (answered) {
-			// Re-answer: the owner's drain loop sees it
-			// again, so a reloaded corpus needs no memory of
-			// what an earlier load already learned.
-			m_fresh.insert(path, m_known.value(path));
-		} else if (std::ranges::find(m_queue, path)
-		           != m_queue.end()) {
+		// One pending slot per path, queued or hashing.  Nothing
+		// answered is remembered here: every new post walks the
+		// worker's stat-backed memo again, so an unchanged file
+		// costs a stat and an edited one re-hashes -- the caches
+		// keyed by content stay coherent with the disk.
+		if (m_pending.contains(path))
 			return;
-		} else {
-			m_queue.push_back(path);
-			// The pool grows to demand and never shrinks: a
-			// parked worker is a stack, a re-spawned one is a
-			// design smell.  Capped at the logical cores.
-			static unsigned const cap = std::max(1u,
-				std::thread::hardware_concurrency());
-			if (m_pool.size() < cap
-			    && m_queue.size() > m_pool.size())
-				m_pool.emplace_back(
-					[this](std::stop_token st) {
-						work(st);
-					});
-		}
+		m_pending.insert(path);
+		// A stale undrained answer must not satisfy the owner's
+		// want-set before the re-validated one lands.
+		m_fresh.remove(path);
+		m_queue.push_back(path);
+		// The pool grows to demand and never shrinks: a parked
+		// worker is a stack, a re-spawned one is a design smell.
+		// Capped at the logical cores.
+		static unsigned const cap = std::max(1u,
+			std::thread::hardware_concurrency());
+		if (m_pool.size() < cap
+		    && m_queue.size() > m_pool.size())
+			m_pool.emplace_back(
+				[this](std::stop_token st) {
+					work(st);
+				});
 	}
-	if (answered && m_poke)
-		m_poke(m_ctx);
-	else
-		m_cv.notify_one();
+	m_cv.notify_one();
 }
 
 QHash<QString, QString> Ident::drain()
@@ -133,7 +129,7 @@ void Ident::work(std::stop_token st)
 			--m_live;
 			return;
 		}
-		m_known.insert(path, id);
+		m_pending.remove(path);
 		m_fresh.insert(path, id);
 		if (hashed && !id.isEmpty()) {
 			m_memo.insert(path, {size, mtime, id});

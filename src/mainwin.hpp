@@ -179,6 +179,7 @@ private:
 	QString                         m_shownVideo, m_shownSrt;
 	bool                            m_identPending = false;
 	bool                            m_identFresh = false;
+	bool                            m_shownIdless = false;
 	std::set<std::string>           m_frameDirty;
 	bool                            m_ocrDirty = false;
 	Prefs                           m_prefs;

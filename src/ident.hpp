@@ -5,11 +5,15 @@
 // The scribe's mailbox idiom over a persistent std::jthread pool:
 // no file byte is ever hashed on the owning (UI) thread.  Workers
 // grow on demand up to the logical core count and then live
-// parked on the condvar for the app's life; a deduplicating path
-// queue feeds them, finished ids drain behind a poke, and a local
-// (size, mtime, hash) memo answers unchanged files without a
-// read -- the memo is pure acceleration, never identity, so a
-// renamed file simply re-hashes once.  The one path-derived id in
+// parked on the condvar for the app's life; a pending set dedupes
+// the path queue (queued and hashing posts absorb), finished ids
+// drain behind a poke, and a local (size, mtime, hash) memo
+// answers unchanged files without a read -- the memo is pure
+// acceleration, never identity, so a renamed file simply re-hashes
+// once.  Nothing is remembered past the answer: every new post
+// re-validates through the memo's stat, so a file edited on disk
+// re-hashes and the content-addressed caches stay coherent.  The
+// one path-derived id in
 // the program remains discovery's socket scheme: per-machine
 // runtime rendezvous, shared with srtjump, and never data
 // identity.
@@ -17,6 +21,7 @@
 #define SRTVIEW_SRC_IDENT_HPP_
 
 #include <QHash>
+#include <QSet>
 #include <QString>
 
 #include <condition_variable>
@@ -43,15 +48,14 @@ public:
 	Ident(Ident const &) = delete;
 	Ident &operator=(Ident const &) = delete;
 
-	// Queue a file for identification.  Duplicates of a queued,
-	// running or answered path are absorbed; an answered path
-	// re-pokes so the owner's drain loop needs no special case.
+	// Queue a file for identification.  Duplicates of a queued or
+	// running path are absorbed; an already-answered path queues
+	// again and re-validates against the file, unchanged ones by a
+	// stat alone.  A stale undrained answer dies with the re-post.
 	void post(QString const &path);
 
 	// Results so far, path -> id; an unreadable file answers with
 	// an empty id (the consumers' unresolvable-identity path).
-	// Draining does not forget: a repeated post of an answered
-	// path answers from memory.
 	QHash<QString, QString> drain();
 
 	// True while any queued or running job remains.
@@ -78,7 +82,7 @@ private:
 	std::condition_variable_any m_cv;
 	std::deque<QString>         m_queue;
 	unsigned                    m_live = 0;   // jobs being hashed
-	QHash<QString, QString>     m_known;      // answered this run
+	QSet<QString>               m_pending;    // queued or hashing
 	QHash<QString, QString>     m_fresh;      // not yet drained
 	QHash<QString, memo_row>    m_memo;       // acceleration only
 	bool                        m_memoDirty = false;
