@@ -181,6 +181,7 @@ void Refinery::reset(bool fresh)
 	m_harvested.clear();
 	m_termsWork.clear();
 	m_termFacts.clear();
+	m_supportSeen.clear();
 	m_diveRetired.clear();
 	m_termTopics.clear();
 	m_termInfo.clear();
@@ -190,6 +191,10 @@ void Refinery::reset(bool fresh)
 void Refinery::setSources(QList<refinery_source> sources)
 {
 	m_sources = std::move(sources);
+	// The support verdicts scanned the old source set; an extended
+	// corpus can lift a term over the floor, a shrunken one drop
+	// it.  The parse facts stay -- they are window-pure.
+	m_supportSeen.clear();
 }
 
 // Reloaded machine topics keep their roles by name stem: term* stay
@@ -835,16 +840,11 @@ bool Refinery::factOf(TermsWork const &w)
 		    || !QString::compare(means, term, Qt::CaseInsensitive)
 			? gloss
 			: means + QStringLiteral(". ") + gloss;
-		// The support floor's corpus half, memoized here: the
-		// scan depends on transcripts alone, never on the
-		// directory being folded.
-		QString const support =
-			QString::fromStdString(e.tidied)
+		// Only the floor scan's pattern is a fact of the window;
+		// its verdict counts hits across the current sources and
+		// belongs to the fold, memoized until the sources change.
+		e.support = QString::fromStdString(e.tidied)
 			+ QLatin1Char('|') + termMatcher(term).pattern();
-		e.supported = corpusHits(QRegularExpression(support,
-			QRegularExpression::CaseInsensitiveOption
-			| QRegularExpression::UseUnicodePropertiesOption),
-			2) >= 2;
 		fact.entries.push_back(std::move(e));
 	}
 	m_termFacts.insert(hex, std::move(fact));
@@ -859,7 +859,7 @@ void Refinery::adoptEntry(TermEntry const &e)
 	QString const folded = e.term.toCaseFolded();
 	// The support floor: a novel term below it founds nothing;
 	// known terms are exempt, so a rare variant still merges.
-	if (!m_termIndex.contains(folded) && !e.supported) {
+	if (!m_termIndex.contains(folded) && !supportedOf(e)) {
 		dbgHop(QStringLiteral("terms: floored [%1]")
 		       .arg(e.term));
 		return;
@@ -893,6 +893,23 @@ void Refinery::adoptEntry(TermEntry const &e)
 	m_termInfo.insert(name, {e.term, e.kind, e.shown});
 	m_termIndex.insert(folded, name);
 	indexSpellings(e.kept, name);
+}
+
+// The support floor's corpus half: two hits anywhere in the current
+// sources.  Cached per pattern and cleared when the source set
+// changes -- the verdict is corpus-relative, a fact of the corpus
+// the fold runs against, never of the window that surfaced the term.
+bool Refinery::supportedOf(TermEntry const &e)
+{
+	auto const it = m_supportSeen.constFind(e.support);
+	if (it != m_supportSeen.constEnd())
+		return it.value();
+	bool const ok = corpusHits(QRegularExpression(e.support,
+		QRegularExpression::CaseInsensitiveOption
+		| QRegularExpression::UseUnicodePropertiesOption),
+		2) >= 2;
+	m_supportSeen.insert(e.support, ok);
+	return ok;
 }
 
 // Corpus-wide match count for a pattern, stopping at cap: the

@@ -94,11 +94,14 @@ public:
 	// One validated entry of a terms reply, and a reply's worth of
 	// them: immutable facts keyed by window id, folded -- never
 	// accumulated -- into the directory.
+	// support is the floor scan's pattern, not its verdict: the
+	// verdict counts hits across the current sources, so it is
+	// corpus-relative and lives in the fold's memo, never in the
+	// window-keyed fact.
 	struct TermEntry {
-		QString     term, kind, shown;
+		QString     term, kind, shown, support;
 		QStringList kept;
 		std::string tidied;
-		bool        supported = false;
 	};
 	struct TermFact {
 		QList<TermEntry> entries;
@@ -204,6 +207,7 @@ private:
 	void dirHash();
 	int spellVerdict(QString const &a, QString const &b);
 	int corpusHits(QRegularExpression const &re, int cap);
+	bool supportedOf(TermEntry const &e);
 	QStringList termLines(QString const &term, int cap);
 	std::string expandOf(std::string const &name) const;
 	void retireDive(agenda::id id);
@@ -240,6 +244,7 @@ private:
 	std::set<std::string>           m_harvested;
 	std::vector<TermsWork>          m_termsWork;
 	QHash<QString, TermFact>        m_termFacts;
+	QHash<QString, bool>            m_supportSeen; // per source set
 	std::set<std::string>           m_termTopics;
 	QHash<QString, TermInfo>        m_termInfo;
 	QHash<QString, QString>         m_termIndex;
