@@ -121,6 +121,16 @@ constexpr float kOcrConfFloor = 60.0f;
 // uninterrupted arrivals forces the resnapshot anyway.
 constexpr qint64 kOcrSettleMaxMs = 60000;
 
+// The identity memo's home, beside the other caches.
+QString idsPath()
+{
+	QString base = qEnvironmentVariable("XDG_CACHE_HOME");
+	if (base.isEmpty())
+		base = QDir::homePath() + QStringLiteral("/.cache");
+	QDir().mkpath(base + QStringLiteral("/srtview"));
+	return base + QStringLiteral("/srtview/ids");
+}
+
 } // namespace
 
 MainWin::MainWin()
@@ -132,6 +142,11 @@ MainWin::MainWin()
 	, m_facts(hash8)
 	, m_semantic(m_facts, hash8)
 	, m_refine(m_facts, m_semantic, m_corpus, m_transcripts, this)
+	, m_ident(idsPath(), [](void *self) noexcept {
+		auto *const w = static_cast<MainWin *>(self);
+		QMetaObject::invokeMethod(w, [w] { w->identArrived(); },
+		                          Qt::QueuedConnection);
+	}, this)
 	, m_playback(m_link, m_view, *statusBar(), m_trail, m_grab,
 	             this)
 	, m_search(m_bar, m_view, *statusBar(), m_prefs, m_trail,
@@ -438,10 +453,14 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 	return showDoc(video, srt);
 }
 
+// Content identity: the id the caches, the trail and the engine
+// key on is the file's bytes, hashed off-thread by Ident -- empty
+// until the hash lands, which every consumer tolerates as the
+// unresolvable-identity case.  Paths never enter data identity;
+// discovery's path hash remains only the mpv socket rendezvous.
 QString MainWin::videoId(QString const &video)
 {
-	return QString::fromStdString(
-		m_disc.id_for_video(video.toStdString()));
+	return m_fileIds.value(video);
 }
 
 qsizetype MainWin::playlistIndex(QString const &video)
@@ -523,6 +542,8 @@ bool MainWin::visitVideo(QString const &video, QString const &srt,
 
 bool MainWin::showDoc(QString const &video, QString const &srt)
 {
+	m_shownVideo = video;
+	m_shownSrt = srt;
 	exporter::transcript const &tx =
 		exporter::load(m_transcripts, srt);
 	if (tx.cues.empty()) {
@@ -583,7 +604,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 agenda::id MainWin::offerFacts(QString const &srt)
 {
 	agenda::id const key = agenda::id::from_hex(
-		m_disc.id_for_video(srt.toStdString()));
+		m_fileIds.value(srt).toStdString());
 	if (key)
 		m_facts.offer(key, exporter::load(m_transcripts, srt)
 		                   .lines.join(QLatin1Char('\n'))
@@ -621,13 +642,60 @@ void MainWin::rebuildCorpus(bool fresh)
 		return q.isEmpty() || !QFileInfo(q).isRelative()
 		       ? q : dir.absoluteFilePath(q);
 	};
-	for (topics::video const &v : m_corpus.videos) {
-		PlayItem it{resolve(v.path), resolve(v.srt), {}};
+	for (topics::video const &v : m_corpus.videos)
+		m_playlist << PlayItem{resolve(v.path), resolve(v.srt),
+		                       {}};
+	// The identity seam: everything below depends on content ids
+	// the Ident workers may still be hashing.  The playlist and
+	// playback need none of it -- mpv speaks paths -- so the load
+	// returns live while the pool streams; the identified tail
+	// runs on the batch-complete poke, in milliseconds when the
+	// memo knows the files.
+	m_identWant.clear();
+	m_identPending = true;
+	m_identFresh = fresh;
+	for (PlayItem const &it : m_playlist) {
+		m_identWant.insert(it.video);
+		if (QString const srt = srtOf(it); !srt.isEmpty())
+			m_identWant.insert(srt);
+	}
+	for (QString const &p : m_identWant)
+		m_ident.post(p);
+	updateInfo();
+	identArrived();          // a fully known batch tails at once
+}
+
+// One poke's worth of finished ids; the corpus tail fires when the
+// wanted set is fully answered.
+void MainWin::identArrived()
+{
+	auto const fresh = m_ident.drain();
+	for (auto it = fresh.constBegin(); it != fresh.constEnd(); ++it)
+		m_fileIds.insert(it.key(), it.value());
+	if (!m_identPending)
+		return;
+	for (QString const &p : m_identWant)
+		if (!m_fileIds.contains(p))
+			return;
+	m_identPending = false;
+	identifiedCorpus();
+}
+
+// The identity-dependent half of a corpus rebuild.
+void MainWin::identifiedCorpus()
+{
+	bool const fresh = m_identFresh;
+	for (PlayItem &it : m_playlist) {
 		it.id = videoId(it.video);
 		if (!it.id.isEmpty())
 			m_videosById.insert(it.id, it);
-		m_playlist << it;
 	}
+	// The shown document was opened before its identity landed:
+	// stamp it now, so the trail, the grabber and the reader all
+	// address the right video.
+	if (!m_shownVideo.isEmpty()
+	    && indexOfId(m_trail.videoId()) < 0)
+		showDoc(m_shownVideo, m_shownSrt);
 	// The corpus reads itself: every cue start of every entry
 	// goes to the OCR desk's plan, performed whenever demand runs
 	// dry, pixels in memory only -- touched frames alone earn
@@ -671,7 +739,7 @@ void MainWin::rebuildCorpus(bool fresh)
 		refinery_source s{it.video, srtOf(it), it.id, {}};
 		if (!s.srt.isEmpty())
 			s.leaf = agenda::id::from_hex(
-				m_disc.id_for_video(s.srt.toStdString()));
+				m_fileIds.value(s.srt).toStdString());
 		rs << s;
 	}
 	m_refine.setSources(std::move(rs));
@@ -1087,7 +1155,7 @@ void MainWin::refreshKnowledge()
 		QString path;
 		if (!srt.isEmpty()) {
 			agenda::id const leaf = agenda::id::from_hex(
-				m_disc.id_for_video(srt.toStdString()));
+				m_fileIds.value(srt).toStdString());
 			if (leaf)
 				path = QString::fromStdString(
 					m_facts.locate(leaf,
@@ -1912,10 +1980,8 @@ void MainWin::feedHeat()
 			continue;
 		m_facts.heat(
 			agenda::id::from_hex(
-				m_disc.id_for_video(
-					srtOf(m_playlist[i]).toStdString()
-				)
-			),
+				m_fileIds.value(srtOf(m_playlist[i]))
+					.toStdString()),
 			kSearchHeat * m_tally[i] / m_tallyTotal
 		);
 	}
@@ -2170,6 +2236,7 @@ void MainWin::dropEvent(QDropEvent *ev)
 
 void MainWin::closeEvent(QCloseEvent *ev)
 {
+	m_ident.stop();
 	m_ocr.stop();
 	m_grab.shutdown();
 	m_link.shutdown();

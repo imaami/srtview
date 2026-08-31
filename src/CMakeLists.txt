@@ -5,6 +5,7 @@ add_executable(srtview
 	searchbar.cpp
 	playback.cpp
 	cubepane.cpp
+	ident.cpp
 	prefs.cpp
 	refinery.cpp
 	rx.cpp

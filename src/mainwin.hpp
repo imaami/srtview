@@ -11,6 +11,7 @@
 #include "exporter.hpp"
 #include "facts.hpp"
 #include "grabber.hpp"
+#include "ident.hpp"
 #include "knowledge.hpp"
 #include "loom.hpp"
 #include "mpvlink.hpp"
@@ -26,6 +27,7 @@
 #include "trail.hpp"
 
 #include <QHash>
+#include <QSet>
 #include <QLabel>
 #include <QMainWindow>
 #include <QRegularExpression>
@@ -113,6 +115,8 @@ private:
 	bool adoptionHeld() override;
 	void refineryChanged() override;
 	void rebuildCorpus(bool fresh);
+	void identArrived();
+	void identifiedCorpus();
 	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
 	void refreshKnowledge();
@@ -169,6 +173,13 @@ private:
 	// readings actually changed since the last snapshot -- tens of
 	// milliseconds per live-corpus video adds up across dozens.
 	std::map<std::string, std::vector<ocr::region>> m_regions;
+	// Content identity, filled by Ident's workers: path -> hex16
+	// id of the file's bytes.  Empty while a hash is in flight.
+	QHash<QString, QString>         m_fileIds;
+	QSet<QString>                   m_identWant;
+	QString                         m_shownVideo, m_shownSrt;
+	bool                            m_identPending = false;
+	bool                            m_identFresh = false;
 	std::set<std::string>           m_frameDirty;
 	bool                            m_ocrDirty = false;
 	Prefs                           m_prefs;
@@ -192,6 +203,7 @@ private:
 	Facts                           m_facts;
 	engine::SemanticEngine<Facts>   m_semantic;
 	Refinery                        m_refine;
+	Ident                           m_ident;
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
