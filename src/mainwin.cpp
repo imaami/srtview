@@ -1012,6 +1012,10 @@ void MainWin::rebuildSemantic()
 	// harvest from the first second on, and a name the directory
 	// unites must not be put to the judge meanwhile.
 	feedLexicon();
+	// And the pane paints what this cut just changed: without
+	// this, a resnapshot's knowledge sat stale until the pump's
+	// next pass.
+	refreshKnowledge();
 }
 
 // A video seen outside the playlist joins the corpus in memory: a
@@ -1112,6 +1116,10 @@ void MainWin::stageDive(std::string const &pattern, bool exported,
 	s.exported = exported;
 	s.generated = generated;
 	m_diveScans.push_back(std::move(s));
+	// The stager wakes its own worker: leaving the restart to
+	// whoever happened to run later made the harvest chain's call
+	// order load-bearing by accident.
+	m_diveTick.start();
 }
 
 void MainWin::diveStep()
@@ -1477,8 +1485,6 @@ void MainWin::harvestFocus()
 		m_focusPending.erase(m_focusPending.begin()
 		                     + std::ptrdiff_t(i));
 	}
-	if (m_diveAt < m_diveScans.size())
-		m_diveTick.start();
 }
 
 void MainWin::harvestOne(QString const &file)
@@ -1873,11 +1879,13 @@ void MainWin::queueTerms()
 	}
 }
 
-// Adoption in staging order, strictly: the walk stops at the first
-// window whose reply is still missing, so every session's corpus is
-// a prefix-replay of the same order however the answers arrive.  A
-// parked window starves later adoption until the next session
-// re-asks it -- determinism bought with latency.
+// Adoption in staging order, gaps skipped: each pass walks the
+// staged windows in order and adopts whatever has answered, so the
+// order is as stable as the answers allow without starving behind
+// a deferred or parked window.  Until a band completes, machine
+// topic names may shift between sessions; once it has, they
+// settle.  (The strict prefix-replay this walk once did is the
+// canonical-refold work of DESIGN.md's last step.)
 void MainWin::harvestTerms()
 {
 	// The same wait as queueTerms(): a warm cached reply for a
