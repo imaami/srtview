@@ -542,35 +542,61 @@ Facts::~Facts()
 	llm_destroy(&m_llm);
 }
 
+void Facts::setPoke(void (*poke)(void *) noexcept, void *ctx)
+{
+	m_poke = poke;
+	m_pokeCtx = ctx;
+}
+
+// Fire the landing poke when the locked work moved the count --
+// called after the lock is gone, so a poke that turns straight
+// around into landed() cannot deadlock.
+void Facts::poked(std::uint64_t before)
+{
+	if (m_poke && landed() != before)
+		m_poke(m_pokeCtx);
+}
+
 void Facts::offer(agenda::id key, std::string const &utf8Text)
 {
 	if (!key || utf8Text.empty())
 		return;
 
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm)
-		return;
-	// The witness registers before the plan is consulted: current
-	// inputs define status, never the reverse -- a done id must
-	// not keep a changed transcript out of the vault.  The hash
-	// covers the full text: clipping is presentation, and a
-	// clipped hash would tie identity to the clip limit.
-	m_vault.content(key, m_hash(utf8Text));
-	agenda::task t;
-	t.id = key;
-	t.keys = {key};
-	stage(std::move(t), utf8Text);
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		if (!m_llm)
+			return;
+		before = m_landed;
+		// The witness registers before the plan is consulted:
+		// current inputs define status, never the reverse -- a
+		// done id must not keep a changed transcript out of the
+		// vault.  The hash covers the full text: clipping is
+		// presentation, and a clipped hash would tie identity
+		// to the clip limit.
+		m_vault.content(key, m_hash(utf8Text));
+		agenda::task t;
+		t.id = key;
+		t.keys = {key};
+		stage(std::move(t), utf8Text);
+	}
+	poked(before);
 }
 
 void Facts::corpus(std::vector<agenda::task> nodes)
 {
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm)
-		return;
-	for (agenda::task &t : nodes)
-		if (settle(t))
-			m_plan.add(std::move(t));
-	advance();
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		if (!m_llm)
+			return;
+		before = m_landed;
+		for (agenda::task &t : nodes)
+			if (settle(t))
+				m_plan.add(std::move(t));
+		advance();
+	}
+	poked(before);
 }
 
 void Facts::retire(std::vector<agenda::id> const &stale)
@@ -595,10 +621,15 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 	if (!t.id || snapshot.empty())
 		return;
 
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm)
-		return;
-	stage(std::move(t), snapshot);
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		if (!m_llm)
+			return;
+		before = m_landed;
+		stage(std::move(t), snapshot);
+	}
+	poked(before);
 }
 
 // m_mtx held.  Shape before status: the vault registers the task's
@@ -793,7 +824,10 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
                       std::string const &want, std::string const &line,
                       std::uint64_t epoch, int status, bool wrote)
 {
+	std::uint64_t before;
+	{
 	std::lock_guard const lock(m_mtx);
+	before = m_landed;
 	for (lane &l : m_lane)
 		if (l.task == t.id)
 			l = {};
@@ -848,6 +882,8 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 		             "unreachable, pipeline parked\n");
 	}
 	advance();
+	}
+	poked(before);
 }
 
 // What each lane takes: answers are urgent, everything else is

@@ -17,6 +17,7 @@
 #include "ocrq.hpp"
 #include "playback.hpp"
 #include "prefs.hpp"
+#include "refinery.hpp"
 #include "search.hpp"
 #include "searchbar.hpp"
 #include "semantic_engine.hpp"
@@ -30,6 +31,7 @@
 #include <QRegularExpression>
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <string>
@@ -37,7 +39,7 @@
 
 class MainWin : public QMainWindow, private search_nav,
                 private grab_listener, private ocr_listener,
-                private video_sync
+                private video_sync, private refinery_host
 {
 public:
 	MainWin();
@@ -75,73 +77,6 @@ private:
 		QString video, srt, id;
 	};
 
-	// One background topic scan toward a dive: the corpus hits of
-	// one expanded pattern, collected a video per timer tick so a
-	// corpus load never stalls the UI thread.  The matcher stays
-	// QRegularExpression -- it is the app's pattern dialect -- and
-	// everything else is std.
-	struct DiveScan {
-		QRegularExpression      re;
-		std::string             pattern;  // expanded, for the journal
-		std::string             parts;    // excerpts, UTF-8
-		std::vector<agenda::id> deps;     // leaves of hit videos
-		agenda::id              id;       // hash of the pattern
-		std::size_t             video     = 0;
-		bool                    exported  = true;
-		bool                    generated = false; // from a focus
-	};
-
-	// A finished first-generation dive, kept for pairing: two that
-	// share a hit video stage a probe over their cache files.  The
-	// matched lines ride along to ground the pair's probe in raw
-	// transcript; scans re-run every session, so retention costs
-	// memory only, at most kDiveBudget each.
-	struct FinishedDive {
-		agenda::id              id;
-		std::vector<agenda::id> keys;
-		std::string             pattern;
-		std::string             parts;    // raw matched lines
-	};
-
-	// One staged terms window: a cue range of one transcript whose
-	// extraction the harvest maps back onto its video.  Windows
-	// re-derive deterministically each session, so records exist
-	// for cached replies too.
-	struct TermsWork {
-		agenda::id id;
-		QString    video, srt;
-		int        first = 0, last = 0;
-	};
-
-	// Directory metadata for one term topic, rebuilt every session
-	// from the cached replies by the same harvest that adopts: the
-	// display term (the topic name is an opaque termN), its kind,
-	// and the machine's gloss (shown unless the external sidecar
-	// overrides it).
-	struct TermInfo {
-		QString term;
-		QString kind;
-		QString gloss;
-	};
-
-	// A dive pair awaiting its interactive focus: the probe asks
-	// what to search, the app runs the search, the write turns the
-	// evidence into prose.  The probe's ask carries a TRANSCRIPT
-	// sample of both dives' matched lines, kept here so a retry
-	// re-sends the same evidence.  One feedback retry covers a
-	// missing, invalid or matchless regex; cache files gate every
-	// step, so records rebuild from them each session.
-	struct PendingFocus {
-		agenda::id              probe;    // the staged ask
-		agenda::id              retry;    // corrected ask, or none
-		agenda::id              focus;    // write task / pair id
-		std::vector<agenda::id> deps;     // the two dive ids
-		std::vector<agenda::id> keys;     // union of pair keys
-		std::string             note;     // "apat ~ bpat"
-		std::string             raw;      // TRANSCRIPT section
-		bool                    scanning = false;
-	};
-
 	// The four zoom domains, nested: captions and the search bar
 	// chrome scale from the base (application) font, the pattern
 	// text from the chrome.  Ctrl +/-/0 act on the domain under
@@ -175,55 +110,16 @@ private:
 	// into the destination video.
 	bool visitVideo(QString const &video, QString const &srt,
 	                bool &switched);
+	bool adoptionHeld() override;
+	void refineryChanged() override;
 	void rebuildCorpus(bool fresh);
 	void adoptVideo(QString const &video, QString const &srt);
 	agenda::id offerFacts(QString const &srt);
-	void queueDives(bool fresh);
-	void stageDive(std::string const &pattern, bool exported,
-	               bool generated);
-	void diveStep();
-	void scanDiveVideo(DiveScan &s, PlayItem const &it);
-	void finishDive(DiveScan &s);
-	void pairFocus(DiveScan const &s);
-	void stageProbe(FinishedDive const &a, DiveScan const &b);
-	agenda::task probeTask(PendingFocus const &w,
-	                       agenda::id ask) const;
-	void pumpProbes();
-	bool pumpProbe(PendingFocus &w);
-	bool retryProbe(PendingFocus &w, std::string const &feedback);
-	void stageFocusScan(agenda::id id, std::string const &pattern,
-	                    QRegularExpression const &re);
-	bool finishProbe(DiveScan const &s, PendingFocus &w);
-	std::size_t focusWorkOf(agenda::id id) const;
-	void harvestFocus();
-	void harvestOne(QString const &file);
-	void seedGenerated();
-	void queueTerms();
-	void harvestTerms();
-	bool harvestTermsOne(TermsWork const &w);
-	static QRegularExpression termMatcher(QString const &term);
-	int corpusHits(QRegularExpression const &re, int cap);
-	QStringList termLines(QString const &term, int cap);
-	void stageSpellPair(QString const &a, QString const &b,
-	                    QString const &title);
-	void harvestSpell();
-	void tallySpellVote(agenda::id vote, int &same, int &diff);
-	std::string expandOf(std::string const &name) const;
-	void retireDive(agenda::id id);
-	void stageTopic(std::string const &name);
-	void indexSpellings(QStringList const &seen,
-	                    QString const &owner);
-	void stageMerge();
-	void harvestMerge();
-	void foldLine(QString const &line);
-	void dropTopic(QString const &name);
-	bool mergeSpelling(QString const &owner, QString const &spell);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	void semanticSelected(QTreeWidgetItem const *item);
 	void chatAsked();
 	void semanticStep();
-	void feedLexicon();
 	void showEvidence(std::vector<semantic::citation> const &cites);
 	QString glossPath() const;
 	void loadGloss();
@@ -295,6 +191,7 @@ private:
 	Grabber                         m_grab;
 	Facts                           m_facts;
 	engine::SemanticEngine<Facts>   m_semantic;
+	Refinery                        m_refine;
 	PlaybackCtl                     m_playback;
 	SearchCtl                       m_search;
 	QLabel                          m_state;
@@ -305,49 +202,8 @@ private:
 	QTimer                          m_ocrSettle; // debounced frame
 	                                             // resnapshot
 	QElapsedTimer                   m_ocrFirstDirty; // its ceiling
-	QTimer                          m_diveTick;  // topic scan pump
-	QTimer                          m_pump;      // harvest pump
-	std::vector<DiveScan>           m_diveScans; // staged scans
-	std::size_t                     m_diveAt = 0;// scan cursor
-	unsigned                        m_pumped = 0;// pump ticks
-	std::vector<FinishedDive>       m_dives;     // for pairing
-	std::set<std::string>           m_diveRetired; // superseded
-	                                             // mid-session
-	// A written focus file awaiting harvest, still owned by its
-	// pair: the dive ids ride along so retiring a dive can pull
-	// the chain's conclusion too.
-	struct PendingFile {
-		agenda::id              id;
-		std::vector<agenda::id> deps;
-	};
-	std::vector<PendingFocus>       m_focusWork; // probe chains
-	std::vector<PendingFile>        m_focusPending; // to harvest
-	std::set<std::string>           m_generated; // machine topic names
-	std::set<std::string>           m_harvested; // focus ids seen
+	QTimer                          m_pump;      // engine pump
 	std::vector<topics::gloss_entry> m_gloss;    // sidecar, loaded
-	std::vector<TermsWork>          m_termsWork; // staged windows
-	std::set<std::string>           m_termsSeen; // harvested ids
-	// One nominated-pair verdict in flight: three salted votes over
-	// the same pre-substituted evidence; two SAME fold the suspect
-	// into the anchor's owner (and the nominated corrected
-	// spelling takes the title), any settled majority retires the
-	// pair.
-	struct SpellWork {
-		QString    a, b;      // anchor and suspect display terms
-		QString    title;     // nominated corrected spelling
-		agenda::id vote[3];
-	};
-	std::vector<SpellWork>          m_spellWork; // verdicts pending
-	std::set<QString>               m_spellSeen; // settled pairs
-	agenda::id                      m_mergeId;   // directory fold ask
-	QHash<QString, QString>         m_mergeSet;  // folded -> staged term
-	std::set<std::string>           m_mergeSeen; // folded reply ids
-	std::set<std::string>           m_termTopics;// index-only names
-	QHash<QString, TermInfo>        m_termInfo;  // name -> directory
-	QHash<QString, QString>         m_termIndex; // folded term -> name
-	std::vector<std::vector<std::string>>
-	                                m_lexicon;   // groups the
-	                                             // engine has
 	agenda::id                      m_rootId;    // pyramid root
 	std::vector<agenda::id>         m_chatPending;
 	QList<int>                      m_tally;     // hits per video

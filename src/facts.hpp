@@ -129,6 +129,15 @@ public:
 	// A harvester that saw the count unchanged need not look again.
 	std::uint64_t landed() const;
 
+	// The landing poke, the scribe's exact shape: fired once per
+	// call that advanced landed() -- a model completion, or offers
+	// resolving cache hits -- outside the mutex, on whichever
+	// thread landed the artifact.  It must be cheap, thread-safe
+	// and noexcept; the Qt owner wraps it into a queued call.
+	// Wire once, before the first offer, from the owning thread;
+	// the pointer is read unlocked thereafter.
+	void setPoke(void (*poke)(void *) noexcept, void *ctx);
+
 	// Whether nothing will land for a task: it failed this session
 	// -- refused, timed out, errored or cancelled -- and was parked
 	// without an artifact, or the pipeline as a whole is parked
@@ -165,6 +174,7 @@ private:
 	               std::string const &want, std::string const &line,
 	               std::uint64_t epoch, int status, bool wrote);
 	bool settle(agenda::task const &t);
+	void poked(std::uint64_t before);
 	void stage(agenda::task t, std::string const &body);
 	void advance();
 	bool submit(agenda::task const &t, std::size_t lane);
@@ -196,6 +206,8 @@ private:
 	lane               m_lane[2];   // [0] background, [1] urgent
 	std::uint64_t      m_epoch = 0; // reset generation
 	std::uint64_t      m_landed = 0; // artifacts made available
+	void             (*m_poke)(void *) noexcept = nullptr;
+	void              *m_pokeCtx = nullptr;
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;

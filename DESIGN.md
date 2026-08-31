@@ -185,10 +185,13 @@ a unit test cannot vouch for a boundary it does not own.
 
 ## From here to there
 
-Steps 0-2 are landed: the catalog generation hash is the cut's
-ground witness, frame-sensitive asks gate on it in `deps`, the
-hold machinery is deleted, and the score is the lexicographic
-key.  The terms *adoption* gate remains with the last step:
+Steps 0-2 are landed, and step 3's dispatch half with them: the
+catalog generation hash is the cut's ground witness,
+frame-sensitive asks gate on it in `deps`, the hold machinery is
+deleted, the score is the lexicographic key, and the harvest
+machines live in their own controller (`Refinery`), driven by
+completion pokes instead of a polling tick.  The terms *adoption*
+gate and the fold remain as the last step:
 
 3. **The projection fold.**  The terms/spell/merge/focus/dive
    pollers become one completion-poked dispatch over ready

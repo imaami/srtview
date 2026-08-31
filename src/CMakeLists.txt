@@ -6,6 +6,7 @@ add_executable(srtview
 	playback.cpp
 	cubepane.cpp
 	prefs.cpp
+	refinery.cpp
 	rx.cpp
 	trail.cpp
 	grabber.cpp
