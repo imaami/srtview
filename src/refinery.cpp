@@ -254,6 +254,21 @@ void Refinery::stageDive(std::string const &pattern, bool exported,
 	if (!s.re.isValid())
 		return;
 	s.id = diveId(pattern);
+	// A pattern the fold retired and later re-blessed un-retires
+	// here: the mark meant "this exact pattern is gone", and a
+	// deliberate stage says otherwise -- without this, a term
+	// topic that left the directory in one pass and returned in a
+	// later one could never scan again for the session.  Its
+	// abandoned husks -- excerpts dropped, cursor advanced -- are
+	// removed so the fresh scan starts whole.
+	if (m_diveRetired.erase(s.id.hex()))
+		for (std::size_t i = m_diveScans.size(); i-- > 0;)
+			if (m_diveScans[i].id == s.id) {
+				m_diveScans.erase(m_diveScans.begin()
+				                  + std::ptrdiff_t(i));
+				if (i < m_diveAt)
+					--m_diveAt;
+			}
 	for (DiveScan const &d : m_diveScans)
 		if (d.id == s.id)
 			return;
