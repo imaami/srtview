@@ -457,8 +457,20 @@ QString MainWin::videoId(QString const &video)
 	return m_fileIds.value(video);
 }
 
+// Membership by resolved path first: entries store absolute paths,
+// and content ids are empty while Ident's pool is still hashing a
+// cold corpus -- an id-only lookup here made every first load of a
+// playlist re-adopt its own first video.  The id fallback then
+// unifies byte-identical copies under different names.  Paths never
+// enter data identity; this is list membership, the same plumbing
+// domain as mpv speaking paths.
 qsizetype MainWin::playlistIndex(QString const &video)
 {
+	QString const path = QFileInfo(video).absoluteFilePath();
+	for (qsizetype i = 0; i < m_playlist.size(); ++i)
+		if (QFileInfo(m_playlist[i].video).absoluteFilePath()
+		    == path)
+			return i;
 	return indexOfId(videoId(video));
 }
 
