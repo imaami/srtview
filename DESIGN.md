@@ -191,12 +191,10 @@ gate on it in `deps`, the hold machinery is deleted, the score is
 the lexicographic key, the harvest machines live in `Refinery`
 driven by completion pokes, content identity replaced every path
 hash (a cache travels; the portability rig proves it), and the
-term directory is a projection folded from per-window facts in
-canonical order — no adoption gate remains.  What remains of the
-end state:
-
-3b. **The focus fold.**  focusN/adhocN adoption is still
-    arrival-ordered and participates in the term fold's
-    subtraction; folding it closes the last order-dependence.
-    (Overlaps the frozen structural round; only when its time
-    comes.)
+term directory AND the focus set are projections folded from
+facts in canonical order — one unified erase, terms then focuses,
+dives derived from the final directory, no adoption gate anywhere.
+adhocN topics stay event-ordered by design: a committed search is
+a user action, and user actions are base-plane input in the order
+they happened.  The migration is complete; what this page
+describes is what the program now is.

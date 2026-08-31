@@ -156,7 +156,8 @@ void Refinery::reset(bool fresh)
 		return;
 	m_dives.clear();
 	m_focusWork.clear();
-	m_focusPending.clear();
+	m_focusOrder.clear();
+	m_focusFacts.clear();
 	m_generated.clear();
 	m_harvested.clear();
 	m_termsWork.clear();
@@ -418,17 +419,12 @@ void Refinery::stageProbe(FinishedDive const &a, DiveScan const &b)
 	// when the dive chain is computable; on a cold start the dive
 	// prose may still be pending, so bare existence via locate()
 	// must also count -- otherwise a cached thread gets re-probed.
+	if (!std::ranges::any_of(m_focusOrder,
+		[&fid](FocusPair const &p) { return p.id == fid; }))
+		m_focusOrder.push_back({fid, a.id, b.id});
 	if (m_facts.cached(written)
-	    || !m_facts.locate(fid, agenda::kind::focus).empty()) {
-		// An extension restage can revisit the pair: one pending
-		// entry per file is plenty.
-		if (!std::ranges::any_of(m_focusPending,
-			[&fid](PendingFile const &p) {
-				return p.id == fid;
-			}))
-			m_focusPending.push_back({fid, {a.id, b.id}});
-		return;
-	}
+	    || !m_facts.locate(fid, agenda::kind::focus).empty())
+		return;         // the fold reads the landed file
 	PendingFocus w;
 	w.probe = probeId(a.id, b.id, false);
 	w.focus = fid;
@@ -565,58 +561,36 @@ bool Refinery::finishProbe(DiveScan const &s, PendingFocus &w)
 	t.what = agenda::kind::focus;
 	t.exported = false;
 	m_facts.offer(std::move(t), s.parts);
-	// The write lands asynchronously; the pending list lets the
-	// harvest tick pick it up once the file exists.
-	m_focusPending.push_back({w.focus, w.deps});
+	// The write lands asynchronously; its landing pokes the
+	// dispatch and the fold reads the file by pair id.
 	return false;
 }
 
-// Harvest completed focuses: NONE verdicts and malformed regex
-// lines are final; a valid REGEX line joins the corpus as a
-// generated topic (focusN) and dives like any other, supportive.
-// Runs on a slow tick and at every corpus rebuild.  Candidates come
-// from the pending list the pair flow feeds -- never from a scan of
-// the shared cache directory, whose files belong to every corpus
-// ever studied: a thread re-enters exactly the corpus that
-// re-derives its pair.
-void Refinery::harvestFocus()
+// The focus facts stage: one landed pair file parsed once into
+// its pattern -- empty for NONE, a buried hypothesis, a malformed
+// or invalid regex.  artifact() resolves by bare id on purpose:
+// it adopts a stale name the moment the pair's prose makes the
+// chain computable, so the journaled adoption lands in the
+// session that owns it.
+bool Refinery::focusFactOf(agenda::id id)
 {
-	// Terms before focus is the CALL order, per tick and at load:
-	// every answered window has adopted by the time this runs.  A
-	// complete cache thus still replays terms-then-focus exactly;
-	// only a partial band lets a focus adopt against not-yet-
-	// complete term subtractions, which beats adopting nothing.
-	for (std::size_t i = 0; i < m_focusPending.size();) {
-		agenda::id const id = m_focusPending[i].id;
-		// resolve-by-id: adopts a stale name the moment the
-		// pair's prose makes the chain computable, so the
-		// journaled adoption lands in the session that owns it.
-		std::string const p = m_facts.artifact(id);
-		if (p.empty()) {             // not yet landed or ripe
-			++i;
-			continue;
-		}
-		if (m_harvested.insert(id.hex()).second)
-			harvestOne(QString::fromStdString(p));
-		m_focusPending.erase(m_focusPending.begin()
-		                     + std::ptrdiff_t(i));
-	}
-}
-
-void Refinery::harvestOne(QString const &file)
-{
-	QFile f(file);
+	QString const hex = QString::fromStdString(id.hex());
+	if (m_focusFacts.contains(hex))
+		return true;
+	std::string const p = m_facts.artifact(id);
+	if (p.empty())
+		return false;                // not yet landed or ripe
+	QFile f(QString::fromStdString(p));
 	if (!f.open(QIODevice::ReadOnly))
-		return;
+		return false;
 	std::string const text = f.readAll().toStdString();
-	if (text.starts_with("NONE"))
-		return;
+	QString pattern;
 	std::string pat;
 	if (text.starts_with("REGEX:")) {
-		// The interactive shape: a machine-written head names the
-		// searched regex and prose follows -- unless the model saw
-		// the evidence and still judged the thread hollow, which
-		// buries the hypothesis with it.
+		// The interactive shape: a machine-written head names
+		// the searched regex and prose follows -- unless the
+		// model saw the evidence and still judged the thread
+		// hollow, which buries the hypothesis with it.
 		std::size_t nl = text.find('\n');
 		if (nl == std::string::npos)
 			nl = text.size();
@@ -625,25 +599,17 @@ void Refinery::harvestOne(QString const &file)
 		while (body < text.size() && text[body] == '\n')
 			++body;
 		if (text.compare(body, 4, "NONE") == 0)
-			return;
-	} else {
+			pat.clear();
+	} else if (!text.starts_with("NONE")) {
 		// The one-shot shape closed with the line instead.
 		pat = regexLine(text);
 	}
-	if (pat.empty()
-	    || !QRegularExpression(QString::fromStdString(pat)).isValid())
-		return;
-	// adopt_novel() is the gate: branches the corpus already covers
-	// (user-authored topics included) are subtracted, and a regex
-	// with nothing novel left adopts nothing -- the focus file's
-	// prose remains; only the redundant topic and its dive are
-	// declined.  What survives is the pattern from here on.
-	std::string const kept = topics::adopt_novel(m_corpus, pat,
-	                                             "focus");
-	if (kept.empty())
-		return;
-	m_generated.insert(m_corpus.topics.back().name);
-	stageDive(kept, false, true);
+	if (!pat.empty()
+	    && QRegularExpression(
+		QString::fromStdString(pat)).isValid())
+		pattern = QString::fromStdString(pat);
+	m_focusFacts.insert(hex, pattern);
+	return true;
 }
 
 // The completion-poked dispatch: one pass over every harvest
@@ -666,8 +632,7 @@ void Refinery::harvestChain(bool kick)
 	       .arg(landed)
 	       .arg(kick ? QStringLiteral(", kicked") : QString()));
 	pumpProbes();
-	refoldTerms();
-	harvestFocus();
+	refold();
 	feedLexicon();
 	m_host->refineryChanged();
 }
@@ -937,11 +902,11 @@ void Refinery::retireDive(agenda::id id)
 	std::erase_if(m_focusWork, [&id](PendingFocus const &w) {
 		return std::ranges::find(w.deps, id) != w.deps.end();
 	});
-	// A concluded-but-unharvested chain of the retired dive would
-	// adopt from the stale pattern -- a fold a warm replay never
-	// stages.  The file stays as cache; the adoption does not run.
-	std::erase_if(m_focusPending, [&id](PendingFile const &p) {
-		return std::ranges::find(p.deps, id) != p.deps.end();
+	// A retired dive's pairs leave the fold order: their files
+	// stay as cache, but the fold stops adopting from the stale
+	// pattern -- a pair a warm replay never stages.
+	std::erase_if(m_focusOrder, [&id](FocusPair const &p) {
+		return p.a == id || p.b == id;
 	});
 }
 
@@ -1075,29 +1040,45 @@ void Refinery::tallySpellVote(agenda::id vote, int &same, int &diff)
 // fields and merge outcomes stop depending on arrival order --
 // and a stale generation's replies exclude themselves, because
 // the fold reads facts only for the windows this cut staged.
-void Refinery::refoldTerms()
+void Refinery::refold()
 {
 	// Facts for whatever has landed; missing replies stay
 	// unanswered and simply leave gaps this fold.
 	bool changed = false;
 	for (TermsWork const &w : m_termsWork)
 		changed |= factOf(w);
-	// The outgoing directory's dive patterns, for the sync diff.
-	std::set<std::string> oldPats;
+	for (FocusPair const &p : m_focusOrder)
+		changed |= focusFactOf(p.id);
+	// The outgoing directory's dive patterns, for the sync diff:
+	// terms exported, focuses supportive.
+	std::map<std::string, bool> oldPats;
 	for (std::string const &n : m_termTopics)
-		oldPats.insert(expandOf(n));
-	// Tear down: machine term topics leave the corpus (a
-	// referenced one is load-bearing and stays, exactly
-	// dropTopic's guard), and the directory state clears.
+		oldPats.emplace(expandOf(n), true);
+	std::set<std::string> oldFocus;
+	for (std::string const &n : m_generated)
+		if (topics::stem_name(n, "focus")) {
+			oldFocus.insert(n);
+			oldPats.emplace(expandOf(n), false);
+		}
+	// Tear down BOTH machine families at once -- a fold that
+	// erased one at a time would subtract each against the
+	// other's stale generation.  A referenced topic is
+	// load-bearing and stays, exactly dropTopic's guard; adhocN
+	// stays too: a committed search is a user action, and user
+	// actions are base-plane input in the order they happened.
 	std::set<std::string> keep;
 	for (topics::topic const *r : topics::components(m_corpus))
 		keep.insert(r->name);
 	std::erase_if(m_corpus.topics, [&](topics::topic const &tp) {
-		return m_termTopics.contains(tp.name)
+		return (m_termTopics.contains(tp.name)
+		        || oldFocus.contains(tp.name))
 		    && !keep.contains(tp.name);
 	});
 	for (std::string const &n : m_termTopics)
 		m_generated.erase(n);
+	for (std::string const &n : oldFocus)
+		m_generated.erase(n);
+	m_harvested.clear();
 	m_termTopics.clear();
 	m_termInfo.clear();
 	m_termIndex.clear();
@@ -1169,6 +1150,23 @@ void Refinery::refoldTerms()
 		for (QString const &l :
 		     reply.split(QLatin1Char('\n')))
 			foldLine(l, stagedSet);
+	}
+	// The focus fold: adoption in the deterministic pair order the
+	// staged-scan sequence produced, against the freshly folded
+	// term directory -- adopt_novel() stays the gate, so branches
+	// the corpus already covers still adopt nothing.
+	for (FocusPair const &p : m_focusOrder) {
+		auto const it = m_focusFacts.constFind(
+			QString::fromStdString(p.id.hex()));
+		if (it == m_focusFacts.constEnd())
+			continue;
+		m_harvested.insert(p.id.hex());
+		if (it->isEmpty())
+			continue;
+		std::string const kept = topics::adopt_novel(
+			m_corpus, it->toStdString(), "focus");
+		if (!kept.empty())
+			m_generated.insert(m_corpus.topics.back().name);
 	}
 	diveSync(oldPats);
 	if (changed)
@@ -1245,17 +1243,22 @@ void Refinery::foldLine(QString const &line,
 // the fold produced stage, patterns it dissolved retire -- and no
 // intermediate pattern ever touches the retired set, which is what
 // used to poison later folds.
-void Refinery::diveSync(std::set<std::string> const &oldPats)
+void Refinery::diveSync(std::map<std::string, bool> const &oldPats)
 {
-	std::set<std::string> newPats;
+	// exported terms, supportive focuses -- the flags each family
+	// has always carried.
+	std::map<std::string, bool> newPats;
 	for (std::string const &n : m_termTopics)
-		newPats.insert(expandOf(n));
-	for (std::string const &p : oldPats)
+		newPats.emplace(expandOf(n), true);
+	for (std::string const &n : m_generated)
+		if (topics::stem_name(n, "focus"))
+			newPats.emplace(expandOf(n), false);
+	for (auto const &[p, x] : oldPats)
 		if (!newPats.contains(p) && !p.empty())
 			retireDive(diveId(p));
-	for (std::string const &p : newPats)
+	for (auto const &[p, x] : newPats)
 		if (!oldPats.contains(p) && !p.empty())
-			stageDive(p, true, false);
+			stageDive(p, x, !x);
 }
 
 // The fold's acceptance instrument: one line naming the directory
@@ -1273,6 +1276,11 @@ void Refinery::dirHash()
 			+ QLatin1Char('\t')
 			+ QString::fromStdString(expandOf(n));
 	}
+	for (std::string const &n : m_generated)
+		if (topics::stem_name(n, "focus"))
+			rows << QString::fromStdString(n)
+				+ QLatin1Char('\t')
+				+ QString::fromStdString(expandOf(n));
 	rows.sort();
 	QCryptographicHash h(QCryptographicHash::Blake2b_256);
 	h.addData(QByteArrayView("dir\n"));

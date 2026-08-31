@@ -20,6 +20,7 @@
 #include <QTimer>
 
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -169,11 +170,6 @@ private:
 		bool                    scanning = false;
 	};
 
-	struct PendingFile {
-		agenda::id              id;
-		std::vector<agenda::id> deps;
-	};
-
 	static void poke(void *self) noexcept;
 
 	void diveStep();
@@ -189,15 +185,14 @@ private:
 	void stageFocusScan(agenda::id id, std::string const &pattern,
 	                    QRegularExpression const &re);
 	bool finishProbe(DiveScan const &s, PendingFocus &w);
-	void harvestFocus();
-	void harvestOne(QString const &file);
 	void queueTerms();
 	bool factOf(TermsWork const &w);
+	bool focusFactOf(agenda::id id);
 	void adoptEntry(TermEntry const &e);
-	void refoldTerms();
+	void refold();
 	void foldLine(QString const &line,
 	              QHash<QString, QString> const &stagedSet);
-	void diveSync(std::set<std::string> const &oldPats);
+	void diveSync(std::map<std::string, bool> const &oldPats);
 	void dirHash();
 	int spellVerdict(QString const &a, QString const &b);
 	int corpusHits(QRegularExpression const &re, int cap);
@@ -226,7 +221,13 @@ private:
 	std::vector<FinishedDive>       m_dives;
 	std::set<std::string>           m_diveRetired;
 	std::vector<PendingFocus>       m_focusWork;
-	std::vector<PendingFile>        m_focusPending;
+	// The deterministic pair order the staged-scan sequence
+	// produced: the fold adopts focuses in exactly this order.
+	struct FocusPair {
+		agenda::id id, a, b;
+	};
+	std::vector<FocusPair>          m_focusOrder;
+	QHash<QString, QString>         m_focusFacts;
 	std::set<std::string>           m_generated;
 	std::set<std::string>           m_harvested;
 	std::vector<TermsWork>          m_termsWork;
