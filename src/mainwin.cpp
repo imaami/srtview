@@ -698,9 +698,13 @@ void MainWin::identifiedCorpus()
 	}
 	// The shown document was opened before its identity landed:
 	// stamp it now, so the trail, the grabber and the reader all
-	// address the right video.
+	// address the right video.  Shown-versus-trail, not trail-
+	// versus-list: a video adopted while its hash was pending is
+	// shown but unstamped, and the departed video it displaced is
+	// still a listed member -- membership of the old id proves
+	// nothing about the document on screen.
 	if (!m_shownVideo.isEmpty()
-	    && indexOfId(m_trail.videoId()) < 0)
+	    && videoId(m_shownVideo) != m_trail.videoId())
 		showDoc(m_shownVideo, m_shownSrt);
 	// The corpus reads itself: every cue start of every entry
 	// goes to the OCR desk's plan, performed whenever demand runs
