@@ -164,6 +164,15 @@ void Refinery::reset(bool fresh)
 {
 	if (!fresh)
 		return;
+	// A replaced corpus stops its scans on the spot.  The identity
+	// seam leaves a hashing window between this reset and the new
+	// queueDives(); a tick surviving into it would keep scanning
+	// the old sources and submit the old corpus's dives into the
+	// new pipeline, which nothing would ever retire.
+	m_diveScans.clear();
+	m_diveAt = 0;
+	m_diveTick.stop();
+	m_sources.clear();
 	m_dives.clear();
 	m_focusWork.clear();
 	m_focusOrder.clear();
