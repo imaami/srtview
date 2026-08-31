@@ -193,7 +193,9 @@ driven by completion pokes, content identity replaced every path
 hash (a cache travels; the portability rig proves it), and the
 term directory AND the focus set are projections folded from
 facts in canonical order — one unified erase, terms then focuses,
-dives derived from the final directory, no adoption gate anywhere.
+dives derived from the final directory, and no separate adoption
+gate outside the plan: admission is `plan::ready()` alone, every
+frame-sensitive ask carrying its cut's ground witness in `deps`.
 adhocN topics stay event-ordered by design: a committed search is
 a user action, and user actions are base-plane input in the order
 they happened.  The migration is complete; what this page
