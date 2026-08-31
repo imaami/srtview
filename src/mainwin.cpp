@@ -511,9 +511,16 @@ void MainWin::mpvSwitched(int index)
 	if (index < 0 || index >= int(m_playlist.size()))
 		return;
 	PlayItem const &it = m_playlist[qsizetype(index)];
-	if (!it.id.isEmpty() && it.id == m_trail.videoId())
-		return;                      // our own navigation echoed
-	if (QString const srt = srtOf(it); !srt.isEmpty())
+	QString const srt = srtOf(it);
+	// Our own navigation echoed -- judged by the entry, which under
+	// content identity is the (video bytes, subtitle) pair: a
+	// playlist may deliberately pair one video's bytes with
+	// alternate transcripts, and hopping between those entries must
+	// switch the document even though the video id stays put.
+	if (!it.id.isEmpty() && it.id == m_trail.videoId()
+	    && srt == m_shownSrt)
+		return;
+	if (!srt.isEmpty())
 		showDoc(it.video, srt);
 }
 
