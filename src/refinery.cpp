@@ -961,14 +961,6 @@ void Refinery::retireDive(agenda::id id)
 	});
 }
 
-// Mid-session adoptions dive immediately: queueDives runs only at
-// load, and an unstaged topic would idle a session.
-void Refinery::stageTopic(std::string const &name)
-{
-	if (std::string const pat = expandOf(name); !pat.empty())
-		stageDive(pat, false, false);
-}
-
 // Every validated spelling joins the index, first owner wins: a
 // later window proposing a known VARIANT as its term ("TERM:
 // gidger" after gidger was seen under ghidra) must grow the owner,

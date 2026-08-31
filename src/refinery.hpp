@@ -211,7 +211,6 @@ private:
 	QStringList termLines(QString const &term, int cap);
 	std::string expandOf(std::string const &name) const;
 	void retireDive(agenda::id id);
-	void stageTopic(std::string const &name);
 	void indexSpellings(QStringList const &seen,
 	                    QString const &owner);
 	void tallySpellVote(agenda::id vote, int &same, int &diff);
