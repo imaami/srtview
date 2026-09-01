@@ -91,9 +91,22 @@ void Trail::act(trail_step const &s)
 {
 	if (m_applying || !s.flags)
 		return;
-	if (s.flags & trail_step::video)
-		m_lastVideo = s.time;
-	QByteArray const b = encode(stamp(s));
+	trail_step t = s;
+	// A position in no known video is not a breadcrumb: while the
+	// shown document's identity is still hashing, the owner clears
+	// the registered video, and a step that would inherit the
+	// blank sheds its video facet -- stamping the previous video's
+	// id here once sent undo hopping into the wrong file.  A step
+	// carrying its own vid (a recorded departure) keeps it.
+	if ((t.flags & trail_step::video) && t.vid.isEmpty()
+	    && m_vid.isEmpty()) {
+		t.flags &= ~unsigned(trail_step::video);
+		if (!t.flags)
+			return;
+	}
+	if (t.flags & trail_step::video)
+		m_lastVideo = t.time;
+	QByteArray const b = encode(stamp(t));
 	int const rc = fundo_act(&m_f, b.constData(), std::size_t(b.size()));
 	if (rc)  // breadcrumb lost (OOM): playback state is unaffected,
 	         // but silent loss would make the trail lie later

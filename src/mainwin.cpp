@@ -614,6 +614,13 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		m_videosById.insert(id, {video, srt, id});
 		m_trail.setVideo(id);
 		m_ocr.prefer(id);    // its reading remainder first
+	} else {
+		// The trail must not keep naming the departed video while
+		// this one's identity hashes: a step stamped with it would
+		// send undo into the wrong file.  With no video registered
+		// the trail sheds video facets instead of guessing, and
+		// the identified tail re-stamps through showDoc.
+		m_trail.setVideo(QString());
 	}
 	// Two heat namespaces, warmed together: the srt leaf drives
 	// the summary pyramid, the (video, subtitle) pair drives the
