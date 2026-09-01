@@ -589,8 +589,6 @@ bool MainWin::visitVideo(QString const &video, QString const &srt,
 
 bool MainWin::showDoc(QString const &video, QString const &srt)
 {
-	m_shownVideo = video;
-	m_shownSrt = srt;
 	exporter::transcript const &tx =
 		exporter::load(m_transcripts, srt);
 	if (tx.cues.empty()) {
@@ -601,6 +599,13 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 		       : fail(QStringLiteral("%1: %2")
 		              .arg(srt, f.errorString()));
 	}
+	// Shown means validated: claiming the pair before the
+	// transcript check made a failed open the comparison baseline
+	// -- the identity tail retried the broken document, and the
+	// mpv echo guard judged switches against a file never on
+	// screen.
+	m_shownVideo = video;
+	m_shownSrt = srt;
 
 	// Register under the discovery identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.
