@@ -542,14 +542,14 @@ Facts::~Facts()
 	llm_destroy(&m_llm);
 }
 
-// The mutex is the detachment barrier: setPoke(nullptr) returns
-// only once no worker is inside the callback, so the owner may
-// detach in its destructor and die.  The callback in turn must not
-// re-enter Facts -- it runs under m_mtx now, and its one real
-// implementation only queues a Qt invocation.
+// The poke mutex is the detachment barrier: setPoke(nullptr)
+// returns only once no thread is inside the callback, so the owner
+// may detach in its destructor and die.  It is never held together
+// with m_mtx, so a callback may re-enter Facts freely -- landed(),
+// locate(), whatever it needs.
 void Facts::setPoke(void (*poke)(void *) noexcept, void *ctx)
 {
-	std::lock_guard const lock(m_mtx);
+	std::lock_guard const lock(m_pokeMtx);
 	m_poke = poke;
 	m_pokeCtx = ctx;
 }
@@ -559,8 +559,10 @@ void Facts::setPoke(void (*poke)(void *) noexcept, void *ctx)
 // it held.
 void Facts::poked(std::uint64_t before)
 {
-	std::lock_guard const lock(m_mtx);
-	if (m_poke && m_landed != before)
+	if (landed() == before)
+		return;
+	std::lock_guard const lock(m_pokeMtx);
+	if (m_poke)
 		m_poke(m_pokeCtx);
 }
 

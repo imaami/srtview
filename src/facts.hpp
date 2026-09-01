@@ -206,6 +206,8 @@ private:
 	lane               m_lane[2];   // [0] background, [1] urgent
 	std::uint64_t      m_epoch = 0; // reset generation
 	std::uint64_t      m_landed = 0; // artifacts made available
+	std::mutex         m_pokeMtx;  // callback lifetime barrier,
+	                               // never held together with m_mtx
 	void             (*m_poke)(void *) noexcept = nullptr;
 	void              *m_pokeCtx = nullptr;
 	llm               *m_llm = nullptr;
