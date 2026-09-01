@@ -2,7 +2,7 @@
 // decorator satisfying the same one-call backend concept it wraps,
 // so scribe<archive<lector>> reads a frame once, ever.  Standard
 // C++23 over std::filesystem; no Qt, no tesseract, no FFmpeg.
-// Results key on (discovery id, ms, layout, scale) -- the knobs
+// Results key on (content id, ms, layout, scale) -- the knobs
 // that change the pixels the recognizer saw -- and the header
 // stamp (tool version plus label) is enforced on read, so a slot
 // written by another recognizer configuration reads as a miss and

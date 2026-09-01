@@ -66,7 +66,7 @@ struct frame {
 // own selection -- a region spanning a window boundary belongs to
 // both sides, which no contiguous view can carry.
 struct window {
-	std::string_view     source; // stable discovery identity
+	std::string_view     source; // stable content-derived identity
 	std::string_view     title;  // human-readable video/source path
 	std::span<cue const> cues;
 	std::vector<frame>   frames;

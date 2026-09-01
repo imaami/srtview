@@ -132,18 +132,21 @@ to the model world, and it crosses inside the scheduler.
 
 ## The harvest
 
-Artifacts return to view through adoption actions: local agenda
-work `H("adopt", artifact id, cut_key)` whose deps are the
-artifact and its cut's witness, taken from the same plan as
-everything else -- a cached artifact completes instantly but its
-adoption still waits its turn, so availability and permission
-never conflate.  Each harvester converts exact artifact bytes
-into immutable facts keyed by artifact id; completion is only a
-wakeup, and the projection folds facts in canonical
-corpus-derived order, never callback order.  Sequential display
-identities are assigned after the fold; incremental folding is
-admissible only where the merge is associative, commutative and
-idempotent.
+Artifacts return to view through the completion-poked fold, and
+its dependency discipline lives at the read boundary: every
+artifact read (`Facts::locate`/`artifact`/`fetch`) admits through
+`plan::complete()` -- done with every dependency, the cut's
+witness included, recursively complete -- so a cached artifact is
+physically present at once but readable only when its gates have
+opened, and availability and permission never conflate.  No
+explicit adoption task is needed: the harvesters wake on
+completion pokes, read only what the plan admits, and convert
+exact artifact bytes into immutable facts keyed by artifact id;
+completion is only a wakeup, and the projection folds facts in
+canonical corpus-derived order, never callback order.  Sequential
+display identities are assigned after the fold; incremental
+folding is admissible only where the merge is associative,
+commutative and idempotent.
 
 ## Invariants
 

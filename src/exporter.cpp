@@ -56,9 +56,9 @@ void writeMd(QString const &path, QString const &md)
 		f.write(md.toUtf8());
 }
 
-// The identity a frame name leans on: the whole discovery id --
+// The identity a frame name leans on: the whole content id --
 // a truncation would reintroduce the collision it exists to kill
-// -- or a path hash when discovery could not resolve the video.
+// -- or a path hash when no identity could be resolved.
 QString sourceTag(source const &v)
 {
 	if (!v.id.isEmpty())

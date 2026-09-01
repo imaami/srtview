@@ -29,7 +29,7 @@ namespace exporter {
 
 struct source {
 	QString     video, srt, id;  // fully resolved (srt derivation
-	                             // included) + discovery id
+	                             // included) + content id
 	QStringList topics;          // topic names scoped to this video
 };
 

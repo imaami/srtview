@@ -74,7 +74,7 @@ protected:
 
 private:
 	// A playlist entry / registry row: paths resolved, identity from
-	// discovery (empty when the file is currently unresolvable).
+	// content bytes (empty while the hash is in flight).
 	struct PlayItem {
 		QString video, srt, id;
 	};
@@ -162,7 +162,7 @@ private:
 	void setState(QString const &s);
 	void errState(QString const &s);
 
-	// Frame text folded from drained OCR notes: video discovery
+	// Frame text folded from drained OCR notes: video content
 	// id -> seconds -> that reading's confident spans, boxes and
 	// all.  On the debounced resnapshot each video's moments weave
 	// into regions (loom.hpp) whose consensus lines enter the

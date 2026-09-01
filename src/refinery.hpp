@@ -42,7 +42,7 @@ protected:
 };
 
 // One playlist entry as the refinery sees it: resolved paths, the
-// video's discovery identity, and the subtitle leaf id the facts
+// video's content identity, and the subtitle leaf id the facts
 // pipeline keys summaries under.  The owner rebuilds the list at
 // every corpus load.
 struct refinery_source {

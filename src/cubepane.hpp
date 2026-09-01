@@ -26,7 +26,7 @@ struct CubeVideo {
 	QString title;
 	QString video;   // path, for activation
 	QString srt;
-	QString id;      // discovery id -- the fetch key
+	QString id;      // content id -- the fetch key
 	int     cubes = 0;
 };
 

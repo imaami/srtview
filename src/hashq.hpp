@@ -33,9 +33,9 @@ inline agenda::id hash8(std::string_view s)
 // A semantic source is the (video, subtitle) pair: video-only
 // identity collapsed alternate transcripts of one video, subtitle-
 // only identity collapsed videos sharing one transcript -- both
-// shipped, both wrong in mirror image.  Built from the two
-// discovery identities, never from paths; an unresolvable video
-// falls back to the subtitle alone.
+// shipped, both wrong in mirror image.  Built from the two content
+// identities (Ident's byte hashes), never from paths; an
+// unresolvable video falls back to the subtitle alone.
 inline agenda::id semanticSourceId(QString const &videoId,
                             agenda::id subtitles)
 {

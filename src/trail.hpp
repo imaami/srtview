@@ -34,7 +34,7 @@ struct trail_step {
 	};
 
 	QString  pattern;
-	QString  vid;    // which video (discovery id); with the video flag
+	QString  vid;    // which video (content id); with the video flag
 	double   time = 0.0;
 	int      cur   = 0;
 	unsigned flags = 0;
