@@ -220,6 +220,18 @@ bool plan::renew (task t)
 		e = {std::move(t), state::pending};
 		return true;
 	}
+	if (e.s == state::done) {
+		// A cache hit re-offered by a successor cut takes the
+		// new shape -- above all its new witness -- and stays
+		// done: complete() must judge the artifact by the gates
+		// of the cut that wants it now, not the one that first
+		// saw it.  Refusing here once pinned a warm window to a
+		// mid-read cut's witness, which never marks -- cached
+		// knowledge stayed gated for the whole session.  No ask
+		// is owed, so the caller hears nothing new.
+		e.t = std::move(t);
+		return false;
+	}
 	if (e.s != state::pending && e.s != state::running)
 		return false;
 	bool const rekeyed = e.t.what != t.what || e.t.deps != t.deps;
