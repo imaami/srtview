@@ -209,6 +209,12 @@ public:
 
 	task const *get(id which) const;
 	state status(id which) const;
+	// Done with every dependency recursively complete: the state a
+	// cached artifact must reach before its bytes may be consumed.
+	// A cache hit is physically present the moment the vault sees
+	// it, but publishable only once its gates (a cut's ground
+	// witness among them) have opened.
+	bool complete(id which) const;
 	std::size_t backlog() const;   // pending + running
 
 private:

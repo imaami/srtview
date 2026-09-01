@@ -618,9 +618,21 @@ void Facts::mark(agenda::id fact)
 {
 	if (!fact)
 		return;
-	std::lock_guard const lock(m_mtx);
-	m_plan.done(fact);
-	advance();
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		before = m_landed;
+		// The mark opens the gate on every cached artifact settled
+		// behind this witness -- a landing in every sense the
+		// harvesters care about, so it counts and pokes as one.
+		// A witness already done re-marks silently.
+		if (m_plan.status(fact) != agenda::plan::state::done) {
+			m_plan.done(fact);
+			++m_landed;
+		}
+		advance();
+	}
+	poked(before);
 }
 
 void Facts::offer(agenda::task t, std::string const &snapshot)
@@ -652,11 +664,21 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 bool Facts::settle(agenda::task const &t)
 {
 	bool const have = !m_vault.resolve(t).empty();
+	agenda::plan::state const before = m_plan.status(t.id);
 	if (!m_plan.renew(t)
-	    && m_plan.status(t.id) != agenda::plan::state::unknown)
+	    && before != agenda::plan::state::unknown)
 		return false;
 	if (!have)
 		return true;
+	// A cache hit keeps its dependency shape: the entry is added
+	// before it is marked done, so complete() -- and with it every
+	// artifact read -- still waits on the task's gates.  A cut's
+	// ground witness thus holds a warm reload's cached frame-
+	// sensitive replies exactly as it holds the asks themselves;
+	// a dep-free done() tombstone here once let a reader-off
+	// session's frameless replies publish into a mid-read cut.
+	if (before == agenda::plan::state::unknown)
+		m_plan.add(t);
 	m_plan.done(t.id);
 	++m_landed;
 	return false;
@@ -743,6 +765,9 @@ bool Facts::cached(agenda::task const &t)
 std::string Facts::fetch(agenda::task const &t)
 {
 	std::lock_guard const lock(m_mtx);
+	if (m_plan.status(t.id) != agenda::plan::state::unknown
+	    && !m_plan.complete(t.id))
+		return {};
 	return slurp(m_vault.resolve(t));
 }
 
@@ -758,15 +783,26 @@ bool Facts::parked(agenda::id id) const
 	return m_offline || m_plan.status(id) == agenda::plan::state::parked;
 }
 
+// The read boundary is the admission gate: an artifact the plan
+// knows reads as absent until complete() -- deps recursively done,
+// the cut witness included -- so no consumer needs its own check.
+// Ids the plan never staged pass through: they are prior-session
+// bytes no gate of this session describes.
 std::string Facts::locate(agenda::id plan, agenda::kind k) const
 {
 	std::lock_guard const lock(m_mtx);
+	if (m_plan.status(plan) != agenda::plan::state::unknown
+	    && !m_plan.complete(plan))
+		return {};
 	return m_vault.locate(plan, k);
 }
 
 std::string Facts::artifact(agenda::id id)
 {
 	std::lock_guard const lock(m_mtx);
+	if (m_plan.status(id) != agenda::plan::state::unknown
+	    && !m_plan.complete(id))
+		return {};
 	return m_vault.resolve(id);
 }
 

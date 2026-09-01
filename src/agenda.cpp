@@ -312,12 +312,20 @@ std::size_t plan::index_of (id which) const
 
 bool plan::ready (entry const &e) const
 {
+	// Transitive on purpose: a dependency that is done but not yet
+	// complete -- a cached artifact behind a pending gate -- must
+	// hold its dependents exactly as a pending one would.
 	return std::ranges::all_of(e.t.deps,
 		[this](id const d) {
-			std::size_t const at = index_of(d);
-			return at != npos
-			    && m_entries[at].s == state::done;
+			return complete(d);
 		});
+}
+
+bool plan::complete (id which) const
+{
+	std::size_t const at = index_of(which);
+	return at != npos && m_entries[at].s == state::done
+	    && ready(m_entries[at]);
 }
 
 plan::rank_key plan::score (task const &t) const

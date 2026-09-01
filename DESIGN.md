@@ -195,7 +195,12 @@ term directory AND the focus set are projections folded from
 facts in canonical order — one unified erase, terms then focuses,
 dives derived from the final directory, and no separate adoption
 gate outside the plan: admission is `plan::ready()` alone, every
-frame-sensitive ask carrying its cut's ground witness in `deps`.
+frame-sensitive ask carrying its cut's ground witness in `deps` —
+and artifact reads admit through `plan::complete()`, done with
+every dependency recursively complete, so a cached reply waits
+for its witness exactly as the ask it answers would (a reader-off
+session's frameless replies can never publish into a mid-read
+cut).
 adhocN topics stay event-ordered by design: a committed search is
 a user action, and user actions are base-plane input in the order
 they happened.  The migration is complete; what this page
