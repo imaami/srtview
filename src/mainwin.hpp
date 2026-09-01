@@ -127,7 +127,8 @@ private:
 	QString glossPath() const;
 	void loadGloss();
 	void showGloss(QTreeWidgetItem const *item);
-	qsizetype playlistIndex(QString const &video);
+	qsizetype playlistIndex(QString const &video,
+	                        QString const &srt = {});
 	qsizetype indexOfId(QString const &id) const;
 	QList<play_entry> corpusEntries();
 	void grabsIdle() override;

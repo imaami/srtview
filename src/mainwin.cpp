@@ -422,7 +422,7 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 	// for an implicit corpus with no file, the founding video's --
 	// which keeps a bare single-video open byte-compatible with
 	// the srtjump sharing scheme.
-	qsizetype const at = playlistIndex(video);
+	qsizetype const at = playlistIndex(video, srt);
 	QString const claim = at < 0 ? video
 	                    : m_corpusPath.isEmpty()
 	                      ? m_playlist.first().video
@@ -463,15 +463,31 @@ QString MainWin::videoId(QString const &video)
 // playlist re-adopt its own first video.  The id fallback then
 // unifies byte-identical copies under different names.  Paths never
 // enter data identity; this is list membership, the same plumbing
-// domain as mpv speaking paths.
-qsizetype MainWin::playlistIndex(QString const &video)
+// domain as mpv speaking paths.  A caller that knows the transcript
+// passes it, and membership narrows to the (video, subtitle) pair:
+// a playlist may pair one video with alternate transcripts, and the
+// mpv index must land on the entry actually meant.
+qsizetype MainWin::playlistIndex(QString const &video,
+                                 QString const &srt)
 {
 	QString const path = QFileInfo(video).absoluteFilePath();
+	QString const sub = srt.isEmpty()
+		? QString() : QFileInfo(srt).absoluteFilePath();
+	auto const paired = [&](PlayItem const &it) {
+		return sub.isEmpty()
+		    || QFileInfo(srtOf(it)).absoluteFilePath() == sub;
+	};
 	for (qsizetype i = 0; i < m_playlist.size(); ++i)
 		if (QFileInfo(m_playlist[i].video).absoluteFilePath()
-		    == path)
+		    == path && paired(m_playlist[i]))
 			return i;
-	return indexOfId(videoId(video));
+	QString const id = videoId(video);
+	if (id.isEmpty())
+		return -1;
+	for (qsizetype i = 0; i < m_playlist.size(); ++i)
+		if (m_playlist[i].id == id && paired(m_playlist[i]))
+			return i;
+	return -1;
 }
 
 qsizetype MainWin::indexOfId(QString const &id) const
@@ -532,8 +548,17 @@ bool MainWin::visitVideo(QString const &video, QString const &srt,
                          bool &switched)
 {
 	switched = videoId(video) != m_trail.videoId();
-	if (!switched)
-		return true;
+	if (!switched) {
+		// Same video bytes; the transcript may still differ -- a
+		// playlist can pair one video with alternate subtitles,
+		// and a hit in the other transcript must rebind the
+		// document.  No trail video step either way: the facet is
+		// the video id, and it did not move.
+		if (QFileInfo(srt).absoluteFilePath()
+		    == QFileInfo(m_shownSrt).absoluteFilePath())
+			return true;
+		return openPath(video, srt);
+	}
 	// The departure is captured now -- after openPath the trail
 	// names the destination, and mpv's lingering timestamp would
 	// be stamped into the wrong video -- but recorded only once
@@ -898,7 +923,7 @@ void MainWin::rebuildSemantic()
 // touched -- export writes versions.
 void MainWin::adoptVideo(QString const &video, QString const &srt)
 {
-	if (playlistIndex(video) >= 0)
+	if (playlistIndex(video, srt) >= 0)
 		return;
 	// Anchored before storing: a relative command-line path would
 	// otherwise re-resolve against the topic file's directory
