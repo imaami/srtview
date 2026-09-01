@@ -190,6 +190,11 @@ private:
 	QString                         m_corpusPath;
 	QList<PlayItem>                 m_playlist;
 	QHash<QString, PlayItem>        m_videosById;
+	// Semantic source id (hex) -> the (video, srt) pair it was cut
+	// from: citations resolve their transcript through this, since
+	// the video path alone is ambiguous across alternate-transcript
+	// entries.
+	QHash<QString, PlayItem>        m_sourcePairs;
 	exporter::transcripts           m_transcripts;
 	QMenu                          *m_recentMenu = nullptr;
 	QMenu                          *m_videosMenu = nullptr;

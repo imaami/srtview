@@ -847,6 +847,7 @@ void MainWin::rebuildSemantic()
 	QCryptographicHash semanticCorpus(QCryptographicHash::Blake2b_256);
 	semanticCorpus.addData(QByteArrayView("semantic-corpus-v1"));
 	std::set<std::string> semanticSeen;
+	m_sourcePairs.clear();
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		agenda::id const key = offerFacts(srt);
@@ -864,6 +865,8 @@ void MainWin::rebuildSemantic()
 			semanticSourceId(it.id, key).hex();
 		if (!semanticSeen.insert(sourceId).second)
 			continue;
+		m_sourcePairs.insert(QString::fromStdString(sourceId),
+		                     {it.video, srt, it.id});
 		auto const ft = m_frameText.find(it.id.toStdString());
 		exporter::transcript const &tx =
 			exporter::load(m_transcripts, srt);
@@ -1468,9 +1471,16 @@ void MainWin::showEvidence(std::vector<semantic::citation> const &cites)
 		if (!e)
 			continue;
 		QString const video = QString::fromStdString(e->title);
-		QString srt;
-		if (qsizetype const at = playlistIndex(video); at >= 0)
-			srt = srtOf(m_playlist[at]);
+		// The citation names the source PAIR: resolving the
+		// video path back through the playlist would land on the
+		// first entry sharing it -- the wrong transcript when a
+		// playlist pairs one video with alternates.
+		QString srt = m_sourcePairs.value(
+			QString::fromStdString(c.source)).srt;
+		if (srt.isEmpty())
+			if (qsizetype const at = playlistIndex(video);
+			    at >= 0)
+				srt = srtOf(m_playlist[at]);
 		hits.push_back({video, srt, QString::fromStdString(e->quote),
 		                e->start, int(e->first)});
 		++counts[video];
