@@ -1117,12 +1117,21 @@ void Refinery::refold()
 		        || oldFocus.contains(tp.name))
 		    && !keep.contains(tp.name);
 	});
+	// A kept topic keeps its ROLE too: the replay finds it already
+	// covering its pattern and extends instead of re-minting, so
+	// nothing downstream would ever re-register it -- and a termN
+	// suddenly counted as a hand topic would have its dive retired
+	// by the sync below, permanently.
 	for (std::string const &n : m_termTopics)
-		m_generated.erase(n);
+		if (!keep.contains(n))
+			m_generated.erase(n);
 	for (std::string const &n : oldFocus)
-		m_generated.erase(n);
+		if (!keep.contains(n))
+			m_generated.erase(n);
 	m_harvested.clear();
-	m_termTopics.clear();
+	std::erase_if(m_termTopics, [&](std::string const &n) {
+		return !keep.contains(n);
+	});
 	m_termInfo.clear();
 	m_termIndex.clear();
 	// Replay in staging order: the one order every session
