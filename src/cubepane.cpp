@@ -89,18 +89,23 @@ void CubePane::setVideos(QList<CubeVideo> const &videos)
 	// keyboard was -- down to the region row, by its time, since a
 	// resnapshot that degrades a selected region to its parent
 	// would break the survive-contract above.
-	QString cur;
+	QString cur, curSrt;
 	QVariant curT, curBox;
 	if (QTreeWidgetItem const *c = m_tree.currentItem()) {
 		cur = c->data(0, kId).toString();
+		curSrt = c->data(0, kSrt).toString();
 		curT = c->data(0, kTime);
 		curBox = c->data(0, kBox);
 	}
+	// Expansion keyed like selection: the (id, srt) entry, not the
+	// id alone, so duplicate-video rows keep their own state.
 	QSet<QString> open;
 	for (int i = 0; i < m_tree.topLevelItemCount(); ++i) {
 		QTreeWidgetItem const *t = m_tree.topLevelItem(i);
 		if (t->isExpanded())
-			open.insert(t->data(0, kId).toString());
+			open.insert(t->data(0, kId).toString()
+			            + QLatin1Char('\n')
+			            + t->data(0, kSrt).toString());
 	}
 	m_tree.clear();
 	m_total = 0;
@@ -114,12 +119,17 @@ void CubePane::setVideos(QList<CubeVideo> const &videos)
 		top->setData(0, kId, v.id);
 		// The video-row selection restores whatever the count --
 		// a video whose cubes all dissolved keeps the keyboard.
-		bool const mine = !cur.isEmpty() && v.id == cur;
+		// Matched by (id, srt): duplicate entries pairing one
+		// video's bytes with alternate transcripts are distinct
+		// rows, and id alone would hand every one the selection
+		// in turn, the last winning.
+		bool const mine = !cur.isEmpty() && v.id == cur
+		               && v.srt == curSrt;
 		if (mine)
 			m_tree.setCurrentItem(top);
 		if (v.cubes <= 0)
 			continue;
-		if (open.contains(v.id)) {
+		if (open.contains(v.id + QLatin1Char('\n') + v.srt)) {
 			fill(top);
 			top->setExpanded(true);
 			// A selected region survives by (time, box) --
