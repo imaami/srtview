@@ -417,6 +417,12 @@ void Refinery::pairFocus(DiveScan const &s)
 	};
 	std::vector<pick> best;
 	for (std::size_t i = 0; i < m_dives.size(); ++i) {
+		// Never its own partner: a rescan of a pattern whose
+		// record persists would otherwise pair the dive with
+		// itself -- a full-overlap "match" that outranks every
+		// real one and burns a fan-out slot on nothing.
+		if (m_dives[i].id == s.id)
+			continue;
 		std::size_t const n = sharedKeys(m_dives[i].keys, s.deps);
 		if (n)
 			best.push_back({i, n});
@@ -430,7 +436,14 @@ void Refinery::pairFocus(DiveScan const &s)
 	for (pick const &p : best)
 		stageProbe(m_dives[p.at], s);
 	// Copied before finishDive() sheds the scan's excerpts: the
-	// record grounds the probes of future partners.
+	// record grounds the probes of future partners.  A rescan
+	// refreshes its record in place -- two records of one id would
+	// double every future partner's candidate list.
+	for (FinishedDive &d : m_dives)
+		if (d.id == s.id) {
+			d = {s.id, s.deps, s.pattern, s.parts};
+			return;
+		}
 	m_dives.push_back({s.id, s.deps, s.pattern, s.parts});
 }
 
