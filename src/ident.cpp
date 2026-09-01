@@ -65,11 +65,14 @@ void Ident::post(QString const &path)
 		m_queue.push_back(path);
 		// The pool grows to demand and never shrinks: a parked
 		// worker is a stack, a re-spawned one is a design smell.
-		// Capped at the logical cores.
+		// Capped at the logical cores.  Demand counts hashing
+		// jobs too -- a dequeued path left the queue but still
+		// occupies its worker, and a post arriving mid-hash must
+		// wake a second worker, not wait behind the first.
 		static unsigned const cap = std::max(1u,
 			std::thread::hardware_concurrency());
 		if (m_pool.size() < cap
-		    && m_queue.size() > m_pool.size())
+		    && m_queue.size() + m_live > m_pool.size())
 			m_pool.emplace_back(
 				[this](std::stop_token st) {
 					work(st);
