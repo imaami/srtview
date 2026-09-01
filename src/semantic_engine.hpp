@@ -234,6 +234,12 @@ public:
 	// session-local: durable catalog/cache data is loaded, never
 	// erased.  Resetting the backend is the composition root's job.
 	void reset(std::string corpus, std::vector<source> sources);
+	// Retire the published cut while its replacement is assembled:
+	// the identity seam can hold a fresh corpus open for as long
+	// as its hashes take, and nothing of the old one may stay
+	// answerable through the window.  The conversation is the
+	// owner's to keep or clear.
+	void suspend();
 	void tick();
 
 	// The corpus cut into windows, in staging order; the text the
@@ -412,6 +418,23 @@ SemanticEngine<Backend>::SemanticEngine(Backend &back,
                                         semantic::hash8_fn h)
 	: m_back(back), m_hash(h)
 {
+}
+
+template <semantic_backend Backend>
+void SemanticEngine<Backend>::suspend()
+{
+	m_corpus.clear();
+	m_witness = {};
+	m_sources.clear();
+	m_vocab = {};
+	m_words.clear();
+	m_catalog.reset();     // ask() answers nothing from here on
+	m_extract.clear();
+	m_judge.clear();
+	m_judgeAt.clear();
+	m_answers.clear();
+	m_more = true;
+	m_retry = false;
 }
 
 template <semantic_backend Backend>

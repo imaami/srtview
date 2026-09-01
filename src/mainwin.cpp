@@ -681,6 +681,14 @@ void MainWin::rebuildCorpus(bool fresh)
 	if (fresh) {
 		m_know.clearChat();
 		m_semantic.new_conversation();
+		// The old corpus must not stay answerable through the
+		// identity seam's hashing window: the engine retires its
+		// cut (a question meanwhile gets the no-corpus answer),
+		// and both panes drop rows that would navigate into the
+		// replaced corpus.
+		m_semantic.suspend();
+		m_know.setRows({});
+		m_cubes.setVideos({});
 	}
 	m_refine.seedGenerated();
 	m_playlist.clear();
