@@ -412,6 +412,15 @@ bool MainWin::openPath(QString const &path, QString const &srtOverride)
 		if (srt.isEmpty())
 			return fail(QString::fromStdString(story));
 	}
+	// One normalization, at the door: the registry, the id map and
+	// the playlist all store absolute paths, and every consumer
+	// downstream -- videoId's exact lookup first among them --
+	// compares against that convention.  A relative command-line
+	// open that skipped this stayed idless forever: the identified
+	// tail re-tried showDoc with the same relative key, and the
+	// trail and grabber never got stamped.
+	video = QFileInfo(video).absoluteFilePath();
+	srt = QFileInfo(srt).absoluteFilePath();
 	// On-the-spot videos join the corpus: a bare open founds an
 	// implicit playlist of one, an open beside a loaded corpus
 	// extends it, and the knowledge pipeline follows either way.
