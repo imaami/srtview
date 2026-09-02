@@ -162,17 +162,22 @@ void Refinery::poke(void *self) noexcept
 
 void Refinery::reset(bool fresh)
 {
-	if (!fresh)
-		return;
-	// A replaced corpus stops its scans on the spot.  The identity
-	// seam leaves a hashing window between this reset and the new
-	// queueDives(); a tick surviving into it would keep scanning
-	// the old sources and submit the old corpus's dives into the
-	// new pipeline, which nothing would ever retire.
-	m_diveScans.clear();
-	m_diveAt = 0;
+	// The sources are gone either way until the identity tail hands
+	// over the new list, and no tick may survive into that window.
+	// A replaced corpus's scans would submit its dives into the new
+	// pipeline, which nothing would ever retire; an extension's
+	// in-flight scans would finish against the list without the
+	// appended video and submit a dive the vault then serves for
+	// that pattern in every later session -- when the list arrived
+	// synchronously they ran on into the extension.  An extension
+	// keeps its scans and their cursors: the list only ever grows
+	// at the end, so a paused scan resumes into the appended rows.
 	m_diveTick.stop();
 	m_sources.clear();
+	if (!fresh)
+		return;
+	m_diveScans.clear();
+	m_diveAt = 0;
 	m_dives.clear();
 	m_focusWork.clear();
 	m_focusOrder.clear();
@@ -289,7 +294,16 @@ void Refinery::stageDive(std::string const &pattern, bool exported,
 
 void Refinery::diveStep()
 {
-	if (m_diveAt >= m_diveScans.size() || m_sources.isEmpty()) {
+	// No sources means the corpus is between identities, not that
+	// the scans are done: they wait, cursors intact, for the tail's
+	// queueDives() to restart the tick -- a stager waking the tick
+	// inside the window (a committed search, a probe's reply) lands
+	// here and waits the same way.
+	if (m_sources.isEmpty()) {
+		m_diveTick.stop();
+		return;
+	}
+	if (m_diveAt >= m_diveScans.size()) {
 		m_diveScans.clear();
 		m_diveAt = 0;
 		m_diveTick.stop();
@@ -680,6 +694,12 @@ void Refinery::harvestChain(bool kick)
 	if (!kick && landed == m_harvestSwept)
 		return;
 	m_harvestSwept = landed;
+	// Between identities there is no corpus to fold against: the
+	// support floor counts hits across the sources, and an empty
+	// list would drop every term for the window's duration.  The
+	// tail ends in a kicked pass, which folds what landed meanwhile.
+	if (m_sources.isEmpty())
+		return;
 	dbgHop(QStringLiteral("harvest: wake (landed %1%2)")
 	       .arg(landed)
 	       .arg(kick ? QStringLiteral(", kicked") : QString()));
