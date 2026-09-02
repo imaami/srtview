@@ -2471,11 +2471,22 @@ bool MainWin::eventFilter(QObject *obj, QEvent *ev)
 	return true;
 }
 
+// Close retires the document, not the corpus: the playlist, the
+// knowledge and the reading plan stay loaded, and any row is one
+// step away.  The shown pair goes with the document -- the identity
+// tail re-stamps whatever is shown, and a document closed inside a
+// cold load's hashing window came back on the tail's poke -- and so
+// does the trail's current entry: a step recorded in it is a
+// position to reopen at, not one to seek a player that is gone.
 void MainWin::closeFile()
 {
 	m_link.shutdown();
 	m_view.setCues({});
 	m_view.clear();
+	m_shownVideo.clear();
+	m_shownSrt.clear();
+	m_shownIdless = false;
+	m_trail.setVideo(QString());
 	setWindowTitle(QStringLiteral("srtview"));
 	setState(QStringLiteral("no file"));
 }
