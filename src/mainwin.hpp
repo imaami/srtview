@@ -90,6 +90,7 @@ private:
 	static bool avPath(QString const &p);
 	QString srtOf(PlayItem const &it);
 	QString videoId(QString const &video);
+	QString entryId(QString const &video, QString const &srt);
 	bool videoMatches(PlayItem const &it,
 	                  QRegularExpression const &re);
 	bool hopVideo(QRegularExpression const &re,
@@ -189,6 +190,9 @@ private:
 	topics::doc                     m_corpus;
 	QString                         m_corpusPath;
 	QList<PlayItem>                 m_playlist;
+	// Every entry shown this session, keyed by entry identity (the
+	// video and transcript content ids): cross-entry undo/redo
+	// resolve a step's paths through it.
 	QHash<QString, PlayItem>        m_videosById;
 	// Semantic source id (hex) -> the (video, srt) pair it was cut
 	// from: citations resolve their transcript through this, since

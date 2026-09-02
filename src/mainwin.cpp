@@ -466,6 +466,19 @@ QString MainWin::videoId(QString const &video)
 	return m_fileIds.value(video);
 }
 
+// The entry identity the trail stamps and the registry keys: the
+// (video, transcript) content pair, both halves Ident's.  One
+// video's bytes may pair with alternate transcripts in a playlist,
+// and a step recorded in one of them must not apply in the other --
+// the video id alone stays the frame and OCR cache key, which those
+// rows share by design.  Empty while either half is still hashing:
+// the unresolvable-identity case every consumer tolerates.
+QString MainWin::entryId(QString const &video, QString const &srt)
+{
+	QString const v = videoId(video), s = m_fileIds.value(srt);
+	return v.isEmpty() || s.isEmpty() ? QString() : v + s;
+}
+
 // Membership by resolved path first: entries store absolute paths,
 // and content ids are empty while Ident's pool is still hashing a
 // cold corpus -- an id-only lookup here made every first load of a
@@ -538,13 +551,13 @@ void MainWin::mpvSwitched(int index)
 		return;
 	PlayItem const &it = m_playlist[qsizetype(index)];
 	QString const srt = srtOf(it);
-	// Our own navigation echoed -- judged by the entry, which under
-	// content identity is the (video bytes, subtitle) pair: a
-	// playlist may deliberately pair one video's bytes with
-	// alternate transcripts, and hopping between those entries must
-	// switch the document even though the video id stays put.
-	if (!it.id.isEmpty() && it.id == m_trail.videoId()
-	    && srt == m_shownSrt)
+	// Our own navigation echoed -- judged by the entry identity,
+	// the (video bytes, transcript bytes) pair: a playlist may
+	// deliberately pair one video's bytes with alternate
+	// transcripts, and hopping between those entries must switch
+	// the document even though the video id stays put.
+	QString const key = entryId(it.video, srt);
+	if (!key.isEmpty() && key == m_trail.videoId())
 		return;
 	if (!srt.isEmpty())
 		showDoc(it.video, srt);
@@ -557,18 +570,21 @@ void MainWin::mpvSwitched(int index)
 bool MainWin::visitVideo(QString const &video, QString const &srt,
                          bool &switched)
 {
-	switched = videoId(video) != m_trail.videoId();
-	if (!switched) {
-		// Same video bytes; the transcript may still differ -- a
-		// playlist can pair one video with alternate subtitles,
-		// and a hit in the other transcript must rebind the
-		// document.  No trail video step either way: the facet is
-		// the video id, and it did not move.
-		if (QFileInfo(srt).absoluteFilePath()
-		    == QFileInfo(m_shownSrt).absoluteFilePath())
-			return true;
-		return openPath(video, srt);
-	}
+	// Current means the shown entry: by content pair once both
+	// halves are known, by resolved paths while they hash.  A
+	// transcript change is a switch like any other -- the trail's
+	// facet is the entry, so the departure crumb below names the
+	// transcript to come back to.
+	QString const key = entryId(video, srt);
+	bool const current = key.isEmpty()
+		? QFileInfo(video).absoluteFilePath()
+		  == QFileInfo(m_shownVideo).absoluteFilePath()
+		  && QFileInfo(srt).absoluteFilePath()
+		     == QFileInfo(m_shownSrt).absoluteFilePath()
+		: key == m_trail.videoId();
+	switched = !current;
+	if (current)
+		return true;
 	// The departure is captured now -- after openPath the trail
 	// names the destination, and mpv's lingering timestamp would
 	// be stamped into the wrong video -- but recorded only once
@@ -608,26 +624,28 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	m_shownVideo = video;
 	m_shownSrt = srt;
 
-	// Register under the content identity: the trail stamps video
-	// steps with it, and cross-video undo/redo looks the path up.
-	// The grabber hears about every switch -- an unresolvable
-	// identity clears its target rather than keeping the previous
-	// video's -- and its worker feeds the OCR desk from there.
+	// Register under the entry identity -- the (video, transcript)
+	// content pair: the trail stamps video steps with it, and
+	// cross-entry undo/redo looks the pair's paths up.  The grabber
+	// hears about every switch -- an unresolvable video identity
+	// clears its target rather than keeping the previous video's --
+	// and its worker feeds the OCR desk from there; frames and
+	// readings key on the video's bytes alone, which alternate
+	// transcripts share by design.
 	QString const id = videoId(video);
-	m_shownIdless = id.isEmpty();
+	QString const key = entryId(video, srt);
+	m_shownIdless = key.isEmpty();
 	m_grab.setVideo(video, id);
-	if (!id.isEmpty()) {
-		m_videosById.insert(id, {video, srt, id});
-		m_trail.setVideo(id);
+	if (!id.isEmpty())
 		m_ocr.prefer(id);    // its reading remainder first
-	} else {
-		// The trail must not keep naming the departed video while
-		// this one's identity hashes: a step stamped with it would
-		// send undo into the wrong file.  With no video registered
-		// the trail sheds video facets instead of guessing, and
-		// the identified tail re-stamps through showDoc.
-		m_trail.setVideo(QString());
-	}
+	if (!key.isEmpty())
+		m_videosById.insert(key, {video, srt, id});
+	// While either half of the identity hashes the trail must not
+	// keep naming the departed entry: a step stamped with it would
+	// send undo into the wrong file.  With no entry registered the
+	// trail sheds video facets instead of guessing, and the
+	// identified tail re-stamps through showDoc.
+	m_trail.setVideo(key);
 	// Two heat namespaces, warmed together: the srt leaf drives
 	// the summary pyramid, the (video, subtitle) pair drives the
 	// semantic windows, whose sources are pair-addressed.
@@ -762,8 +780,10 @@ void MainWin::identifiedCorpus()
 	bool const fresh = m_identFresh;
 	for (PlayItem &it : m_playlist) {
 		it.id = videoId(it.video);
-		if (!it.id.isEmpty())
-			m_videosById.insert(it.id, it);
+		QString const srt = srtOf(it);
+		if (QString const key = entryId(it.video, srt);
+		    !key.isEmpty())
+			m_videosById.insert(key, {it.video, srt, it.id});
 	}
 	// The shown document was opened before its identity landed:
 	// stamp it now, so the trail, the grabber and the reader all
@@ -777,7 +797,7 @@ void MainWin::identifiedCorpus()
 	// the document was shown without one.
 	if (!m_shownVideo.isEmpty()
 	    && (m_shownIdless
-	        || videoId(m_shownVideo) != m_trail.videoId()))
+	        || entryId(m_shownVideo, m_shownSrt) != m_trail.videoId()))
 		showDoc(m_shownVideo, m_shownSrt);
 	// The corpus reads itself: every cue start of every entry
 	// goes to the OCR desk's plan, performed whenever demand runs
@@ -2296,9 +2316,9 @@ void MainWin::applyStep(trail_step const &s, bool undo)
 		     parts.join(QStringLiteral(" \u00b7 "))), 2000);
 }
 
-// The trail spans the corpus: a step recorded in another video first
-// switches to it (registry: playlist entries plus every video opened
-// this session), then seeks.
+// The trail spans the corpus: a step recorded in another entry first
+// switches to it (registry: every entry shown this session, keyed by
+// entry identity, transcript included), then seeks.
 bool MainWin::applyVideoStep(trail_step const &s)
 {
 	if (s.vid != m_trail.videoId()) {

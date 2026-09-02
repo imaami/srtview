@@ -34,7 +34,8 @@ struct trail_step {
 	};
 
 	QString  pattern;
-	QString  vid;    // which video (content id); with the video flag
+	QString  vid;    // which entry (video + transcript content
+	                 // ids); with the video flag
 	double   time = 0.0;
 	int      cur   = 0;
 	unsigned flags = 0;
@@ -61,11 +62,12 @@ public:
 	// the drift baseline in sync.
 	void noteVideo(double t) { m_lastVideo = t; }
 
-	// The video facet carries which video, not just where in it:
-	// steps recorded from now on are stamped with this identity, and
-	// appliers switch videos when a step's id differs.  A change
-	// resets the drift baseline -- positions in different videos do
-	// not compare.
+	// The video facet carries which entry, not just where in it --
+	// the video and the transcript, since one video's bytes may be
+	// paired with alternate transcripts: steps recorded from now on
+	// are stamped with this identity, and appliers switch entries
+	// when a step's id differs.  A change resets the drift baseline
+	// -- positions in different entries do not compare.
 	void setVideo(QString const &id);
 	QString const &videoId() const { return m_vid; }
 
