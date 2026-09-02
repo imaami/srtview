@@ -332,8 +332,9 @@ stats run(topics::doc const &corpus, QList<source> const &videos,
 	QSet<QString> partHead;
 	// Sanitized-stem twins across the video list, judged
 	// case-folded for case-insensitive target filesystems: their
-	// frames carry the discovery id, deterministically, whatever
-	// the export order.
+	// frames carry the source tag -- the content id, or the path
+	// hash of an unresolved one -- deterministically, whatever the
+	// export order.
 	QSet<QString> dup, seen;
 	for (source const &v : videos) {
 		QString const key = safeStem(v.video).toCaseFolded();

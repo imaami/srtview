@@ -941,7 +941,8 @@ bool parse_answer(std::string_view bytes, answer &out)
 	a.insufficient = insufficient->boolean;
 	for (json const &j : cites->array) {
 		citation c;
-		// The source is a discovery identity, sixteen hex, as
+		// The source is a semantic source id -- the (video,
+		// transcript) content pair -- sixteen hex, as
 		// answer_schema() demands: the parser states the same
 		// contract as the request.
 		if (!exact_object(j, {"source", "first", "last"})

@@ -607,7 +607,7 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	m_shownVideo = video;
 	m_shownSrt = srt;
 
-	// Register under the discovery identity: the trail stamps video
+	// Register under the content identity: the trail stamps video
 	// steps with it, and cross-video undo/redo looks the path up.
 	// The grabber hears about every switch -- an unresolvable
 	// identity clears its target rather than keeping the previous
@@ -653,9 +653,9 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	return true;
 }
 
-// The facts cache is keyed by the srt file's own discovery identity
-// (its hex socket hash, rehydrated to bytes at this boundary): one
-// summary per unique srt however many entries share it.  The
+// The facts cache is keyed by the srt file's own content identity
+// (Ident's hex, rehydrated to bytes at this boundary): one summary
+// per unique srt however many entries share it.  The
 // rendered transcript (tags consumed) is what the model reads and
 // what the vault witnesses: offer() hashes it, marks resolvable
 // cache hits done -- new dives depend on cached leaves, so the plan
