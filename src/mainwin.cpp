@@ -499,14 +499,15 @@ qsizetype MainWin::playlistIndex(QString const &video,
 	return -1;
 }
 
-qsizetype MainWin::indexOfId(QString const &id) const
+// The row on screen: the shown (video, transcript) pair, resolved
+// the way membership is -- alternate transcripts of one video are
+// distinct rows sharing a content id, and an id-keyed lookup always
+// answered the first of them, so stepping from the second reopened
+// it instead of advancing.  -1 while nothing is shown.
+qsizetype MainWin::shownIndex()
 {
-	if (id.isEmpty())
-		return -1;
-	for (qsizetype i = 0; i < m_playlist.size(); ++i)
-		if (m_playlist[i].id == id)
-			return i;
-	return -1;
+	return m_shownVideo.isEmpty()
+	       ? -1 : playlistIndex(m_shownVideo, m_shownSrt);
 }
 
 // A playlist entry's subtitle file, derived when not explicit.
@@ -1564,12 +1565,13 @@ void MainWin::rebuildVideosMenu()
 			->setEnabled(false);
 		return;
 	}
-	for (PlayItem const &it : m_playlist) {
+	qsizetype const shown = shownIndex();
+	for (qsizetype i = 0; i < m_playlist.size(); ++i) {
+		PlayItem const &it = m_playlist[i];
 		QAction *a = m_videosMenu->addAction(
 			QFileInfo(it.video).fileName());
 		a->setCheckable(true);
-		a->setChecked(!it.id.isEmpty()
-		              && it.id == m_trail.videoId());
+		a->setChecked(i == shown);
 		QString const v = it.video, s = it.srt;
 		connect(a, &QAction::triggered,
 		        this, [this, v, s] { openPath(v, s); });
@@ -1912,7 +1914,7 @@ QString MainWin::exportDir() const
 bool MainWin::hopVideo(QRegularExpression const &re, bool backward)
 {
 	qsizetype const n = m_playlist.size();
-	qsizetype const at = indexOfId(m_trail.videoId());
+	qsizetype const at = shownIndex();
 	dbgHop(QStringLiteral("hopVideo: at=%1 n=%2 backward=%3 re=%4")
 	       .arg(at).arg(n).arg(int(backward))
 	       .arg(re.pattern().left(48)));
@@ -1979,7 +1981,7 @@ void MainWin::updateInfo()
 	}
 
 	QStringList parts;
-	qsizetype const at = indexOfId(m_trail.videoId());
+	qsizetype const at = shownIndex();
 	if (at >= 0)
 		parts << QStringLiteral("video %1/%2%3")
 			.arg(at + 1).arg(m_playlist.size())
@@ -2226,7 +2228,7 @@ void MainWin::stepVideo(int dir)
 		return;
 	}
 	qsizetype const n = m_playlist.size();
-	qsizetype const at = indexOfId(m_trail.videoId());
+	qsizetype const at = shownIndex();
 	qsizetype const to = at < 0 ? (dir > 0 ? 0 : n - 1)
 	                            : (at + dir + n) % n;
 	openPath(m_playlist[to].video, m_playlist[to].srt);

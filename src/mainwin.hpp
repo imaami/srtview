@@ -129,7 +129,7 @@ private:
 	void showGloss(QTreeWidgetItem const *item);
 	qsizetype playlistIndex(QString const &video,
 	                        QString const &srt = {});
-	qsizetype indexOfId(QString const &id) const;
+	qsizetype shownIndex();
 	QList<play_entry> corpusEntries();
 	void grabsIdle() override;
 	void grabProgress() override;
