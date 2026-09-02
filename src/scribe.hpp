@@ -187,6 +187,27 @@ public:
 		return !m_done.empty();
 	}
 
+	// The same question for one video: its feed still on the
+	// bench, its planned reading in the worker's hands, or a note
+	// of its not yet drained -- the corpus-wide answer is the
+	// disjunction of these.  A per-video witness marks on this
+	// one, so a summary can go the moment its own video is read
+	// while the rest of the corpus still is.
+	bool planning(std::string const &id)
+	{
+		std::lock_guard const lk(m_mtx);
+		for (lot const &l : m_plan)
+			if (l.f.proto.id == id)
+				return true;
+		if (m_live && m_live->r.id == id
+		    && std::ranges::find(m_live->owners, ticket(0))
+		       != m_live->owners.end())
+			return true;
+		return std::ranges::any_of(m_done, [&id](note const &n) {
+			return n.r.id == id;
+		});
+	}
+
 private:
 	struct job {
 		request             r;

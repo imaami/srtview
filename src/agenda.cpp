@@ -18,11 +18,15 @@ namespace {
 // but never starves the pyramid), tiers order within a kind, the
 // export edge floats a topic over its supportive components, and
 // heat (unbounded) moves everything within its rank.  The rank is
-// the dominant, lexicographic half of the key: the semantic chain
-// (extract, judge) outranks all other background work by
-// construction, however hot a summary burns, and an answer tops
-// even that -- policy the executor once expressed as a second
-// peek, now the score's own shape.
+// the dominant, lexicographic half of the key: the released band
+// -- the summary backbone (leaf, node) first, then the semantic
+// chain (extract, judge) -- outranks all other background work by
+// construction, however hot a dive burns, and an answer tops even
+// that -- policy the executor once expressed as a second peek, now
+// the score's own shape.  Leaves wait on their video's read as
+// extraction waits on the cut's, so a video's summary is the first
+// thing asked once its read completes, and the pyramid follows
+// before any window is extracted.
 // Evidence extraction sits between nodes and the lexical terms pass;
 // pair judgments sit between terms and dives -- a verdict is a
 // short call that reshapes the knowledge tree, a dive a long one
@@ -38,7 +42,7 @@ constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
                                  0.4, 0.42, 1.75, 1.4, 4.0};
 static_assert(std::size(kKindBase) == kind_count,
               "kKindBase mirrors agenda::kind");
-constexpr int    kKindRank[]  = {0, 0, 0, 0, 0, 0,
+constexpr int    kKindRank[]  = {1, 1, 0, 0, 0, 0,
                                  0, 0, 1, 1, 2};
 static_assert(std::size(kKindRank) == kind_count,
               "kKindRank mirrors agenda::kind");

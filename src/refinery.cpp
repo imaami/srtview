@@ -353,8 +353,8 @@ void Refinery::scanDiveVideo(DiveScan &s, refinery_source const &it)
 	}
 	if (hits.empty())
 		return;
-	agenda::id const key = it.leaf;
-	if (!key || std::ranges::find(s.deps, key) != s.deps.end())
+	agenda::id const key = it.source;
+	if (!key || std::ranges::find(s.sources, key) != s.sources.end())
 		return;
 	std::string head = "== ";
 	head += QFileInfo(it.video).fileName().toStdString();
@@ -368,16 +368,18 @@ void Refinery::scanDiveVideo(DiveScan &s, refinery_source const &it)
 			return;
 		hits.resize(cut + 1);
 	}
-	s.deps.push_back(key);
+	s.sources.push_back(key);
 	s.parts += head;
 	s.parts += hits;
 }
 
-// A finished scan becomes a dive task: deps gate on the hit videos'
-// leaf summaries, heat follows the same videos, and the pyramid
-// root rides along as optional overview context.  The scan entry
-// stays staged (its id blocks re-staging) but sheds its excerpts.
-// A scan a pending focus record claims is that record's search, not
+// A finished scan becomes a dive record and a dive task: deps gate
+// on the hit sources' leaves as the current cut names them, heat
+// follows the sources, and the pyramid root rides along as optional
+// overview context.  The scan entry stays staged (its id blocks
+// re-staging) but sheds its excerpts; the record keeps them for the
+// probes of future partners and for the re-offer at every cut.  A
+// scan a pending focus record claims is that record's search, not
 // a dive: it routes to finishProbe() instead.
 void Refinery::finishDive(DiveScan &s)
 {
@@ -394,35 +396,63 @@ void Refinery::finishDive(DiveScan &s)
 		if (!finishProbe(s, m_focusWork[at]))
 			m_focusWork.erase(m_focusWork.begin()
 			                  + std::ptrdiff_t(at));
-	} else if (!s.deps.empty()) {
-		agenda::task t;
-		t.id = s.id;
-		t.deps = s.deps;
-		t.keys = s.deps;
-		t.note = s.pattern;
-		t.what = agenda::kind::dive;
-		t.exported = s.exported;
-		if (m_rootId)
-			t.refs.push_back(m_rootId);
-		m_facts.offer(std::move(t), s.parts);
-		pairFocus(s);
+	} else if (!s.sources.empty()) {
+		FinishedDive const d{s.id, s.sources, s.pattern, s.parts,
+		                     s.exported, s.generated};
+		offerDive(d);
+		pairFocus(d);
 	}
 	s.parts.clear();
 	s.parts.shrink_to_fit();
 }
 
-// The focus trigger: a finished first-generation dive pairs with
-// every earlier one sharing a hit video.  A pair no longer asks for
-// its focus outright: it opens with a probe -- what would you
-// search? -- and the pump chains the search and the write behind
-// it.  Generated dives never pair: recursion stops one hop past the
-// hypothesis.
-void Refinery::pairFocus(DiveScan const &s)
+// The cut's leaf for a source; null while the cut has not named
+// one (an unresolved identity, or no cut yet).
+agenda::id Refinery::leafOf(agenda::id source) const
 {
-	if (s.generated)
-		return;
+	for (refinery_source const &it : m_sources)
+		if (it.source == source)
+			return it.leaf;
+	return {};
+}
+
+// A record as a task over the current cut: deps are the hit
+// sources' leaves -- cut-keyed, so every re-cut re-offers each
+// record with the leaves it has now; a pending dive takes the new
+// shape, a done one keeps its essay (the vault adopts by content)
+// -- keys the sources, the root optional context.  A source the cut
+// names no leaf for keeps the dive off the plan until one does.
+bool Refinery::offerDive(FinishedDive const &d)
+{
+	agenda::task t;
+	t.id = d.id;
+	for (agenda::id const s : d.sources) {
+		agenda::id const leaf = leafOf(s);
+		if (!leaf)
+			return false;
+		t.deps.push_back(leaf);
+	}
+	t.keys = d.sources;
+	t.note = d.pattern;
+	t.what = agenda::kind::dive;
+	t.exported = d.exported;
+	if (m_rootId)
+		t.refs.push_back(m_rootId);
+	m_facts.offer(std::move(t), d.parts);
+	return true;
+}
+
+// The focus trigger: a finished first-generation dive pairs with
+// every earlier one sharing a hit source.  A pair no longer asks
+// for its focus outright: it opens with a probe -- what would you
+// search? -- and the pump chains the search and the write behind
+// it.  Generated dives never pair, as the new dive or as a partner:
+// recursion stops one hop past the hypothesis.  Every finished dive
+// is recorded either way: the record is what the re-cut re-offers.
+void Refinery::pairFocus(FinishedDive const &d)
+{
 	// Overlap-ranked, capped: at most kFocusFan partners per new
-	// dive, the shared-hit-video count as the relatedness prior
+	// dive, the shared-hit-source count as the relatedness prior
 	// and recency breaking ties.  Old dives may still accumulate
 	// pairs as later ones pick them, so the total stays linear.
 	struct pick {
@@ -430,14 +460,15 @@ void Refinery::pairFocus(DiveScan const &s)
 		std::size_t overlap;
 	};
 	std::vector<pick> best;
-	for (std::size_t i = 0; i < m_dives.size(); ++i) {
+	for (std::size_t i = 0; !d.generated && i < m_dives.size(); ++i) {
 		// Never its own partner: a rescan of a pattern whose
 		// record persists would otherwise pair the dive with
 		// itself -- a full-overlap "match" that outranks every
 		// real one and burns a fan-out slot on nothing.
-		if (m_dives[i].id == s.id)
+		if (m_dives[i].generated || m_dives[i].id == d.id)
 			continue;
-		std::size_t const n = sharedKeys(m_dives[i].keys, s.deps);
+		std::size_t const n = sharedKeys(m_dives[i].sources,
+		                                 d.sources);
 		if (n)
 			best.push_back({i, n});
 	}
@@ -448,17 +479,18 @@ void Refinery::pairFocus(DiveScan const &s)
 	if (best.size() > kFocusFan)
 		best.resize(kFocusFan);
 	for (pick const &p : best)
-		stageProbe(m_dives[p.at], s);
-	// Copied before finishDive() sheds the scan's excerpts: the
-	// record grounds the probes of future partners.  A rescan
-	// refreshes its record in place -- two records of one id would
-	// double every future partner's candidate list.
-	for (FinishedDive &d : m_dives)
-		if (d.id == s.id) {
-			d = {s.id, s.deps, s.pattern, s.parts};
+		stageProbe(m_dives[p.at], d);
+	// Recorded with its excerpts, which finishDive() sheds from the
+	// scan: the record grounds the probes of future partners and
+	// the re-offer at every cut.  A rescan refreshes its record in
+	// place -- two records of one id would double every future
+	// partner's candidate list.
+	for (FinishedDive &r : m_dives)
+		if (r.id == d.id) {
+			r = d;
 			return;
 		}
-	m_dives.push_back({s.id, s.deps, s.pattern, s.parts});
+	m_dives.push_back(d);
 }
 
 // One pair's opening move.  An existing focus file ends the pair's
@@ -469,7 +501,7 @@ void Refinery::pairFocus(DiveScan const &s)
 // matched lines -- raw speech-to-text to ground the variant sweep.
 // The probe depends on the two dive files, so "at least two dives"
 // still falls out of dependency gating.
-void Refinery::stageProbe(FinishedDive const &a, DiveScan const &b)
+void Refinery::stageProbe(FinishedDive const &a, FinishedDive const &b)
 {
 	agenda::id const fid = focusId(a.id, b.id);
 	for (PendingFocus const &w : m_focusWork)
@@ -495,8 +527,8 @@ void Refinery::stageProbe(FinishedDive const &a, DiveScan const &b)
 	w.probe = probeId(a.id, b.id, false);
 	w.focus = fid;
 	w.deps = {a.id, b.id};
-	w.keys = a.keys;
-	for (agenda::id const k : b.deps)
+	w.keys = a.sources;
+	for (agenda::id const k : b.sources)
 		if (std::ranges::find(w.keys, k) == w.keys.end())
 			w.keys.push_back(k);
 	w.note = a.pattern + " ~ " + b.pattern;
@@ -732,14 +764,9 @@ void Refinery::queueTerms()
 	QHash<QString, qsizetype> bySource;
 	for (qsizetype i = 0; i < m_sources.size(); ++i) {
 		refinery_source const &it = m_sources[i];
-		QString const srt = it.srt;
-		if (srt.isEmpty())
-			continue;
-		agenda::id const subtitles = it.leaf;
-		if (agenda::id const source =
-			semanticSourceId(it.id, subtitles))
+		if (!it.srt.isEmpty() && it.source)
 			bySource.insert(QString::fromStdString(
-				source.hex()), i);
+				it.source.hex()), i);
 	}
 	for (std::size_t at = 0; at < m_semantic.windows(); ++at) {
 		semantic::window const &w = m_semantic.window(at);
@@ -1535,8 +1562,17 @@ std::set<agenda::id> Refinery::preCut()
 // ids, and parking one would block its own re-offer -- and only
 // the truly abandoned asks retire.  The kicked dispatch then
 // adopts, feeds the lexicon and paints, all against this cut.
-void Refinery::postCut(std::set<agenda::id> stale)
+void Refinery::postCut(std::set<agenda::id> stale,
+                       QHash<QString, agenda::id> const &leafOf)
 {
+	// The cut's leaves, by source, and every finished dive offered
+	// over them again: none may keep waiting on a leaf the cut
+	// retired, and one whose hit videos have now been read asks
+	// over their enriched summaries.
+	for (refinery_source &s : m_sources)
+		s.leaf = leafOf.value(QString::fromStdString(s.source.hex()));
+	for (FinishedDive const &d : m_dives)
+		offerDive(d);
 	m_lexicon.clear();
 	m_termsWork.clear();
 	queueTerms();

@@ -42,12 +42,14 @@ protected:
 };
 
 // One playlist entry as the refinery sees it: resolved paths, the
-// video's content identity, and the subtitle leaf id the facts
-// pipeline keys summaries under.  The owner rebuilds the list at
-// every corpus load.
+// video's content identity, the semantic source it cuts under --
+// the (video, subtitle) content pair the windows and the heat key
+// on -- and the current cut's leaf for it, cut-keyed (transcript
+// plus frame lines), set by postCut().  The owner rebuilds the
+// list at every corpus load.
 struct refinery_source {
 	QString    video, srt, id;
-	agenda::id leaf;
+	agenda::id source, leaf;
 };
 
 class Refinery
@@ -81,10 +83,13 @@ public:
 
 	// The cut seam: preCut() collects the outgoing generation's
 	// ask ids before the engine resets; postCut() -- after the
-	// reset and the witness mark -- retires what the new cut did
-	// not restage, restages term windows, and runs the dispatch.
+	// reset and the witness marks, handed the cut's leaves by
+	// source -- re-offers every finished dive over them, retires
+	// what the new cut did not restage, restages term windows, and
+	// runs the dispatch.
 	std::set<agenda::id> preCut();
-	void postCut(std::set<agenda::id> stale);
+	void postCut(std::set<agenda::id> stale,
+	             QHash<QString, agenda::id> const &leafOf);
 
 	// The completion-poked dispatch: one pass over every machine,
 	// early-out when nothing landed since the last pass unless
@@ -152,11 +157,15 @@ public:
 	std::size_t focusWorkOf(agenda::id id) const;
 
 private:
+	// A scan's hits are sources -- the stable (video, subtitle)
+	// identities -- never leaf ids: the leaves are cut-keyed, and
+	// the dive resolves them through the current cut when it is
+	// offered, at its finish and again at every re-cut.
 	struct DiveScan {
 		QRegularExpression      re;
 		std::string             pattern;
 		std::string             parts;
-		std::vector<agenda::id> deps;
+		std::vector<agenda::id> sources;
 		agenda::id              id;
 		std::size_t             video     = 0;
 		bool                    exported  = true;
@@ -165,9 +174,11 @@ private:
 
 	struct FinishedDive {
 		agenda::id              id;
-		std::vector<agenda::id> keys;
+		std::vector<agenda::id> sources;
 		std::string             pattern;
 		std::string             parts;
+		bool                    exported  = true;
+		bool                    generated = false;
 	};
 
 	struct PendingFocus {
@@ -186,8 +197,10 @@ private:
 	void diveStep();
 	void scanDiveVideo(DiveScan &s, refinery_source const &it);
 	void finishDive(DiveScan &s);
-	void pairFocus(DiveScan const &s);
-	void stageProbe(FinishedDive const &a, DiveScan const &b);
+	agenda::id leafOf(agenda::id source) const;
+	bool offerDive(FinishedDive const &d);
+	void pairFocus(FinishedDive const &d);
+	void stageProbe(FinishedDive const &a, FinishedDive const &b);
 	agenda::task probeTask(PendingFocus const &w,
 	                       agenda::id ask) const;
 	void pumpProbes();

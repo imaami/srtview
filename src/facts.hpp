@@ -4,7 +4,8 @@
 // directories and an agenda::plan behind one mutex, runs one task
 // at a time, and turns each completion into a cache file plus the
 // next pick.  Kinds map to prompts and inputs as follows: a *leaf*
-// summarizes transcript text snapshot on the offering (UI) thread;
+// summarizes one video's transcript and frame lines, snapshot on
+// the offering (UI) thread once the video is read;
 // a *node* merges the cache files of its children, which dependency
 // gating guarantees exist; a *dive* explains one topic's matched
 // excerpts (snapshot like a leaf) against the summaries of the
@@ -80,14 +81,6 @@ public:
 	Facts(Facts const &) = delete;
 	Facts &operator=(Facts const &) = delete;
 
-	// Leaf summary of one subtitle file: the id keys the cache and
-	// the heat map, the text is snapshot here, and its hash is the
-	// vault's content witness.  Ids the plan already knows are
-	// skipped; ids whose file resolves are marked done instead of
-	// queued -- dependents of a cached leaf must unblock even
-	// though no ask will follow.
-	void offer(agenda::id key, std::string const &utf8Text);
-
 	// Body-less tasks whose inputs are cache files: pyramid
 	// nodes.  Tasks whose files exist are marked done instead of
 	// queued.
@@ -151,10 +144,15 @@ public:
 	// harvest waits on exactly this.
 	std::string artifact(agenda::id id);
 
-	// A caller-built task with a snapshot: a dive's matched
-	// excerpts, a probe's transcript sample (plus feedback on a
-	// retry), a focus write's searched evidence.  The caller sets
-	// the kind; cached tasks are marked done.
+	// A caller-built task with its body: a leaf's rendered
+	// transcript and frame lines (the body's hash is the vault's
+	// content witness for a leaf), a dive's matched excerpts, a
+	// probe's transcript sample (plus feedback on a retry), a
+	// focus write's searched evidence.  The caller sets the kind
+	// and the deps; a task whose file resolves is marked done
+	// instead of queued -- dependents of a cached artifact must
+	// unblock even though no ask will follow -- and a known id
+	// takes the offered shape back into the plan.
 	void offer(agenda::task t, std::string const &snapshot);
 
 	void heat(agenda::id key, double add);

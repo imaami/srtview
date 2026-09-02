@@ -34,6 +34,7 @@
 #include "loom.hpp"
 #include "palettefix.hpp"
 #include "srt.hpp"
+#include "timefmt.hpp"
 #include "timefmtq.hpp"
 
 namespace {
@@ -646,12 +647,10 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	// trail sheds video facets instead of guessing, and the
 	// identified tail re-stamps through showDoc.
 	m_trail.setVideo(key);
-	// Two heat namespaces, warmed together: the srt leaf drives
-	// the summary pyramid, the (video, subtitle) pair drives the
-	// semantic windows, whose sources are pair-addressed.
-	agenda::id const subtitles = offerFacts(srt);
-	m_facts.heat(subtitles, kFocusHeat);
-	if (agenda::id const src = semanticSourceId(id, subtitles))
+	// One heat namespace, the (video, subtitle) pair: the cut's
+	// leaf, the pyramid above it, the dives and the semantic
+	// windows all key on the source.
+	if (agenda::id const src = sourceOf(video, srt))
 		m_facts.heat(src, kFocusHeat);
 
 	m_prefs.addRecentFile(video);
@@ -672,23 +671,14 @@ bool MainWin::showDoc(QString const &video, QString const &srt)
 	return true;
 }
 
-// The facts cache is keyed by the srt file's own content identity
-// (Ident's hex, rehydrated to bytes at this boundary): one summary
-// per unique srt however many entries share it.  The
-// rendered transcript (tags consumed) is what the model reads and
-// what the vault witnesses: offer() hashes it, marks resolvable
-// cache hits done -- new dives depend on cached leaves, so the plan
-// must know them -- and asks only when the chain misses.  The
-// returned id feeds the pyramid and the heat map.
-agenda::id MainWin::offerFacts(QString const &srt)
+// The semantic source an entry cuts under: the (video, subtitle)
+// content pair -- the subtitle alone while the video's identity is
+// unresolved, null while the subtitle's is.  Windows, leaves, dives
+// and the heat map all key on it.
+agenda::id MainWin::sourceOf(QString const &video, QString const &srt)
 {
-	agenda::id const key = agenda::id::from_hex(
-		m_fileIds.value(srt).toStdString());
-	if (key)
-		m_facts.offer(key, exporter::load(m_transcripts, srt)
-		                   .lines.join(QLatin1Char('\n'))
-		                   .toStdString());
-	return key;
+	return semanticSourceId(videoId(video), agenda::id::from_hex(
+		m_fileIds.value(srt).toStdString()));
 }
 
 // Re-derive everything the corpus defines: the playlist and the
@@ -839,10 +829,9 @@ void MainWin::identifiedCorpus()
 	// cut publishes.
 	QList<refinery_source> rs;
 	for (PlayItem const &it : m_playlist) {
-		refinery_source s{it.video, srtOf(it), it.id, {}};
+		refinery_source s{it.video, srtOf(it), it.id, {}, {}};
 		if (!s.srt.isEmpty())
-			s.leaf = agenda::id::from_hex(
-				m_fileIds.value(s.srt).toStdString());
+			s.source = sourceOf(it.video, s.srt);
 		rs << s;
 	}
 	m_refine.setSources(std::move(rs));
@@ -853,37 +842,37 @@ void MainWin::identifiedCorpus()
 }
 
 // The semantic half of a corpus rebuild, and the whole of a frame
-// resnapshot: one leaf offer per srt not yet in the facts cache,
+// resnapshot: one leaf offer per source over the cut's evidence,
 // the pyramid over them in playlist order, the engine reset over
 // sources cut with their frame text, and the staging chain.  The
 // transcript cache is shared with the tally and the exporter, so
 // nothing parses twice; every step replays warm -- offers resolve
-// through the vault, plan ids dedupe, cached windows answer at
-// once -- so calling this again with new frames re-asks only the
-// windows whose identity the frames changed.
+// through the vault, plan ids dedupe, cached windows and leaves
+// answer at once -- so calling this again with new frames re-asks
+// only the windows and leaves whose identity the frames changed.
 void MainWin::rebuildSemantic()
 {
 	std::vector<agenda::id> leaves;
+	std::map<agenda::id, agenda::id> leafKey;   // leaf -> source
 	std::vector<engine::SemanticEngine<Facts>::source> sources;
 	QCryptographicHash semanticCorpus(QCryptographicHash::Blake2b_256);
 	semanticCorpus.addData(QByteArrayView("semantic-corpus-v1"));
 	std::set<std::string> semanticSeen;
+	QHash<QString, agenda::id> leafIds;
+	std::vector<agenda::id> cutAsks;
 	m_sourcePairs.clear();
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
-		agenda::id const key = offerFacts(srt);
-		if (key && std::ranges::find(leaves, key) == leaves.end())
-			leaves.push_back(key);
+		agenda::id const key = sourceOf(it.video, srt);
 		if (!key)
 			continue;
 		// Semantic sources are (video, subtitle)-addressed: two
-		// videos sharing one transcript are one facts leaf but
-		// two evidence sources, and one video with alternate
-		// transcripts is two sources as well -- provenance is
-		// the pair, and evidence provenance is the model's
-		// spine.
-		std::string const sourceId =
-			semanticSourceId(it.id, key).hex();
+		// videos sharing one transcript are two evidence sources
+		// and, their slides differing, two leaves; one video
+		// with alternate transcripts is two sources as well --
+		// provenance is the pair, and evidence provenance is the
+		// model's spine.
+		std::string const sourceId = key.hex();
 		if (!semanticSeen.insert(sourceId).second)
 			continue;
 		m_sourcePairs.insert(QString::fromStdString(sourceId),
@@ -911,6 +900,7 @@ void MainWin::rebuildSemantic()
 		// OCR notes.  Deliberately outside the corpus hash: new
 		// frames are new window identities inside the same
 		// corpus, not a new corpus.
+		std::string frameLines;
 		if (ft != m_frameText.end()) {
 			// The moments weave into regions: one line per
 			// slide-stretch at its first sighting, majority
@@ -924,10 +914,54 @@ void MainWin::rebuildSemantic()
 			if (m_frameDirty.erase(ft->first) || regs.empty())
 				regs = ocr::weave(ft->second);
 			source.frames.reserve(regs.size());
-			for (ocr::region const &g : regs)
+			for (ocr::region const &g : regs) {
 				source.frames.push_back(
 					{g.t0, g.consensus, g.t1});
+				// The windows' own rendering: the leaf meets
+				// a slide exactly as an extraction does.
+				frameLines += "@ [";
+				frameLines += fmt_time(g.t0, true);
+				frameLines += "] ";
+				frameLines += g.consensus;
+				frameLines += '\n';
+			}
 		}
+		// The leaf is a fact about this cut: the transcript and
+		// the video's slides, keyed by both, gated on the video's
+		// read witness -- "this video's planned readings are
+		// drained and folded, and these are its frame lines" --
+		// which marks the moment nothing of the video remains to
+		// read (at staging with the reader off).  A mid-read
+		// cut's leaf never comes ready and the next cut retires
+		// it; a reader-off session's frameless leaf is a
+		// different id, unreadable here until this video is read
+		// and found to carry no text at all -- the same inputs
+		// then, and the same artifact.  Summaries thus go video
+		// by video as the read proceeds, each over all the
+		// evidence its video has, never over the transcript
+		// alone while the slides are still being read.
+		agenda::id const frames = hash8(frameLines);
+		agenda::id const leaf = hash8("leaf-v2\n" + sourceId + '\n'
+		                              + frames.hex());
+		agenda::id const witness = hash8("video-read-v1\n"
+		                                 + it.id.toStdString() + '\n'
+		                                 + frames.hex());
+		agenda::task t;
+		t.id = leaf;
+		t.deps = {witness};
+		t.keys = {key};
+		t.what = agenda::kind::leaf;
+		std::string body;
+		if (!frameLines.empty())
+			body = "FRAMES\n" + frameLines + "---\n";
+		body += tx.lines.join(QLatin1Char('\n')).toStdString();
+		m_facts.offer(std::move(t), body);
+		if (!m_ocr.reading(it.id))
+			m_facts.mark(witness);
+		leaves.push_back(leaf);
+		leafKey.emplace(leaf, key);
+		leafIds.insert(QString::fromStdString(sourceId), leaf);
+		cutAsks.push_back(leaf);
 		sources.push_back(std::move(source));
 	}
 	// The cube pane mirrors what the weave just produced: counts
@@ -949,14 +983,28 @@ void MainWin::rebuildSemantic()
 		m_cubes.setVideos(cv);
 	}
 	std::vector<agenda::task> nodes = agenda::pyramid(leaves, treeId);
+	// Nodes inherit their leaves' heat keys -- the sources -- not
+	// the leaves' cut-keyed ids: showDoc warms the pair.
+	for (agenda::task &n : nodes) {
+		for (agenda::id &k : n.keys)
+			k = leafKey.at(k);
+		cutAsks.push_back(n.id);
+	}
 	m_rootId = nodes.empty() ? agenda::id{} : nodes.back().id;
 	m_refine.setRoot(m_rootId);
 	m_facts.corpus(std::move(nodes));
 	// The outgoing cut's ask ids, gathered before the reset: the
 	// ones the new cut does not re-stage retire from the plan
 	// below -- corpus() only ever adds, so nothing else would stop
-	// an abandoned question from burning the model's lane.
+	// an abandoned question from burning the model's lane.  The
+	// leaves and nodes are cut-keyed too, so the last cut's are
+	// listed and this cut's subtracted the same way.
 	std::set<agenda::id> stale = m_refine.preCut();
+	stale.insert(m_cutAsks.begin(), m_cutAsks.end());
+	for (agenda::id const id : cutAsks)
+		stale.erase(id);
+	m_cutAsks = std::move(cutAsks);
+	m_leafIds = std::move(leafIds);
 	m_semantic.reset(takeId(semanticCorpus).hex(),
 	                 std::move(sources));
 	// Publication: a cut assembled while nothing remains to read
@@ -967,7 +1015,7 @@ void MainWin::rebuildSemantic()
 	// own cut supersedes them.
 	if (!m_ocr.reading())
 		m_facts.mark(m_semantic.witness());
-	m_refine.postCut(std::move(stale));
+	m_refine.postCut(std::move(stale), m_leafIds);
 }
 
 // A video seen outside the playlist joins the corpus in memory: a
@@ -1259,14 +1307,13 @@ void MainWin::refreshKnowledge()
 	for (PlayItem const &it : m_playlist) {
 		QString const srt = srtOf(it);
 		QString path;
-		if (!srt.isEmpty()) {
-			agenda::id const leaf = agenda::id::from_hex(
-				m_fileIds.value(srt).toStdString());
-			if (leaf)
-				path = QString::fromStdString(
-					m_facts.locate(leaf,
-					               agenda::kind::leaf));
-		}
+		// The cut's leaf for the entry's source, readable once
+		// its video's witness is marked: a summary shows only
+		// over all the evidence its video has.
+		if (agenda::id const leaf = m_leafIds.value(
+			QString::fromStdString(sourceOf(it.video, srt).hex())))
+			path = QString::fromStdString(
+				m_facts.locate(leaf, agenda::kind::leaf));
 		bool const cached = !path.isEmpty();
 		QFileInfo const fi(it.video);
 		QString title = fi.fileName();

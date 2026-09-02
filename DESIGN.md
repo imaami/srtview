@@ -83,11 +83,16 @@ ground witness of a cut means "this exact cut contains every
 planned OCR result, drained and folded."  It is marked done by
 the one place that observes publication, and -- like every fact
 about an immutable snapshot -- is never unmarked.  Frame-
-sensitive kinds (extract, judge, terms) and every *adoption*
-action carry their cut's ground witness in `deps`; frame-
-independent kinds (leaf, node, dive, probe, focus) do not, which
-is why the model is never idle while a corpus reads itself.
-With the reader off, the witness is marked at staging.
+sensitive kinds carry a witness in `deps`: extract, judge and
+terms the cut's ground witness; a leaf its *video's* read
+witness -- "this video's planned readings are drained and
+folded, and these are its frame lines" -- so a summary is asked
+once over the transcript and the slides together, video by
+video as the read proceeds, never over the transcript alone
+while the slides are still being read.  Nodes and dives wait on
+leaves through ordinary deps; probe and focus wait on dives, and
+those alone run throughout the read.  With the reader off, every
+witness is marked at staging.
 
 **Cuts succeed each other; epochs bound lifetimes.**  New OCR
 evidence builds a *candidate* cut privately while the published

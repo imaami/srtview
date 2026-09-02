@@ -38,12 +38,19 @@ constexpr std::int32_t kTimeoutS  = 3600;
 	"or the search. "
 
 constexpr char kLeafPrompt[] =
-	"The user message is the complete subtitle text of one video. "
-	"Write a condensed description of its factual content: the "
+	"The user message holds the complete subtitle text of one "
+	"video -- a machine transcription of its speech -- and may open "
+	"with a FRAMES section: text read from the video's own picture, "
+	"one line per slide at its first sighting, each marked @ [time], "
+	"closed by a line of three dashes before the subtitles. Write a "
+	"condensed description of the video's factual content: the "
 	"subjects covered, claims and decisions made, and the names, "
-	"numbers and terms that appear. " SUBJECT_STANCE "Plain text "
-	"only; no preamble, no headings, no remarks about the "
-	"subtitles themselves.";
+	"numbers and terms that appear. Where the frames and the "
+	"subtitles spell a term or name differently, the frames are "
+	"authoritative: use their spelling, and treat the subtitles' "
+	"form as the transcriber's mishearing. " SUBJECT_STANCE "Plain "
+	"text only; no preamble, no headings, no remarks about the "
+	"subtitles or the frames themselves.";
 
 constexpr char kNodePrompt[] =
 	"Each section of the user message, separated by a line "
@@ -566,32 +573,6 @@ void Facts::poked(std::uint64_t before)
 		m_poke(m_pokeCtx);
 }
 
-void Facts::offer(agenda::id key, std::string const &utf8Text)
-{
-	if (!key || utf8Text.empty())
-		return;
-
-	std::uint64_t before;
-	{
-		std::lock_guard const lock(m_mtx);
-		if (!m_llm)
-			return;
-		before = m_landed;
-		// The witness registers before the plan is consulted:
-		// current inputs define status, never the reverse -- a
-		// done id must not keep a changed transcript out of the
-		// vault.  The hash covers the full text: clipping is
-		// presentation, and a clipped hash would tie identity
-		// to the clip limit.
-		m_vault.content(key, m_hash(utf8Text));
-		agenda::task t;
-		t.id = key;
-		t.keys = {key};
-		stage(std::move(t), utf8Text);
-	}
-	poked(before);
-}
-
 void Facts::corpus(std::vector<agenda::task> nodes)
 {
 	std::uint64_t before;
@@ -648,6 +629,14 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 		if (!m_llm)
 			return;
 		before = m_landed;
+		// A leaf's body is its content witness, registered before
+		// the plan is consulted: current inputs define status,
+		// never the reverse -- a done id must not keep a changed
+		// transcript out of the vault.  The hash covers the full
+		// text: clipping is presentation, and a clipped hash would
+		// tie identity to the clip limit.
+		if (t.what == agenda::kind::leaf)
+			m_vault.content(t.id, m_hash(snapshot));
 		stage(std::move(t), snapshot);
 	}
 	poked(before);

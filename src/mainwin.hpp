@@ -118,7 +118,7 @@ private:
 	void identArrived();
 	void identifiedCorpus();
 	void adoptVideo(QString const &video, QString const &srt);
-	agenda::id offerFacts(QString const &srt);
+	agenda::id sourceOf(QString const &video, QString const &srt);
 	void refreshKnowledge();
 	void knowledgeSelected(QTreeWidgetItem const *item);
 	void semanticSelected(QTreeWidgetItem const *item);
@@ -199,6 +199,14 @@ private:
 	// the video path alone is ambiguous across alternate-transcript
 	// entries.
 	QHash<QString, PlayItem>        m_sourcePairs;
+	// The current cut's leaf per semantic source (hex): a leaf is
+	// cut-keyed -- the transcript plus the video's frame lines --
+	// so the pane and the refinery look it up here rather than
+	// derive it from the subtitle alone.
+	QHash<QString, agenda::id>      m_leafIds;
+	// The outgoing cut's leaf and node ids: the next cut retires
+	// the ones it does not restage.
+	std::vector<agenda::id>         m_cutAsks;
 	exporter::transcripts           m_transcripts;
 	QMenu                          *m_recentMenu = nullptr;
 	QMenu                          *m_videosMenu = nullptr;
