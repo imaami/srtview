@@ -713,11 +713,16 @@ void MainWin::rebuildCorpus(bool fresh)
 	}
 	m_refine.seedGenerated();
 	m_playlist.clear();
+	// One string per file, the one every consumer computes:
+	// QFileInfo cleans dot segments where QDir::absoluteFilePath
+	// keeps them, and an entry of ../vids/a.mp4 stored uncleaned
+	// keyed the id map under a name openPath() never looks up --
+	// the entry stayed idless for the session.  An absolute entry
+	// ignores dir and is cleaned the same way.
 	QDir const dir = QFileInfo(m_corpusPath).absoluteDir();
 	auto const resolve = [&dir](std::string const &p) {
 		QString const q = QString::fromStdString(p);
-		return q.isEmpty() || !QFileInfo(q).isRelative()
-		       ? q : dir.absoluteFilePath(q);
+		return q.isEmpty() ? q : QFileInfo(dir, q).absoluteFilePath();
 	};
 	for (topics::video const &v : m_corpus.videos)
 		m_playlist << PlayItem{resolve(v.path), resolve(v.srt),
