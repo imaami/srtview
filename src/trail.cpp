@@ -104,14 +104,20 @@ void Trail::act(trail_step const &s)
 		if (!t.flags)
 			return;
 	}
-	if (t.flags & trail_step::video)
-		m_lastVideo = t.time;
 	QByteArray const b = encode(stamp(t));
 	int const rc = fundo_act(&m_f, b.constData(), std::size_t(b.size()));
-	if (rc)  // breadcrumb lost (OOM): playback state is unaffected,
-	         // but silent loss would make the trail lie later
+	if (rc) {
+		// Breadcrumb lost (OOM): playback state is unaffected,
+		// but silent loss would make the trail lie later -- and
+		// so would a drift baseline advanced past a crumb that
+		// was never recorded, which would let the next jump skip
+		// its departure step.
 		std::fprintf(stderr, "srtview: undo step not recorded: %d\n",
 		             rc);
+		return;
+	}
+	if (t.flags & trail_step::video)
+		m_lastVideo = t.time;
 }
 
 void Trail::driftTo(double t)
