@@ -334,6 +334,35 @@ static void test_complete_cycle()
 	check(!p.peek(), "a task behind the cycle never comes ready");
 }
 
+// The read boundary: a cached artifact settled behind a pending
+// witness stays incomplete, opens when the witness marks, and keeps
+// its gate across a successor cut's rebind -- renew() on a done
+// entry takes the new shape without owing an ask.
+static void test_complete_gate()
+{
+	agenda::plan p;
+	p.add({.id = tid("x"), .deps = {tid("w1")},
+	       .what = agenda::kind::extract});
+	p.done(tid("x"));                    // cache-settled, shape kept
+	check(p.status(tid("x")) == agenda::plan::state::done
+	      && !p.complete(tid("x")),
+	      "a done task stays incomplete behind its pending witness");
+	agenda::task t2{.id = tid("x"), .deps = {tid("w2")},
+	                .what = agenda::kind::extract};
+	check(!p.renew(t2)
+	      && p.status(tid("x")) == agenda::plan::state::done,
+	      "a successor cut's re-offer rebinds a done task, owing no ask");
+	p.add({.id = tid("y"), .deps = {tid("x")}});
+	check(!p.complete(tid("x")) && !p.peek(),
+	      "the rebound task and its dependent wait on the new witness");
+	p.done(tid("w1"));
+	check(!p.complete(tid("x")) && !p.peek(),
+	      "the old witness no longer opens it");
+	p.done(tid("w2"));
+	check(p.complete(tid("x")) && p.peek() == tid("y"),
+	      "the new witness opens it, and the dependent comes ready");
+}
+
 // Regression, found live: the pyramid root sums every leaf's heat,
 // outscores each single leaf, and its lift then flattened all
 // leaves to one effective score -- insertion order, heat erased.
@@ -455,6 +484,7 @@ int main()
 	test_inheritance();
 	test_rank();
 	test_complete_cycle();
+	test_complete_gate();
 	test_aggregate_feedback();
 	test_parking();
 	test_reset();
