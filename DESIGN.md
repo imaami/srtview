@@ -156,7 +156,11 @@ commutative and idempotent.
 ## Invariants
 
 - **I1** No dependency-admission decision is made outside
-  `plan::ready()`; lane fit is mechanical resource compatibility.
+  `plan::ready()`: a task runs when it holds, and an artifact
+  reads when `plan::complete()` holds -- done with `ready()`
+  holding recursively, the same rule read at the read boundary,
+  so a cached artifact waits for its witness exactly as its ask
+  would; lane fit is mechanical resource compatibility.
 - **I2** No ordering decision is made outside `plan::score()`.
 - **I3** A witness, once done, stays done: it states a fact about
   an immutable cut.  New evidence means a new cut, never a
