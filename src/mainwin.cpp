@@ -710,6 +710,18 @@ void MainWin::rebuildCorpus(bool fresh)
 		m_semantic.suspend();
 		m_know.setRows({});
 		m_cubes.setVideos({});
+		// Nor may its reading plan run on: the desk would spend
+		// the whole hashing window reading replaced videos, and
+		// their notes would settle a cut against the new playlist
+		// before its identities land.  The frame projections go
+		// with the plan -- they are folded from drained notes,
+		// and the new plan re-drains warm from the archive for
+		// any video both corpora share.
+		m_ocr.feed({});
+		m_frameText.clear();
+		m_regions.clear();
+		m_frameDirty.clear();
+		m_ocrDirty = false;
 	}
 	m_refine.seedGenerated();
 	m_playlist.clear();
