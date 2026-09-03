@@ -32,18 +32,25 @@ constexpr std::int32_t kTimeoutS  = 3600;
 // the individual prompts forbid meta-commentary.
 #define SUBJECT_STANCE \
 	"Write about the subject, never about the act of reviewing " \
-	"it: open every sentence with the subject's own people, " \
-	"systems, terms and claims -- never with 'This', 'The " \
+	"it: open every sentence with the subject's own names, " \
+	"terms and claims -- never with 'This', 'The " \
 	"topic', 'The thread' or any phrase pointing at the material " \
 	"or the search. "
 
 constexpr char kLeafPrompt[] =
-	"The user message is the complete subtitle text of one video. "
-	"Write a condensed description of its factual content: the "
+	"The user message holds the complete subtitle text of one "
+	"video -- a machine transcription of its speech -- and may open "
+	"with a FRAMES section: text read from the video's own picture, "
+	"one line per slide at its first sighting, each marked @ [time], "
+	"closed by a line of three dashes before the subtitles. Write a "
+	"condensed description of the video's factual content: the "
 	"subjects covered, claims and decisions made, and the names, "
-	"numbers and terms that appear. " SUBJECT_STANCE "Plain text "
-	"only; no preamble, no headings, no remarks about the "
-	"subtitles themselves.";
+	"numbers and terms that appear. Where the frames and the "
+	"subtitles spell a term or name differently, the frames are "
+	"authoritative: use their spelling, and treat the subtitles' "
+	"form as the transcriber's mishearing. " SUBJECT_STANCE "Plain "
+	"text only; no preamble, no headings, no remarks about the "
+	"subtitles or the frames themselves.";
 
 constexpr char kNodePrompt[] =
 	"Each section of the user message, separated by a line "
@@ -135,21 +142,24 @@ constexpr char kTermsPrompt[] =
 	"The user message is a numbered excerpt from the machine-"
 	"transcribed subtitles of one video: lines of the form "
 	"#N [H:MM:SS] text. Lines of the form @ [H:MM:SS] text are "
-	"on-screen text read from the video image at that moment -- "
-	"slides, terminal output -- and show the written spelling of "
+	"on-screen text read from the video image at that moment, "
+	"showing the written spelling of "
 	"spoken terms: use them to anchor TERM spellings and to unite "
 	"mangled spoken variants with the written form, but the reader "
 	"misreads too, so weigh them as one more witness, not as truth. "
 	"A frame line is never a cue: CUES lists only #numbers. "
-	"Identify the terms worth an index entry: "
-	"systems, components, protocols, tools, acronyms, project and "
-	"product names. Skip ordinary words, bare numbers and single "
+	"Identify the terms worth an index entry: recurring "
+	"vocabulary specific to this material that a newcomer would "
+	"look up -- proper names, coined or specialized terms and "
+	"phrases, acronyms and other shortenings. Skip ordinary "
+	"words, bare numbers and single "
 	"letters. For each, most important first, at most twelve, emit "
 	"one block of lines:\n"
 	"TERM: the likely correct spelling\n"
-	"KIND: one of term, acronym, system, component, person, other\n"
-	"MEANS: the expansion, only for an acronym the excerpt itself "
-	"explains\n"
+	"KIND: one of term, name, acronym, abbreviation, symbol, "
+	"other\n"
+	"MEANS: the expansion, only for an acronym or abbreviation "
+	"the excerpt itself explains\n"
 	"SEEN: every spelling observed in the excerpt, verbatim, "
 	"separated by |\n"
 	"GLOSS: one sentence saying what it is, drawn from the excerpt "
@@ -159,9 +169,10 @@ constexpr char kTermsPrompt[] =
 	"Blocks are separated by one blank line. The subtitles are "
 	"machine transcriptions of speech, so ONE spoken term often "
 	"appears under several mangled spellings. Group them into one "
-	"block: if the excerpt has gidra, gidger and guitro for the "
-	"tool Ghidra, that is TERM: Ghidra with SEEN: gidra | gidger "
-	"| guitro. A mangled spelling never gets its own block, and "
+	"block: if the excerpt has kelvane, calvain and kellvayne for "
+	"the name Kelvane, that is TERM: Kelvane with SEEN: kelvane "
+	"| calvain | kellvayne. A mangled spelling never gets its own "
+	"block, and "
 	"TERM is the correct spelling even when the excerpt only "
 	"misspells it. Only terms the excerpt actually contains; only "
 	"cue numbers that appear above. If nothing qualifies, reply "
@@ -169,20 +180,24 @@ constexpr char kTermsPrompt[] =
 
 constexpr char kMergePrompt[] =
 	"The user message lists index terms collected from machine-"
-	"transcribed subtitles of one lecture corpus, one term per "
+	"transcribed subtitles of one spoken-word corpus, one term "
+	"per "
 	"line. Because the transcription is automatic, one spoken "
 	"term often appears as several separately listed spellings "
-	"(Ghidra may also be listed as gidra, gidger, guitro). Find "
+	"(Kelvane may also be listed as kelvane, calvain, kellvayne). "
+	"Find "
 	"such groups. Emit one line per group:\n"
 	"MERGE: the correct spelling | wrong spelling | wrong "
 	"spelling\n"
 	"Every name must be copied exactly from the list. Merge only "
 	"spellings and mishearings of the SAME word or name; related "
-	"but different things (a tool and its file format, two "
-	"different tools) stay separate. Also judge worth: a listed "
-	"term that is everyday vocabulary of the field (function, "
-	"binary, loops, stack, project) rather than a specific tool, "
-	"product, protocol, format, person or project name earns one "
+	"but different things -- two distinct things whose names "
+	"merely sound alike -- stay separate. Also judge worth: a "
+	"listed "
+	"term that is everyday vocabulary of the material's own "
+	"field, a word the corpus uses constantly without ever "
+	"defining, rather than a specific name or coined term, earns "
+	"one "
 	"line:\n"
 	"DROP: the term\n"
 	"Never drop a specific name, however misspelled. If there is "
@@ -193,7 +208,7 @@ constexpr char kSpellPrompt[] =
 	"The lines are machine transcriptions of speech: the "
 	"transcriber writes what it HEARS, so a name it does not know "
 	"often comes out as a wrong word that sounds alike -- "
-	"kubernetes has been transcribed as cooper netties. TERM A is "
+	"Quenneville has been transcribed as when a vill. TERM A is "
 	"well attested in these subtitles. TERM B is rare, and the "
 	"question is whether B is really the speaker saying A, heard "
 	"wrong. Do the substitution test: re-read each of B's lines "
@@ -215,9 +230,10 @@ constexpr char kExtractPrompt[] =
 	"Each record is a triple and its sentence. SUBJECT is the thing "
 	"the record is about, named bare, the way the material names it: "
 	"put the aspect into the relation and the object, never into the "
-	"subject (subject 'p-code', relation 'is used across', object "
-	"'every processor Ghidra supports' -- not subject 'p-code "
-	"portability'). RELATION is the verb phrase that links them. "
+	"subject (subject 'the northern route', relation 'was closed "
+	"during', object 'the winter months' -- not subject "
+	"'northern-route closure'). RELATION is the verb phrase that "
+	"links them. "
 	"OBJECT is the complement, itself a bare name when it names a "
 	"thing. Use one spelling for one thing across records. STATEMENT "
 	"is the whole sentence, standing alone without referring to the "
@@ -533,35 +549,44 @@ Facts::~Facts()
 	llm_destroy(&m_llm);
 }
 
-void Facts::offer(agenda::id key, std::string const &utf8Text)
+// The poke mutex is the detachment barrier: setPoke(nullptr)
+// returns only once no thread is inside the callback, so the owner
+// may detach in its destructor and die.  It is never held together
+// with m_mtx, so a callback may re-enter Facts freely -- landed(),
+// locate(), whatever it needs.
+void Facts::setPoke(void (*poke)(void *) noexcept, void *ctx)
 {
-	if (!key || utf8Text.empty())
-		return;
+	std::lock_guard const lock(m_pokeMtx);
+	m_poke = poke;
+	m_pokeCtx = ctx;
+}
 
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm)
+// Fire the landing poke when the locked work moved the count --
+// called by the mutators after their own lock is gone, never with
+// it held.
+void Facts::poked(std::uint64_t before)
+{
+	if (landed() == before)
 		return;
-	// The witness registers before the plan is consulted: current
-	// inputs define status, never the reverse -- a done id must
-	// not keep a changed transcript out of the vault.  The hash
-	// covers the full text: clipping is presentation, and a
-	// clipped hash would tie identity to the clip limit.
-	m_vault.content(key, m_hash(utf8Text));
-	agenda::task t;
-	t.id = key;
-	t.keys = {key};
-	stage(std::move(t), utf8Text);
+	std::lock_guard const lock(m_pokeMtx);
+	if (m_poke)
+		m_poke(m_pokeCtx);
 }
 
 void Facts::corpus(std::vector<agenda::task> nodes)
 {
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm)
-		return;
-	for (agenda::task &t : nodes)
-		if (settle(t))
-			m_plan.add(std::move(t));
-	advance();
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		if (!m_llm)
+			return;
+		before = m_landed;
+		for (agenda::task &t : nodes)
+			if (settle(t))
+				m_plan.add(std::move(t));
+		advance();
+	}
+	poked(before);
 }
 
 void Facts::retire(std::vector<agenda::id> const &stale)
@@ -572,15 +597,49 @@ void Facts::retire(std::vector<agenda::id> const &stale)
 			m_plan.fail(id);
 }
 
+void Facts::mark(agenda::id fact)
+{
+	if (!fact)
+		return;
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		before = m_landed;
+		// The mark opens the gate on every cached artifact settled
+		// behind this witness -- a landing in every sense the
+		// harvesters care about, so it counts and pokes as one.
+		// A witness already done re-marks silently.
+		if (m_plan.status(fact) != agenda::plan::state::done) {
+			m_plan.done(fact);
+			++m_landed;
+		}
+		advance();
+	}
+	poked(before);
+}
+
 void Facts::offer(agenda::task t, std::string const &snapshot)
 {
 	if (!t.id || snapshot.empty())
 		return;
 
-	std::lock_guard const lock(m_mtx);
-	if (!m_llm)
-		return;
-	stage(std::move(t), snapshot);
+	std::uint64_t before;
+	{
+		std::lock_guard const lock(m_mtx);
+		if (!m_llm)
+			return;
+		before = m_landed;
+		// A leaf's body is its content witness, registered before
+		// the plan is consulted: current inputs define status,
+		// never the reverse -- a done id must not keep a changed
+		// transcript out of the vault.  The hash covers the full
+		// text: clipping is presentation, and a clipped hash would
+		// tie identity to the clip limit.
+		if (t.what == agenda::kind::leaf)
+			m_vault.content(t.id, m_hash(snapshot));
+		stage(std::move(t), snapshot);
+	}
+	poked(before);
 }
 
 // m_mtx held.  Shape before status: the vault registers the task's
@@ -596,11 +655,21 @@ void Facts::offer(agenda::task t, std::string const &snapshot)
 bool Facts::settle(agenda::task const &t)
 {
 	bool const have = !m_vault.resolve(t).empty();
+	agenda::plan::state const before = m_plan.status(t.id);
 	if (!m_plan.renew(t)
-	    && m_plan.status(t.id) != agenda::plan::state::unknown)
+	    && before != agenda::plan::state::unknown)
 		return false;
 	if (!have)
 		return true;
+	// A cache hit keeps its dependency shape: the entry is added
+	// before it is marked done, so complete() -- and with it every
+	// artifact read -- still waits on the task's gates.  A cut's
+	// ground witness thus holds a warm reload's cached frame-
+	// sensitive replies exactly as it holds the asks themselves;
+	// a dep-free done() tombstone here once let a reader-off
+	// session's frameless replies publish into a mid-read cut.
+	if (before == agenda::plan::state::unknown)
+		m_plan.add(t);
 	m_plan.done(t.id);
 	++m_landed;
 	return false;
@@ -687,6 +756,9 @@ bool Facts::cached(agenda::task const &t)
 std::string Facts::fetch(agenda::task const &t)
 {
 	std::lock_guard const lock(m_mtx);
+	if (m_plan.status(t.id) != agenda::plan::state::unknown
+	    && !m_plan.complete(t.id))
+		return {};
 	return slurp(m_vault.resolve(t));
 }
 
@@ -702,15 +774,26 @@ bool Facts::parked(agenda::id id) const
 	return m_offline || m_plan.status(id) == agenda::plan::state::parked;
 }
 
+// The read boundary is the admission gate: an artifact the plan
+// knows reads as absent until complete() -- deps recursively done,
+// the cut witness included -- so no consumer needs its own check.
+// Ids the plan never staged pass through: they are prior-session
+// bytes no gate of this session describes.
 std::string Facts::locate(agenda::id plan, agenda::kind k) const
 {
 	std::lock_guard const lock(m_mtx);
+	if (m_plan.status(plan) != agenda::plan::state::unknown
+	    && !m_plan.complete(plan))
+		return {};
 	return m_vault.locate(plan, k);
 }
 
 std::string Facts::artifact(agenda::id id)
 {
 	std::lock_guard const lock(m_mtx);
+	if (m_plan.status(id) != agenda::plan::state::unknown
+	    && !m_plan.complete(id))
+		return {};
 	return m_vault.resolve(id);
 }
 
@@ -775,7 +858,10 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
                       std::string const &want, std::string const &line,
                       std::uint64_t epoch, int status, bool wrote)
 {
+	std::uint64_t before;
+	{
 	std::lock_guard const lock(m_mtx);
+	before = m_landed;
 	for (lane &l : m_lane)
 		if (l.task == t.id)
 			l = {};
@@ -830,6 +916,8 @@ void Facts::completed(agenda::task const &t, std::string const &tmp,
 		             "unreachable, pipeline parked\n");
 	}
 	advance();
+	}
+	poked(before);
 }
 
 // What each lane takes: answers are urgent, everything else is
@@ -847,6 +935,8 @@ static bool urgent(agenda::task const &t)
 	return t.what == agenda::kind::answer;
 }
 
+
+
 // m_mtx held.  Fills every free lane until nothing is ready for it;
 // a task whose submission fails parks and the loop moves on.
 void Facts::advance()
@@ -855,6 +945,11 @@ void Facts::advance()
 	for (std::size_t i = 0; i < 2; ++i) {
 		lane &l = m_lane[i];
 		while (!m_down && !m_offline && m_llm && !l.task) {
+			// No policy here at all: the witness deps decide
+			// when a frame-sensitive ask is ready, the plan's
+			// rank puts the semantic chain first among the
+			// ready, heat orders within each rank, and the
+			// urgent lane answers questions regardless.
 			agenda::id const next = m_plan.peek(kFit[i]);
 			if (!next)
 				break;

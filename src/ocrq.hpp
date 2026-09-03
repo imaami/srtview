@@ -111,6 +111,15 @@ public:
 		return m_s && m_s->desk.planning();
 	}
 
+	// One video's share of it: true while any of its planned
+	// moments is unread or undrained.  False with the reader off,
+	// so a video's witness marks at staging exactly as the corpus
+	// witness does.
+	bool reading(QString const &id)
+	{
+		return m_s && m_s->desk.planning(id.toStdString());
+	}
+
 	std::vector<ocr::note> drain()
 	{
 		return m_s ? m_s->desk.drain()

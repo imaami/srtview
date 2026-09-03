@@ -9,7 +9,8 @@
 // dependent kind's folds in the recipe of the kind it reads, so an
 // upstream prompt change misses downstream too), and the suffix
 // chains content:
-// a leaf's suffix hashes its rendered transcript, everything else
+// a leaf's suffix hashes its body (the rendered transcript and the
+// video's frame lines), everything else
 // hashes its hard deps' suffixes and artifact bytes, so an external
 // edit to an .srt or to a cached file shifts every transitive
 // dependent's expected name.  Resolution recomputes the expected

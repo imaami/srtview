@@ -163,17 +163,49 @@ public:
 		return out;
 	}
 
-	// Any thread: true while the reading plan still has moments to
-	// perform -- feeds on the bench, or a planned reading in the
-	// worker's hands right now.  Demand work never counts.
+	// Any thread: true while the reading plan still has work in
+	// any stage -- feeds on the bench, a planned reading in the
+	// worker's hands, or ANY finished note not yet drained.  The
+	// last leg matters twice over: a tiny or archive-warm plan can
+	// finish entirely between the owner's feed and its next probe,
+	// and a late demand read's note is unpublished news just the
+	// same -- until drained, it may still change the owner's cut,
+	// and a probe taken in the poke-to-drain window must not call
+	// the world quiet.  A drain-then-probe caller therefore sees
+	// false exactly when every note has reached it.  Queued and
+	// live demand work still never counts: a read the user asked
+	// for is not the corpus reading itself.
 	bool planning()
 	{
 		std::lock_guard const lk(m_mtx);
 		if (!m_plan.empty())
 			return true;
-		return m_live
+		if (m_live
 		    && std::ranges::find(m_live->owners, ticket(0))
-		       != m_live->owners.end();
+		       != m_live->owners.end())
+			return true;
+		return !m_done.empty();
+	}
+
+	// The same question for one video: its feed still on the
+	// bench, its planned reading in the worker's hands, or a note
+	// of its not yet drained -- the corpus-wide answer is the
+	// disjunction of these.  A per-video witness marks on this
+	// one, so a summary can go the moment its own video is read
+	// while the rest of the corpus still is.
+	bool planning(std::string const &id)
+	{
+		std::lock_guard const lk(m_mtx);
+		for (lot const &l : m_plan)
+			if (l.f.proto.id == id)
+				return true;
+		if (m_live && m_live->r.id == id
+		    && std::ranges::find(m_live->owners, ticket(0))
+		       != m_live->owners.end())
+			return true;
+		return std::ranges::any_of(m_done, [&id](note const &n) {
+			return n.r.id == id;
+		});
 	}
 
 private:
@@ -190,6 +222,11 @@ private:
 
 	// Under the lock, both lanes empty: the plan's next moment
 	// as a job owned by ticket 0, husk feeds pruned on the way.
+	// A lot whose last moment is being pulled leaves with it:
+	// planning() reads m_plan between the final note's poke and
+	// the worker's next loop, and a lingering husk there would
+	// report a drained plan as still reading -- the release that
+	// callback was waiting for would never come.
 	std::optional<job> pulled()
 	{
 		while (!m_plan.empty()) {
@@ -197,6 +234,8 @@ private:
 			if (l.at < l.f.times.size()) {
 				request r = l.f.proto;
 				r.ms = l.f.times[l.at++];
+				if (l.at == l.f.times.size())
+					m_plan.pop_front();
 				return job{std::move(r), {0}};
 			}
 			m_plan.pop_front();

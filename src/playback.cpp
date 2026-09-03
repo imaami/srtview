@@ -21,12 +21,12 @@ PlaybackCtl::PlaybackCtl(mpv_link_base &link, srt_view_base &view,
 	                 [this](bool on) { m_view.setFollow(on); });
 }
 
-void PlaybackCtl::seekCue(int cue, bool forcePause)
+void PlaybackCtl::seekCue(int cue, bool forcePause, bool depart)
 {
 	if (cue < 0 || cue >= m_view.cueCount())
 		return;
 	double const t = m_view.cueStart(cue);
-	if (!jumpTo(t, forcePause))
+	if (!jumpTo(t, forcePause, depart))
 		return;
 	trail_step jump;
 	jump.flags = trail_step::video;
@@ -38,7 +38,7 @@ void PlaybackCtl::seekCue(int cue, bool forcePause)
 		2000);
 }
 
-bool PlaybackCtl::jumpTo(double t, bool forcePause)
+bool PlaybackCtl::jumpTo(double t, bool forcePause, bool depart)
 {
 	QString err;
 	// Capture before the seek (which advances lastTime): where the
@@ -48,7 +48,7 @@ bool PlaybackCtl::jumpTo(double t, bool forcePause)
 		m_status.showMessage(QStringLiteral("mpv: ") + err, 3000);
 		return false;
 	}
-	if (before >= 0.0)
+	if (depart && before >= 0.0)
 		m_trail.driftTo(before);
 	m_view.setPlayTime(t);
 	m_grab.enqueue(t);

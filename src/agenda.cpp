@@ -17,7 +17,16 @@ namespace {
 // summaries and dives -- the index backbone outranks topic prose
 // but never starves the pyramid), tiers order within a kind, the
 // export edge floats a topic over its supportive components, and
-// heat (unbounded) moves everything across those bands.
+// heat (unbounded) moves everything within its rank.  The rank is
+// the dominant, lexicographic half of the key: the released band
+// -- the summary backbone (leaf, node) first, then the semantic
+// chain (extract, judge) -- outranks all other background work by
+// construction, however hot a dive burns, and an answer tops even
+// that -- policy the executor once expressed as a second peek, now
+// the score's own shape.  Leaves wait on their video's read as
+// extraction waits on the cut's, so a video's summary is the first
+// thing asked once its read completes, and the pyramid follows
+// before any window is extracted.
 // Evidence extraction sits between nodes and the lexical terms pass;
 // pair judgments sit between terms and dives -- a verdict is a
 // short call that reshapes the knowledge tree, a dive a long one
@@ -33,6 +42,10 @@ constexpr double kKindBase[]  = {3.0, 2.0, 1.0, 0.5, 0.45, 1.5,
                                  0.4, 0.42, 1.75, 1.4, 4.0};
 static_assert(std::size(kKindBase) == kind_count,
               "kKindBase mirrors agenda::kind");
+constexpr int    kKindRank[]  = {1, 1, 0, 0, 0, 0,
+                                 0, 0, 1, 1, 2};
+static_assert(std::size(kKindRank) == kind_count,
+              "kKindRank mirrors agenda::kind");
 constexpr double kTierStep    = 1.0 / 32.0;
 constexpr double kExportEdge  = 1.0 / 4.0;
 
@@ -211,6 +224,18 @@ bool plan::renew (task t)
 		e = {std::move(t), state::pending};
 		return true;
 	}
+	if (e.s == state::done) {
+		// A cache hit re-offered by a successor cut takes the
+		// new shape -- above all its new witness -- and stays
+		// done: complete() must judge the artifact by the gates
+		// of the cut that wants it now, not the one that first
+		// saw it.  Refusing here once pinned a warm window to a
+		// mid-read cut's witness, which never marks -- cached
+		// knowledge stayed gated for the whole session.  No ask
+		// is owed, so the caller hears nothing new.
+		e.t = std::move(t);
+		return false;
+	}
 	if (e.s != state::pending && e.s != state::running)
 		return false;
 	bool const rekeyed = e.t.what != t.what || e.t.deps != t.deps;
@@ -238,12 +263,12 @@ bool plan::start (id which)
 
 id plan::peek (fit_fn fit) const
 {
-	std::vector<double> own(m_entries.size());
+	std::vector<rank_key> own(m_entries.size());
 	for (std::size_t i = 0; i < m_entries.size(); ++i)
 		own[i] = m_entries[i].s == state::pending
 		         ? score(m_entries[i].t)
-		         : 0.0;
-	std::vector<double> eff(own);
+		         : rank_key{};
+	std::vector<rank_key> eff(own);
 	for (std::size_t pass = 0; pass < kLiftCap && lift(eff); ++pass)
 		;
 
@@ -301,17 +326,33 @@ std::size_t plan::index_of (id which) const
 	return m_index.find(which);
 }
 
-bool plan::ready (entry const &e) const
+bool plan::ready (entry const &e, unsigned depth) const
 {
+	// Transitive on purpose: a dependency that is done but not yet
+	// complete -- a cached artifact behind a pending gate -- must
+	// hold its dependents exactly as a pending one would.  A chain
+	// deeper than any the pipeline builds (kLiftCap: the pyramid is
+	// log2 of the corpus, and everything else hangs a few hops off
+	// it) can only be a cycle -- impossible by construction, ids
+	// being content hashes of their inputs -- and is answered as
+	// not ready rather than walked forever: the vault's
+	// crash-to-miss posture for the same graph.
+	if (depth > kLiftCap)
+		return false;
 	return std::ranges::all_of(e.t.deps,
-		[this](id const d) {
-			std::size_t const at = index_of(d);
-			return at != npos
-			    && m_entries[at].s == state::done;
+		[this, depth](id const d) {
+			return complete(d, depth + 1);
 		});
 }
 
-double plan::score (task const &t) const
+bool plan::complete (id which, unsigned depth) const
+{
+	std::size_t const at = index_of(which);
+	return at != npos && m_entries[at].s == state::done
+	    && ready(m_entries[at], depth);
+}
+
+plan::rank_key plan::score (task const &t) const
 {
 	double s = kKindBase[std::size_t(t.what)]
 	         - kTierStep * t.tier
@@ -325,14 +366,14 @@ double plan::score (task const &t) const
 		}
 	}
 
-	return s;
+	return {kKindRank[std::size_t(t.what)], s};
 }
 
 // One relaxation pass of priority inheritance: every pending task
 // pulls each of its pending dependencies up to at least its own
 // effective score.  Blocked tasks relay what they inherited, so a
 // hot root reaches its deepest missing leaf within the pass cap.
-bool plan::lift (std::vector<double> &eff) const
+bool plan::lift (std::vector<rank_key> &eff) const
 {
 	bool changed = false;
 	for (std::size_t i = 0; i < m_entries.size(); ++i) {
@@ -344,8 +385,10 @@ bool plan::lift (std::vector<double> &eff) const
 	return changed;
 }
 
-bool plan::raise_deps (std::size_t at, std::vector<double> &eff) const
+bool plan::raise_deps (std::size_t at, std::vector<rank_key> &eff) const
 {
+	// The whole key travels: the blocker of ranked work runs with
+	// that rank, or the rank would starve behind its own inputs.
 	bool changed = false;
 	for (id const d : m_entries[at].t.deps) {
 		std::size_t const j = index_of(d);

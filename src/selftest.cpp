@@ -154,6 +154,11 @@ void runSelftest(MainWin *w, QString const &video)
 		    .arg(QString::fromUtf8(head),
 		         QString::fromUtf8(first)));
 	});
+	QTimer::singleShot(12100, w, [w, log] {
+		log(QStringLiteral("cubes videos=%1 regions=%2")
+		    .arg(w->cubes().tree().topLevelItemCount())
+		    .arg(w->cubes().totalCubes()));
+	});
 	QTimer::singleShot(12200, w, [w, log] {
 		log(QStringLiteral("done"));
 		w->close();

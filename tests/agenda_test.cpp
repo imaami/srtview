@@ -197,17 +197,21 @@ static void test_order_bands()
 	      "a fit narrows the peek to one lane's candidates");
 	check(p.take() == tid("a1"),
 	      "an interactive grounded answer jumps the queue");
+	// The released band is its own rank above all other background
+	// work: the summary backbone first, then the semantic chain,
+	// then the scalar bands.
 	check(p.take() == tid("l1") && p.take() == tid("l2"),
-	      "leaves before nodes, stable by insertion");
+	      "leaves lead the released band, stable by insertion");
 	check(p.take() == tid("n2") && p.take() == tid("n1"),
 	      "lower tier first within a kind");
 	check(p.take() == tid("e1"),
-	      "semantic extraction follows the summary backbone");
-	check(p.take() == tid("t1"),
-	      "terms between summaries and dives: the index backbone");
+	      "extraction follows the pyramid: ground truth before "
+	      "prose");
 	check(p.take() == tid("j1"),
-	      "verdicts before dives: short calls that reshape the tree");
-	check(p.take() == tid("d1"), "dives after nodes");
+	      "verdicts with it: the released band drains before prose");
+	check(p.take() == tid("t1"),
+	      "terms lead the scalar bands: the index backbone");
+	check(p.take() == tid("d1"), "dives after terms");
 	check(p.take() == tid("f1"), "focuses after dives");
 	check(p.take() == tid("p1"),
 	      "probes last: gathered evidence writes before new "
@@ -253,23 +257,110 @@ static void test_blend()
 static void test_inheritance()
 {
 	agenda::plan p;
-	// Chain: hot dive -> node -> leaf "deep"; keys are disjoint so
-	// only inheritance can move the leaf.
-	p.add({.id = tid("deep"), .what = agenda::kind::leaf});
-	p.add({.id = tid("mid"), .deps = {tid("deep")},
-	       .what = agenda::kind::node, .tier = 1});
-	p.add({.id = tid("dive"), .deps = {tid("mid")},
-	       .keys = {tid("hot")}, .what = agenda::kind::dive});
-	p.add({.id = tid("plain"), .what = agenda::kind::leaf});
+	// Chain: hot focus -> dive "deep", one rank; keys are disjoint
+	// so only inheritance can move the dive past an earlier one.
+	p.add({.id = tid("plain"), .what = agenda::kind::dive});
+	p.add({.id = tid("deep"), .what = agenda::kind::dive});
+	p.add({.id = tid("focus"), .deps = {tid("deep")},
+	       .keys = {tid("hot")}, .what = agenda::kind::focus});
 	p.heat(tid("hot"), 10.0);
 	check(p.take() == tid("deep"),
-	      "a hot blocked dive pulls its deepest missing leaf");
+	      "a hot blocked focus pulls its missing dive ahead");
 	p.done(tid("deep"));
-	check(p.take() == tid("mid"),
-	      "inheritance walks the chain as it unblocks");
-	p.done(tid("mid"));
-	check(p.take() == tid("dive") && p.take() == tid("plain"),
+	check(p.take() == tid("focus") && p.take() == tid("plain"),
 	      "the hot task itself runs once ready");
+
+	// The released band takes no heat from below: a hot dive's
+	// leaf runs in the band's own order -- the band drains
+	// entirely before the dive anyway, and its leaves carry the
+	// same source keys the dive does in production.
+	agenda::plan q;
+	q.add({.id = tid("plain"), .what = agenda::kind::leaf});
+	q.add({.id = tid("deep"), .what = agenda::kind::leaf});
+	q.add({.id = tid("dive"), .deps = {tid("deep")},
+	       .keys = {tid("hot")}, .what = agenda::kind::dive});
+	q.heat(tid("hot"), 10.0);
+	check(q.take() == tid("plain") && q.take() == tid("deep"),
+	      "leaves keep their own order under a hot dive");
+	q.done(tid("deep"));
+	check(q.take() == tid("dive"),
+	      "the hot dive runs once its leaf is done");
+}
+
+// The rank is dominant by construction: no heat, however
+// unbounded, moves work across it -- only within it -- and
+// inheritance lifts the whole key, so the blocker of ranked work
+// runs with that rank.
+static void test_rank()
+{
+	agenda::plan p;
+	p.add({.id = tid("essay"), .keys = {tid("essay")},
+	       .what = agenda::kind::dive});
+	p.add({.id = tid("ex"), .what = agenda::kind::extract});
+	p.heat(tid("essay"), 1e6);
+	check(p.take() == tid("ex"),
+	      "a million degrees of heat never crosses the rank");
+	check(p.take() == tid("essay"), "the hot dive follows");
+
+	agenda::plan q;
+	q.add({.id = tid("blocker"), .what = agenda::kind::dive});
+	q.add({.id = tid("judged"), .deps = {tid("blocker")},
+	       .what = agenda::kind::judge});
+	q.add({.id = tid("hotdive"), .keys = {tid("h")},
+	       .what = agenda::kind::dive});
+	q.heat(tid("h"), 1e6);
+	check(q.take() == tid("blocker"),
+	      "the blocker of ranked work inherits the rank whole");
+	q.done(tid("blocker"));
+	check(q.take() == tid("judged"),
+	      "the ranked task itself runs once unblocked");
+	check(q.take() == tid("hotdive"), "heat's turn comes after");
+}
+
+// A dependency cycle is impossible by construction -- ids are
+// content hashes of their inputs -- and answered as incomplete
+// rather than walked forever should one ever arrive: the vault's
+// crash-to-miss posture for the same graph.
+static void test_complete_cycle()
+{
+	agenda::plan p;
+	p.add({.id = tid("a"), .deps = {tid("b")}});
+	p.add({.id = tid("b"), .deps = {tid("a")}});
+	p.done(tid("a"));
+	p.done(tid("b"));
+	check(!p.complete(tid("a")) && !p.complete(tid("b")),
+	      "a done cycle answers incomplete instead of recursing");
+	p.add({.id = tid("c"), .deps = {tid("a")}});
+	check(!p.peek(), "a task behind the cycle never comes ready");
+}
+
+// The read boundary: a cached artifact settled behind a pending
+// witness stays incomplete, opens when the witness marks, and keeps
+// its gate across a successor cut's rebind -- renew() on a done
+// entry takes the new shape without owing an ask.
+static void test_complete_gate()
+{
+	agenda::plan p;
+	p.add({.id = tid("x"), .deps = {tid("w1")},
+	       .what = agenda::kind::extract});
+	p.done(tid("x"));                    // cache-settled, shape kept
+	check(p.status(tid("x")) == agenda::plan::state::done
+	      && !p.complete(tid("x")),
+	      "a done task stays incomplete behind its pending witness");
+	agenda::task t2{.id = tid("x"), .deps = {tid("w2")},
+	                .what = agenda::kind::extract};
+	check(!p.renew(t2)
+	      && p.status(tid("x")) == agenda::plan::state::done,
+	      "a successor cut's re-offer rebinds a done task, owing no ask");
+	p.add({.id = tid("y"), .deps = {tid("x")}});
+	check(!p.complete(tid("x")) && !p.peek(),
+	      "the rebound task and its dependent wait on the new witness");
+	p.done(tid("w1"));
+	check(!p.complete(tid("x")) && !p.peek(),
+	      "the old witness no longer opens it");
+	p.done(tid("w2"));
+	check(p.complete(tid("x")) && p.peek() == tid("y"),
+	      "the new witness opens it, and the dependent comes ready");
 }
 
 // Regression, found live: the pyramid root sums every leaf's heat,
@@ -391,6 +482,9 @@ int main()
 	test_heat();
 	test_blend();
 	test_inheritance();
+	test_rank();
+	test_complete_cycle();
+	test_complete_gate();
 	test_aggregate_feedback();
 	test_parking();
 	test_reset();

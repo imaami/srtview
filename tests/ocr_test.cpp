@@ -550,6 +550,48 @@ void test_mailbox_plan_yields()
 	      "one posted note among the planned ones");
 }
 
+void test_mailbox_planning()
+{
+	// The quiescence probe the ground-truth hold hangs on: true
+	// through the plan's whole story -- moments on the bench, the
+	// read in flight, and the finished note not yet drained -- and
+	// false only once a drain has taken the last of it.  A
+	// drain-then-probe caller therefore can never release against
+	// notes whose folding is still queued, however fast a tiny or
+	// archive-warm plan finishes.
+	fake f;
+	f.gated = true;
+	std::counting_semaphore<> poked{0};
+	{
+		ocr::scribe<fake> s(f, poke_release, &poked);
+		check(!s.planning(), "an empty desk is not planning");
+		ocr::feed a{req("A"), {1}};
+		a.proto.id = "A";
+		s.plan({a});
+		f.entered.acquire();          // the one read is live
+		check(s.planning(), "the read in flight still counts");
+		f.gate.release(1);
+		poked.acquire();              // its note has landed
+		check(s.planning(),
+		      "an undrained planned note still counts");
+		s.drain();
+		check(!s.planning(),
+		      "the drain takes the last of the story");
+		// A demand read: invisible while queued or live -- the
+		// user's ask is not the corpus reading itself -- but its
+		// finished note is unpublished news like any other.
+		s.post(req("D", 7), true);
+		f.entered.acquire();
+		check(!s.planning(), "live demand work never counts");
+		f.gate.release(1);
+		poked.acquire();
+		check(s.planning(),
+		      "an undrained demand note is still news");
+		s.drain();
+		check(!s.planning(), "drained, the world is quiet");
+	}
+}
+
 void test_mailbox_replan()
 {
 	fake f;
@@ -609,6 +651,7 @@ int main()
 	test_mailbox_survives_throw();
 	test_mailbox_plan();
 	test_mailbox_plan_yields();
+	test_mailbox_planning();
 	test_mailbox_replan();
 	test_mailbox_teardown();
 	test_archive();

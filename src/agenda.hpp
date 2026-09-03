@@ -34,6 +34,7 @@
 #define SRTVIEW_SRC_AGENDA_HPP_
 
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -208,6 +209,13 @@ public:
 
 	task const *get(id which) const;
 	state status(id which) const;
+	// Done with every dependency recursively complete: the state a
+	// cached artifact must reach before its bytes may be consumed.
+	// A cache hit is physically present the moment the vault sees
+	// it, but publishable only once its gates (a cut's ground
+	// witness among them) have opened.  A chain deeper than any
+	// the pipeline builds answers false: see ready().
+	bool complete(id which) const { return complete(which, 0); }
 	std::size_t backlog() const;   // pending + running
 
 private:
@@ -218,11 +226,28 @@ private:
 
 	static constexpr std::size_t npos = std::size_t(-1);
 
+	// The lexicographic priority key: kind rank dominant by
+	// construction, the fine score -- bases, tiers, edges, heat --
+	// ordering within the rank.  Unbounded heat therefore
+	// reorders work only inside its class, never across, and
+	// inheritance lifts the whole key, so the blocker of ranked
+	// work runs with that rank.  fine is finite by construction
+	// (sums of constants and heat), so the defaulted ordering is
+	// total in practice.
+	struct rank_key {
+		int    rank = 0;
+		double fine = 0.0;
+		constexpr auto operator<=>(rank_key const &)
+			const = default;
+	};
+
 	std::size_t index_of(id which) const;
-	bool ready(entry const &e) const;
-	double score(task const &t) const;
-	bool lift(std::vector<double> &eff) const;
-	bool raise_deps(std::size_t at, std::vector<double> &eff) const;
+	bool ready(entry const &e, unsigned depth = 0) const;
+	bool complete(id which, unsigned depth) const;
+	rank_key score(task const &t) const;
+	bool lift(std::vector<rank_key> &eff) const;
+	bool raise_deps(std::size_t at,
+	                std::vector<rank_key> &eff) const;
 
 	// Tasks number in the thousands once every window, pair and
 	// question is one: entries append only and the index finds

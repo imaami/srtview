@@ -4,7 +4,8 @@
 // directories and an agenda::plan behind one mutex, runs one task
 // at a time, and turns each completion into a cache file plus the
 // next pick.  Kinds map to prompts and inputs as follows: a *leaf*
-// summarizes transcript text snapshot on the offering (UI) thread;
+// summarizes one video's transcript and frame lines, snapshot on
+// the offering (UI) thread once the video is read;
 // a *node* merges the cache files of its children, which dependency
 // gating guarantees exist; a *dive* explains one topic's matched
 // excerpts (snapshot like a leaf) against the summaries of the
@@ -80,14 +81,6 @@ public:
 	Facts(Facts const &) = delete;
 	Facts &operator=(Facts const &) = delete;
 
-	// Leaf summary of one subtitle file: the id keys the cache and
-	// the heat map, the text is snapshot here, and its hash is the
-	// vault's content witness.  Ids the plan already knows are
-	// skipped; ids whose file resolves are marked done instead of
-	// queued -- dependents of a cached leaf must unblock even
-	// though no ask will follow.
-	void offer(agenda::id key, std::string const &utf8Text);
-
 	// Body-less tasks whose inputs are cache files: pyramid
 	// nodes.  Tasks whose files exist are marked done instead of
 	// queued.
@@ -100,6 +93,14 @@ public:
 	// (artifacts are content-addressed); done and parked ids stay
 	// as they are.
 	void retire(std::vector<agenda::id> const &stale);
+
+	// Mark a witnessed fact done: an id that stands for a fact
+	// about one cut rather than an artifact -- never staged, never
+	// executed, tombstoned into the plan so its dependents come
+	// ready and the freed lanes advance.  Marking twice, or before
+	// any dependent exists, is harmless by plan::done()'s own
+	// contract.
+	void mark(agenda::id fact);
 
 	// The cache root; never changes after construction.
 	std::string const &dir() const { return m_dir; }
@@ -121,6 +122,15 @@ public:
 	// A harvester that saw the count unchanged need not look again.
 	std::uint64_t landed() const;
 
+	// The landing poke, the scribe's exact shape: fired once per
+	// call that advanced landed() -- a model completion, or offers
+	// resolving cache hits -- outside the mutex, on whichever
+	// thread landed the artifact.  It must be cheap, thread-safe
+	// and noexcept; the Qt owner wraps it into a queued call.
+	// Wire once, before the first offer, from the owning thread;
+	// the pointer is read unlocked thereafter.
+	void setPoke(void (*poke)(void *) noexcept, void *ctx);
+
 	// Whether nothing will land for a task: it failed this session
 	// -- refused, timed out, errored or cancelled -- and was parked
 	// without an artifact, or the pipeline as a whole is parked
@@ -134,10 +144,15 @@ public:
 	// harvest waits on exactly this.
 	std::string artifact(agenda::id id);
 
-	// A caller-built task with a snapshot: a dive's matched
-	// excerpts, a probe's transcript sample (plus feedback on a
-	// retry), a focus write's searched evidence.  The caller sets
-	// the kind; cached tasks are marked done.
+	// A caller-built task with its body: a leaf's rendered
+	// transcript and frame lines (the body's hash is the vault's
+	// content witness for a leaf), a dive's matched excerpts, a
+	// probe's transcript sample (plus feedback on a retry), a
+	// focus write's searched evidence.  The caller sets the kind
+	// and the deps; a task whose file resolves is marked done
+	// instead of queued -- dependents of a cached artifact must
+	// unblock even though no ask will follow -- and a known id
+	// takes the offered shape back into the plan.
 	void offer(agenda::task t, std::string const &snapshot);
 
 	void heat(agenda::id key, double add);
@@ -157,6 +172,7 @@ private:
 	               std::string const &want, std::string const &line,
 	               std::uint64_t epoch, int status, bool wrote);
 	bool settle(agenda::task const &t);
+	void poked(std::uint64_t before);
 	void stage(agenda::task t, std::string const &body);
 	void advance();
 	bool submit(agenda::task const &t, std::size_t lane);
@@ -188,6 +204,10 @@ private:
 	lane               m_lane[2];   // [0] background, [1] urgent
 	std::uint64_t      m_epoch = 0; // reset generation
 	std::uint64_t      m_landed = 0; // artifacts made available
+	std::mutex         m_pokeMtx;  // callback lifetime barrier,
+	                               // never held together with m_mtx
+	void             (*m_poke)(void *) noexcept = nullptr;
+	void              *m_pokeCtx = nullptr;
 	llm               *m_llm = nullptr;
 	int                m_refused = 0;   // consecutive connect fails
 	bool               m_offline = false;
