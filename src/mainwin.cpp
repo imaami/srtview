@@ -1300,11 +1300,13 @@ void MainWin::refreshKnowledge()
 	QHash<QString, int> bases;
 	for (PlayItem const &it : m_playlist)
 		++bases[QFileInfo(it.video).fileName()];
-	// Per-video terms progress in one pass: staged windows against
-	// the ones the harvest has actually seen answered.
+	// Per-entry terms progress in one pass: staged windows against
+	// the ones the harvest has actually seen answered, keyed by
+	// the (video, transcript) pair -- alternate transcripts of one
+	// video are separate rows with separate windows.
 	QHash<QString, QPair<int, int>> tw;
 	for (Refinery::TermsWork const &w : m_refine.termsWork()) {
-		auto &[d, n] = tw[w.video];
+		auto &[d, n] = tw[w.video + QLatin1Char('\n') + w.srt];
 		++n;
 		d += m_refine.answered(w.id.hex());
 	}
@@ -1323,7 +1325,8 @@ void MainWin::refreshKnowledge()
 		QString title = fi.fileName();
 		if (bases.value(title) > 1)
 			title += QStringLiteral(" — ") + fi.dir().dirName();
-		auto const [tdone, ttotal] = tw.value(it.video);
+		auto const [tdone, ttotal] =
+			tw.value(it.video + QLatin1Char('\n') + srt);
 		QStringList words;
 		words << (cached ? QStringLiteral("summary cached")
 		                 : QStringLiteral("summary pending"));
