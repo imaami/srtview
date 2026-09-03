@@ -1267,29 +1267,16 @@ void MainWin::refreshKnowledge()
 	// both essays stay visible, numbered apart past the first.
 	QHash<QString, int> seen;
 	for (std::string const &hex : m_refine.harvested()) {
+		// The refinery parsed and validated the reply when it
+		// folded it; the pane reads that fact, never the file.
+		QString const qpat = m_refine.focusPattern(hex);
+		if (qpat.isEmpty())
+			continue;
 		QString const path = QString::fromStdString(
 			m_facts.locate(agenda::id::from_hex(hex),
 			               agenda::kind::focus));
 		if (path.isEmpty())
 			continue;
-		QFile f(path);
-		if (!f.open(QIODevice::ReadOnly))
-			continue;
-		std::string const text = f.readAll().toStdString();
-		if (text.starts_with("NONE"))
-			continue;
-		std::string pat;
-		if (text.starts_with("REGEX:")) {
-			std::size_t nl = text.find('\n');
-			if (nl == std::string::npos)
-				nl = text.size();
-			pat = Refinery::regexPayload(text, 6, nl);
-		} else {
-			pat = Refinery::regexLine(text);
-		}
-		if (pat.empty())
-			continue;
-		QString const qpat = QString::fromStdString(pat);
 		QString title = qpat;
 		if (int const n = ++seen[qpat]; n > 1)
 			title += QStringLiteral(" (%1)").arg(n);

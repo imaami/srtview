@@ -126,6 +126,11 @@ public:
 	{ return m_generated; }
 	std::set<std::string> const &harvested() const
 	{ return m_harvested; }
+	// The parsed pattern of a harvested focus: empty for NONE, a
+	// buried hypothesis or an invalid regex.  harvested() names
+	// only ids whose fact exists, so the lookup never misses.
+	QString focusPattern(std::string const &hex) const
+	{ return m_focusFacts.value(QString::fromStdString(hex)); }
 	// Whether a staged window's reply has been parsed into a fact.
 	bool answered(std::string const &hex) const
 	{ return m_termFacts.contains(QString::fromStdString(hex)); }
@@ -142,14 +147,9 @@ public:
 	// scans share.
 	static QRegularExpression termMatcher(QString const &term);
 
-	// Shared identity/parse vocabulary the pane leans on: a dive's
-	// id is its expanded pattern's hash, and focus artifacts close
-	// with a REGEX: line.
+	// Shared identity vocabulary the pane leans on: a dive's id is
+	// its expanded pattern's hash.
 	static agenda::id diveId(std::string const &pattern);
-	static std::string regexPayload(std::string const &text,
-	                                std::size_t from,
-	                                std::size_t end);
-	static std::string regexLine(std::string const &text);
 
 	// Pane progress: how many videos a topic's dive scan has
 	// covered (all when done), and a pending focus id's position.
@@ -193,6 +193,13 @@ private:
 	};
 
 	static void poke(void *self) noexcept;
+
+	// Focus artifacts close with a REGEX: line; the fold parses it
+	// once into a fact.
+	static std::string regexPayload(std::string const &text,
+	                                std::size_t from,
+	                                std::size_t end);
+	static std::string regexLine(std::string const &text);
 
 	void diveStep();
 	void scanDiveVideo(DiveScan &s, refinery_source const &it);
