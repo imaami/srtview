@@ -326,22 +326,30 @@ std::size_t plan::index_of (id which) const
 	return m_index.find(which);
 }
 
-bool plan::ready (entry const &e) const
+bool plan::ready (entry const &e, unsigned depth) const
 {
 	// Transitive on purpose: a dependency that is done but not yet
 	// complete -- a cached artifact behind a pending gate -- must
-	// hold its dependents exactly as a pending one would.
+	// hold its dependents exactly as a pending one would.  A chain
+	// deeper than any the pipeline builds (kLiftCap: the pyramid is
+	// log2 of the corpus, and everything else hangs a few hops off
+	// it) can only be a cycle -- impossible by construction, ids
+	// being content hashes of their inputs -- and is answered as
+	// not ready rather than walked forever: the vault's
+	// crash-to-miss posture for the same graph.
+	if (depth > kLiftCap)
+		return false;
 	return std::ranges::all_of(e.t.deps,
-		[this](id const d) {
-			return complete(d);
+		[this, depth](id const d) {
+			return complete(d, depth + 1);
 		});
 }
 
-bool plan::complete (id which) const
+bool plan::complete (id which, unsigned depth) const
 {
 	std::size_t const at = index_of(which);
 	return at != npos && m_entries[at].s == state::done
-	    && ready(m_entries[at]);
+	    && ready(m_entries[at], depth);
 }
 
 plan::rank_key plan::score (task const &t) const

@@ -213,8 +213,9 @@ public:
 	// cached artifact must reach before its bytes may be consumed.
 	// A cache hit is physically present the moment the vault sees
 	// it, but publishable only once its gates (a cut's ground
-	// witness among them) have opened.
-	bool complete(id which) const;
+	// witness among them) have opened.  A chain deeper than any
+	// the pipeline builds answers false: see ready().
+	bool complete(id which) const { return complete(which, 0); }
 	std::size_t backlog() const;   // pending + running
 
 private:
@@ -241,7 +242,8 @@ private:
 	};
 
 	std::size_t index_of(id which) const;
-	bool ready(entry const &e) const;
+	bool ready(entry const &e, unsigned depth = 0) const;
+	bool complete(id which, unsigned depth) const;
 	rank_key score(task const &t) const;
 	bool lift(std::vector<rank_key> &eff) const;
 	bool raise_deps(std::size_t at,

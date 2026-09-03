@@ -317,6 +317,23 @@ static void test_rank()
 	check(q.take() == tid("hotdive"), "heat's turn comes after");
 }
 
+// A dependency cycle is impossible by construction -- ids are
+// content hashes of their inputs -- and answered as incomplete
+// rather than walked forever should one ever arrive: the vault's
+// crash-to-miss posture for the same graph.
+static void test_complete_cycle()
+{
+	agenda::plan p;
+	p.add({.id = tid("a"), .deps = {tid("b")}});
+	p.add({.id = tid("b"), .deps = {tid("a")}});
+	p.done(tid("a"));
+	p.done(tid("b"));
+	check(!p.complete(tid("a")) && !p.complete(tid("b")),
+	      "a done cycle answers incomplete instead of recursing");
+	p.add({.id = tid("c"), .deps = {tid("a")}});
+	check(!p.peek(), "a task behind the cycle never comes ready");
+}
+
 // Regression, found live: the pyramid root sums every leaf's heat,
 // outscores each single leaf, and its lift then flattened all
 // leaves to one effective score -- insertion order, heat erased.
@@ -437,6 +454,7 @@ int main()
 	test_blend();
 	test_inheritance();
 	test_rank();
+	test_complete_cycle();
 	test_aggregate_feedback();
 	test_parking();
 	test_reset();
