@@ -17,6 +17,24 @@ constexpr qint64 kChunk = qint64{4} << 20;
 
 constexpr char kMemoMagic[] = "srtview-ids-v1";
 
+// A file that keeps changing under the hash gets this many passes
+// before it is answered as having no identity yet.
+constexpr unsigned kRestamps = 3;
+
+// The memo's view of a file: one stat, taken unlocked.
+struct stamp {
+	std::int64_t size = 0;
+	std::int64_t mtime = 0;
+	bool         exists = false;
+};
+
+stamp stampOf(QString const &path)
+{
+	QFileInfo const fi(path);
+	return {fi.size(), fi.lastModified().toMSecsSinceEpoch(),
+	        fi.exists()};
+}
+
 } // namespace
 
 Ident::Ident(QString memoPath, void (*poke)(void *) noexcept,
@@ -106,26 +124,44 @@ void Ident::work(std::stop_token st)
 		m_queue.pop_front();
 		++m_live;
 
-		// The memo peek costs a stat, not a read; a hit answers
-		// without touching the bytes.  stat and hash both run
-		// unlocked -- the queue owns the path until the answer
-		// lands.
-		QFileInfo const fi(path);
-		std::int64_t const size = fi.size();
-		std::int64_t const mtime =
-			fi.lastModified().toMSecsSinceEpoch();
+		// The memo row is copied under the lock and everything
+		// that touches the disk runs without it -- the queue owns
+		// the path until the answer lands, and a stalled mount
+		// must hold this worker alone, never post(), drain() or
+		// the rest of the pool.  The memo peek costs a stat, not a
+		// read; a hit answers without touching the bytes.
+		auto const known = m_memo.constFind(path);
+		bool const remembered = known != m_memo.constEnd();
+		memo_row const row = remembered ? *known : memo_row{};
+		lk.unlock();
+		stamp at = stampOf(path);
 		QString id;
 		bool hashed = false;
-		if (auto const it = m_memo.constFind(path);
-		    it != m_memo.constEnd() && it->size == size
-		    && it->mtime == mtime && fi.exists()) {
-			id = it->hash;
+		if (remembered && at.exists && row.size == at.size
+		    && row.mtime == at.mtime) {
+			id = row.hash;
 		} else {
-			lk.unlock();
-			id = hashFile(path, st);
+			// The stamp is taken again after the hash: a file
+			// edited meanwhile would otherwise answer with the
+			// hash of mixed bytes under the pre-edit stamp, and
+			// the memo would serve it for as long as that stamp
+			// held.  A moved stamp hashes again; a file still
+			// moving after kRestamps passes has no identity yet.
+			for (unsigned pass = 1;; ++pass) {
+				id = hashFile(path, st);
+				stamp const after = stampOf(path);
+				if (id.isEmpty() || (after.size == at.size
+				                     && after.mtime == at.mtime))
+					break;
+				at = after;
+				if (pass == kRestamps) {
+					id.clear();
+					break;
+				}
+			}
 			hashed = true;
-			lk.lock();
 		}
+		lk.lock();
 		if (st.stop_requested() || m_stopping) {
 			// An abandoned hash answers nothing: the next
 			// session asks again.
@@ -135,14 +171,21 @@ void Ident::work(std::stop_token st)
 		m_pending.remove(path);
 		m_fresh.insert(path, id);
 		if (hashed && !id.isEmpty()) {
-			m_memo.insert(path, {size, mtime, id});
+			m_memo.insert(path, {at.size, at.mtime, id});
 			m_memoDirty = true;
 		}
 		--m_live;
 		bool const settled = m_queue.empty() && m_live == 0;
 		if (settled && m_memoDirty) {
-			saveMemo();
+			// The write goes out over a snapshot, unlocked: the
+			// hash is implicitly shared, so the copy is a
+			// pointer, and a save that lands later carries the
+			// rows added meanwhile.
+			QHash<QString, memo_row> const snap = m_memo;
 			m_memoDirty = false;
+			lk.unlock();
+			saveMemo(snap);
+			lk.lock();
 		}
 		if (m_poke) {
 			lk.unlock();
@@ -172,16 +215,16 @@ QString Ident::hashFile(QString const &path, std::stop_token st)
 	return QString::fromLatin1(h.result().left(8).toHex());
 }
 
-// m_mtx held by the caller for the map walk; the write itself is
-// small (a line per known file) and atomic via QSaveFile.
-void Ident::saveMemo()
+// Unlocked, over the caller's snapshot of the map; the write itself
+// is small (a line per known file) and atomic via QSaveFile.
+void Ident::saveMemo(QHash<QString, memo_row> const &memo)
 {
 	QSaveFile f(m_memoPath);
 	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
 		return;
 	QByteArray out(kMemoMagic);
 	out += '\n';
-	for (auto it = m_memo.constBegin(); it != m_memo.constEnd();
+	for (auto it = memo.constBegin(); it != memo.constEnd();
 	     ++it) {
 		out += QByteArray::number(qlonglong(it->size));
 		out += '\t';

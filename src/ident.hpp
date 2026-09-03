@@ -13,10 +13,13 @@
 // once.  Nothing is remembered past the answer: every new post
 // re-validates through the memo's stat, so a file edited on disk
 // re-hashes and the content-addressed caches stay coherent.  The
-// one path-derived id in
-// the program remains discovery's socket scheme: per-machine
-// runtime rendezvous, shared with srtjump, and never data
-// identity.
+// mutex guards the queues and the memo map only: the stat, the
+// hash and the memo write all run without it, so a stalled mount
+// holds one worker and never the owner, and a file that changes
+// while it hashes is stamped again and re-hashed -- three tries,
+// then it has no identity yet.  The one path-derived id in the
+// program remains discovery's socket scheme: per-machine runtime
+// rendezvous, shared with srtjump, and never data identity.
 #ifndef SRTVIEW_SRC_IDENT_HPP_
 #define SRTVIEW_SRC_IDENT_HPP_
 
@@ -73,7 +76,7 @@ private:
 	void work(std::stop_token st);
 	QString hashFile(QString const &path, std::stop_token st);
 	void loadMemo();
-	void saveMemo();
+	void saveMemo(QHash<QString, memo_row> const &memo);
 
 	QString                     m_memoPath;
 	void                      (*m_poke)(void *) noexcept;
