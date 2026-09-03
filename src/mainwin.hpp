@@ -207,6 +207,11 @@ private:
 	// The outgoing cut's leaf and node ids: the next cut retires
 	// the ones it does not restage.
 	std::vector<agenda::id>         m_cutAsks;
+	// The current cut's read witness per video id: marked at the
+	// cut when the video has nothing left to read, and on a final
+	// drain that publishes nothing new -- the one lifecycle point
+	// a settle never reaches.
+	QHash<QString, agenda::id>      m_videoWitness;
 	exporter::transcripts           m_transcripts;
 	QMenu                          *m_recentMenu = nullptr;
 	QMenu                          *m_videosMenu = nullptr;

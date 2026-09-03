@@ -876,6 +876,7 @@ void MainWin::rebuildSemantic()
 	semanticCorpus.addData(QByteArrayView("semantic-corpus-v1"));
 	std::set<std::string> semanticSeen;
 	QHash<QString, agenda::id> leafIds;
+	QHash<QString, agenda::id> videoWitness;
 	std::vector<agenda::id> cutAsks;
 	m_sourcePairs.clear();
 	for (PlayItem const &it : m_playlist) {
@@ -975,6 +976,7 @@ void MainWin::rebuildSemantic()
 		m_facts.offer(std::move(t), body);
 		if (!m_ocr.reading(it.id))
 			m_facts.mark(witness);
+		videoWitness.insert(it.id, witness);
 		leaves.push_back(leaf);
 		leafKey.emplace(leaf, key);
 		leafIds.insert(QString::fromStdString(sourceId), leaf);
@@ -1022,6 +1024,7 @@ void MainWin::rebuildSemantic()
 		stale.erase(id);
 	m_cutAsks = std::move(cutAsks);
 	m_leafIds = std::move(leafIds);
+	m_videoWitness = std::move(videoWitness);
 	m_semantic.reset(takeId(semanticCorpus).hex(),
 	                 std::move(sources));
 	// Publication: a cut assembled while nothing remains to read
@@ -1888,14 +1891,21 @@ void MainWin::ocrReady()
 			m_ocrFirstDirty.start();  // the epoch opens
 		m_ocrDirty = true;
 	}
-	// A textless or error-only final drain publishes nothing new:
-	// the standing cut already contains every result, so its
-	// witness is marked here -- the one lifecycle point a settle
-	// never reaches.
-	if (!m_ocr.reading() && !m_ocrDirty)
-		m_facts.mark(m_semantic.witness());
-	if (!m_ocrDirty)
+	// An error-only final drain publishes nothing new: the standing
+	// cut already contains every result, so the witnesses are
+	// marked here -- the corpus's, and each video's whose read
+	// ended this way, or its leaf would wait for a settle that
+	// never comes -- the one lifecycle point a settle never
+	// reaches.
+	if (!m_ocrDirty) {
+		if (!m_ocr.reading())
+			m_facts.mark(m_semantic.witness());
+		for (auto it = m_videoWitness.constBegin();
+		     it != m_videoWitness.constEnd(); ++it)
+			if (!m_ocr.reading(it.key()))
+				m_facts.mark(it.value());
 		return;
+	}
 	// Quiet for five seconds, or a minute of continuous arrivals,
 	// whichever ends first: past the ceiling the running timer is
 	// left to fire instead of being pushed along.
