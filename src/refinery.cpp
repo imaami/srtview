@@ -1542,10 +1542,12 @@ int Refinery::scanned(agenda::id dive, int videos) const
 // resets: whatever the new cut does not restage retires below.
 std::set<agenda::id> Refinery::preCut()
 {
+	// The engine names its own in-flight asks -- extract attempts
+	// and judges alike, retries under their attempt ids -- so a
+	// replaced cut leaves none of them ready on the released lane.
 	std::set<agenda::id> stale;
-	for (std::size_t i = 0; i < m_semantic.windows(); ++i)
-		stale.insert(m_semantic.key("semantic-extract-v1",
-		                            m_semantic.window(i)));
+	for (agenda::id const id : m_semantic.pending())
+		stale.insert(id);
 	for (TermsWork const &w : m_termsWork)
 		stale.insert(w.id);
 	return stale;
@@ -1576,9 +1578,8 @@ void Refinery::postCut(std::set<agenda::id> stale,
 	m_lexicon.clear();
 	m_termsWork.clear();
 	queueTerms();
-	for (std::size_t i = 0; i < m_semantic.windows(); ++i)
-		stale.erase(m_semantic.key("semantic-extract-v1",
-		                           m_semantic.window(i)));
+	for (agenda::id const id : m_semantic.pending())
+		stale.erase(id);
 	for (TermsWork const &w : m_termsWork)
 		stale.erase(w.id);
 	m_facts.retire({stale.begin(), stale.end()});

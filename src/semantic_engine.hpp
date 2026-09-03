@@ -266,6 +266,23 @@ public:
 	// catalog is down.
 	agenda::id witness() const { return m_witness; }
 
+	// Every ask of the current cut still awaiting its reply: the
+	// attempt in flight of each unseen window and pair -- retries
+	// run under attempt-suffixed ids, so the base ids alone would
+	// leave them behind.  The owner retires these when the cut is
+	// replaced.
+	std::vector<agenda::id> pending() const
+	{
+		std::vector<agenda::id> out;
+		for (extract_work const &w : m_extract)
+			if (!w.seen)
+				out.push_back(w.current);
+		for (judge_work const &w : m_judge)
+			if (!w.seen)
+				out.push_back(w.current);
+		return out;
+	}
+
 	std::size_t windows() const { return m_extract.size(); }
 	semantic::window const &window(std::size_t at) const
 	{
